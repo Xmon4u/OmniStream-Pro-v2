@@ -1,29 +1,98 @@
 """
-OmniStream Pro v2.0.0 - Windows Installer (.exe) Compiler
+OmniStream Pro v2.0.2 - Windows Installer (.exe) Compiler
 Compiles installer.py into OmniStream_Pro_Setup.exe using PyInstaller.
-Author: XMON4U (https://github.com/Xmon4u)
+
+IMPORTANT: Never bundle desktop/dist or desktop/build. Nested PyInstaller
+archives corrupt / confuse the outer PKG cookie and produce:
+  "Could not load PyInstaller's embedded PKG archive"
 """
 
 import os
 import sys
-import subprocess
 import shutil
+import subprocess
 
-ROOT_DIR    = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DESKTOP_DIR = os.path.join(ROOT_DIR, "desktop")
-EXT_DIR     = os.path.join(ROOT_DIR, "extension")
-ICON_PATH   = os.path.join(DESKTOP_DIR, "app_icon.ico")
-SETUP_NAME  = "OmniStream_Pro_Setup"
+EXT_DIR = os.path.join(ROOT_DIR, "extension")
+RELEASE_DIR = os.path.join(ROOT_DIR, "release_output")
+ICON_PATH = os.path.join(DESKTOP_DIR, "app_icon.ico")
+SETUP_NAME = "OmniStream_Pro_Setup"
+STAGE_DIR = os.path.join(ROOT_DIR, "_installer_stage")
+
+# Files the installer copies into AppData (source modules + icons).
+DESKTOP_FILES = [
+    "main_gui.py",
+    "core_engine.py",
+    "bridge_server.py",
+    "setup_dependencies.py",
+    "extension_manager.py",
+    "ui_icons.py",
+    "window_chrome.py",
+    "app_icon.ico",
+    "app_icon.png",
+]
+
+
+def _clean_stage():
+    if os.path.isdir(STAGE_DIR):
+        shutil.rmtree(STAGE_DIR, ignore_errors=True)
+    os.makedirs(STAGE_DIR, exist_ok=True)
+
+
+def _stage_payload():
+    """Build a clean payload tree without nested PyInstaller artifacts."""
+    _clean_stage()
+
+    stage_desktop = os.path.join(STAGE_DIR, "desktop")
+    os.makedirs(stage_desktop, exist_ok=True)
+
+    for name in DESKTOP_FILES:
+        src = os.path.join(DESKTOP_DIR, name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(stage_desktop, name))
+
+    # Tools (ffmpeg / downloader) — required at install time.
+    src_bin = os.path.join(DESKTOP_DIR, "bin")
+    if os.path.isdir(src_bin):
+        shutil.copytree(src_bin, os.path.join(stage_desktop, "bin"))
+
+    # Prefer freshly built portable exe from release_output, else desktop/dist.
+    portable_candidates = [
+        os.path.join(RELEASE_DIR, "OmniStream_Pro.exe"),
+        os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe"),
+    ]
+    portable = next((p for p in portable_candidates if os.path.isfile(p)), None)
+    if not portable:
+        raise FileNotFoundError(
+            "OmniStream_Pro.exe not found. Build the portable exe before the installer."
+        )
+    # Keep under desktop/ so installer.py candidate paths keep working.
+    shutil.copy2(portable, os.path.join(stage_desktop, "OmniStream_Pro.exe"))
+
+    # Chrome extension sources
+    shutil.copytree(EXT_DIR, os.path.join(STAGE_DIR, "extension"))
+
+    # Icon at payload root (also referenced as --add-data)
+    if os.path.isfile(ICON_PATH):
+        shutil.copy2(ICON_PATH, os.path.join(STAGE_DIR, "app_icon.ico"))
+
+    return stage_desktop
+
 
 def build():
     print("=" * 65)
-    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.0.0 Windows Installer)...")
+    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.0.2 Windows Installer)...")
     print("=" * 65)
 
+    stage_desktop = _stage_payload()
+    stage_ext = os.path.join(STAGE_DIR, "extension")
+    stage_icon = os.path.join(STAGE_DIR, "app_icon.ico")
+
     add_data_args = [
-        "--add-data", f"{DESKTOP_DIR};desktop",
-        "--add-data", f"{EXT_DIR};extension",
-        "--add-data", f"{ICON_PATH};.",
+        "--add-data", f"{stage_desktop};desktop",
+        "--add-data", f"{stage_ext};extension",
+        "--add-data", f"{stage_icon};.",
     ]
 
     cmd = [
@@ -33,8 +102,11 @@ def build():
         "--windowed",
         "--name", SETUP_NAME,
         "--icon", ICON_PATH,
+        "--paths", stage_desktop,
         "--paths", DESKTOP_DIR,
         "--hidden-import", "extension_manager",
+        "--hidden-import", "ui_icons",
+        "--hidden-import", "window_chrome",
         "--hidden-import", "webbrowser",
         "--hidden-import", "glob",
         "--hidden-import", "json",
@@ -54,17 +126,35 @@ def build():
         return False
 
     dist_exe = os.path.join(ROOT_DIR, "dist", f"{SETUP_NAME}.exe")
-    if os.path.exists(dist_exe):
-        release_out = os.path.join(ROOT_DIR, "release_output")
-        os.makedirs(release_out, exist_ok=True)
-        shutil.copy2(dist_exe, os.path.join(release_out, f"{SETUP_NAME}.exe"))
-        size_mb = os.path.getsize(dist_exe) / (1024 * 1024)
-        print("=" * 65)
-        print(f"[SUCCESS] {SETUP_NAME}.exe created successfully ({size_mb:.2f} MB)!")
-        print("=" * 65)
-        return True
+    if not os.path.exists(dist_exe):
+        print("[Error] Installer exe not found after build.")
+        return False
 
-    return False
+    # Verify PyInstaller PKG cookie is present (bootloader needs this).
+    magic = b"MEI\x0c\x0b\x0a\x0b\x0e"
+    data = open(dist_exe, "rb").read()
+    if magic not in data:
+        print("[Error] Built Setup.exe is missing the PyInstaller PKG cookie.")
+        print("        Refusing to publish a broken installer.")
+        return False
+
+    release_out = os.path.join(ROOT_DIR, "release_output")
+    os.makedirs(release_out, exist_ok=True)
+    out_path = os.path.join(release_out, f"{SETUP_NAME}.exe")
+    shutil.copy2(dist_exe, out_path)
+
+    size_mb = os.path.getsize(out_path) / (1024 * 1024)
+    print("=" * 65)
+    print(f"[SUCCESS] {SETUP_NAME}.exe created successfully ({size_mb:.2f} MB)!")
+    print(f"  PKG cookie: OK")
+    print(f"  Output    : {out_path}")
+    print("=" * 65)
+
+    # Cleanup staging (keep dist/ for debugging if needed)
+    shutil.rmtree(STAGE_DIR, ignore_errors=True)
+    return True
+
 
 if __name__ == "__main__":
-    build()
+    ok = build()
+    sys.exit(0 if ok else 1)

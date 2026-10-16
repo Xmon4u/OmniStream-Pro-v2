@@ -13,9 +13,9 @@ import threading
 from typing import Optional
 
 try:
-    from extension_manager import mark_extension_installed
+    from extension_manager import note_extension_heartbeat
 except ImportError:
-    def mark_extension_installed():
+    def note_extension_heartbeat():
         pass
 
 BRIDGE_PORT = 28795
@@ -29,6 +29,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -39,7 +40,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         app = getattr(self.server, "app_instance", None)
 
         if self.path == "/health":
-            mark_extension_installed()
+            note_extension_heartbeat()
             if app and hasattr(app, "log_queue"):
                 app.log_queue.put(("bridge_connected", {}))
             self.send_response(200)

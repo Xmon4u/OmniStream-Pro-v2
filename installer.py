@@ -35,10 +35,13 @@ from extension_manager import (
     deploy_extension_files,
     is_extension_installed,
     mark_extension_installed,
+    invalidate_extension_cache,
     open_chrome_extensions,
     open_extension_folder,
-    launch_browser_with_extension
+    launch_browser_with_extension,
+    is_chrome_running
 )
+from ui_icons import apply_window_icon, build_icon_set
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -87,14 +90,9 @@ class OmniStreamInstaller(ctk.CTk):
         self.resizable(False, False)
         self.configure(fg_color=BG_ROOT)
 
-        icon_path = os.path.join(DESKTOP_DIR, "app_icon.ico")
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(INSTALLER_DIR, "app_icon.ico")
-        if os.path.exists(icon_path):
-            try:
-                self.iconbitmap(icon_path)
-            except Exception:
-                pass
+        icon_dir = DESKTOP_DIR if os.path.isfile(os.path.join(DESKTOP_DIR, "app_icon.png")) else INSTALLER_DIR
+        apply_window_icon(self, icon_dir)
+        self.icons = build_icon_set(icon_dir)
 
         self.install_dir = get_app_data_dir()
         self.create_desktop_sc = tk.BooleanVar(value=True)
@@ -111,9 +109,7 @@ class OmniStreamInstaller(ctk.CTk):
         header.grid(row=0, column=0, sticky="ew")
         header.grid_propagate(False)
 
-        icon_box = ctk.CTkFrame(header, fg_color=ACCENT_PRIMARY, width=44, height=44, corner_radius=12)
-        icon_box.place(x=20, y=18)
-        ctk.CTkLabel(icon_box, text="⚡", font=ctk.CTkFont(size=22), text_color="white").place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(header, text="", image=self.icons["logo_sm"]).place(x=16, y=16)
 
         ctk.CTkLabel(
             header, text="OmniStream Pro v2.0 Setup",
@@ -243,7 +239,17 @@ class OmniStreamInstaller(ctk.CTk):
             self.pbar.set(0.3)
             self.update_idletasks()
 
-            for item in ["main_gui.py", "core_engine.py", "bridge_server.py", "setup_dependencies.py", "extension_manager.py", "app_icon.ico", "app_icon.png"]:
+            for item in [
+                "main_gui.py",
+                "core_engine.py",
+                "bridge_server.py",
+                "setup_dependencies.py",
+                "extension_manager.py",
+                "ui_icons.py",
+                "window_chrome.py",
+                "app_icon.ico",
+                "app_icon.png",
+            ]:
                 src = os.path.join(DESKTOP_DIR, item)
                 if os.path.exists(src):
                     shutil.copy2(src, os.path.join(target_dir, item))
@@ -262,12 +268,12 @@ class OmniStreamInstaller(ctk.CTk):
             # Copy compiled executable if present
             target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
             candidate_exes = [
-                os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe"),
                 os.path.join(DESKTOP_DIR, "OmniStream_Pro.exe"),
-                os.path.join(INSTALLER_DIR, "desktop", "dist", "OmniStream_Pro.exe"),
+                os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe"),
                 os.path.join(INSTALLER_DIR, "desktop", "OmniStream_Pro.exe"),
-                os.path.join(INSTALLER_DIR, "dist", "OmniStream_Pro.exe"),
+                os.path.join(INSTALLER_DIR, "desktop", "dist", "OmniStream_Pro.exe"),
                 os.path.join(INSTALLER_DIR, "OmniStream_Pro.exe"),
+                os.path.join(INSTALLER_DIR, "dist", "OmniStream_Pro.exe"),
             ]
             for cand in candidate_exes:
                 if os.path.isfile(cand):
@@ -324,6 +330,7 @@ class OmniStreamInstaller(ctk.CTk):
         for widget in self.main_body.winfo_children():
             widget.destroy()
 
+        invalidate_extension_cache()
         ext_already_installed = is_extension_installed()
 
         ctk.CTkLabel(
@@ -336,37 +343,70 @@ class OmniStreamInstaller(ctk.CTk):
             card = ctk.CTkFrame(self.main_body, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
             card.pack(fill="x", pady=10)
             ctk.CTkLabel(
-                card, text="✓ Chrome Extension Detected",
+                card, text="Chrome extension detected", image=self.icons["check"], compound="left",
                 font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
                 text_color=ACCENT_EMERALD
             ).pack(anchor="w", padx=14, pady=(12, 4))
             ctk.CTkLabel(
-                card, text="The browser extension is already installed on your system. You're ready to start downloading!",
+                card, text="The browser extension is already installed. You're ready to capture & download streams!",
                 font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
             ).pack(anchor="w", padx=14, pady=(0, 12))
         else:
             card = ctk.CTkFrame(self.main_body, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
             card.pack(fill="x", pady=10)
+
             ctk.CTkLabel(
-                card, text="Browser Extension Configuration",
+                card, text="Browser extension setup", image=self.icons["extension"], compound="left",
                 font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
                 text_color=ACCENT_GLOW
             ).pack(anchor="w", padx=14, pady=(10, 4))
-            ctk.CTkLabel(
-                card, text="To capture streaming video links directly from Chrome, Edge, or Brave:",
-                font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
-            ).pack(anchor="w", padx=14, pady=(0, 6))
 
-            def _launch_btn_click():
+            ext_status_var = {"lbl": None}
+
+            ext_status_lbl = ctk.CTkLabel(
+                card, text="🔄 Preparing to launch Chrome with Extension...",
+                font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY, anchor="w"
+            )
+            ext_status_lbl.pack(fill="x", padx=14, pady=(0, 6))
+            ext_status_var["lbl"] = ext_status_lbl
+
+            def _update_status(msg: str):
+                try:
+                    ext_status_var["lbl"].configure(text=msg)
+                except Exception:
+                    pass
+
+            def _do_launch(btn=None):
                 import threading
-                threading.Thread(target=launch_browser_with_extension, daemon=True).start()
-                launch_btn.configure(text="✓ Launched! Extension Active in Chrome", fg_color="#065f46")
+                if btn:
+                    btn.configure(state="disabled")
+                _update_status("🔄 Launching Chrome with OmniStream Extension...")
+
+                def _bg():
+                    ok = launch_browser_with_extension()
+                    if ok:
+                        self.after(0, lambda: _update_status(
+                            "Chrome launched. Use that window for streaming."
+                        ))
+                        if btn:
+                            self.after(0, lambda: btn.configure(
+                                text="Extension active", image=self.icons["check"], fg_color="#065f46", state="disabled"
+                            ))
+                    else:
+                        self.after(0, lambda: _update_status(
+                            "Auto-launch failed. Use the buttons below to set it up."
+                        ))
+                        if btn:
+                            self.after(0, lambda: btn.configure(state="normal"))
+                threading.Thread(target=_bg, daemon=True).start()
 
             launch_btn = ctk.CTkButton(
-                card, text="🚀  1-Click Launch Chrome with Extension", height=32,
-                fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
-                command=_launch_btn_click
+                card, text="Launch Chrome", image=self.icons["chrome"], compound="left", height=34,
+                fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
+                font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+                corner_radius=8
             )
+            launch_btn.configure(command=lambda: _do_launch(launch_btn))
             launch_btn.pack(fill="x", padx=14, pady=(0, 8))
 
             btn_box = ctk.CTkFrame(card, fg_color="transparent")
@@ -386,12 +426,16 @@ class OmniStreamInstaller(ctk.CTk):
                 command=open_extension_folder
             ).pack(side="left")
 
+            # Auto-trigger after a short delay so the UI renders first
+            self.after(800, lambda: _do_launch(launch_btn))
+
         # Update footer buttons
         self.cancel_btn.pack_forget()
         self.next_btn.configure(
             state="normal", text="Finish", fg_color=ACCENT_EMERALD, hover_color="#047857",
             command=self._finish_and_launch
         )
+
 
     def _finish_and_launch(self):
         target_exe = os.path.join(self.install_dir, "OmniStream_Pro.exe")

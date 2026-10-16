@@ -1,42 +1,36 @@
-# OmniStream Pro — Browser Extension v2.0.0
+# OmniStream Pro — Browser Extension
 
-Universal Media Stream Sniffer & Desktop Bridge Extension for Chrome, Edge, and Chromium-based browsers.
+Manifest V3 extension for Chrome, Edge, and Brave. Sniffs player streams and sends them to the OmniStream Pro desktop app.
 
----
+## Features
 
-## ✨ Features
+- Real-time HLS (`.m3u8`), DASH (`.mpd`), and direct video detection
+- **God Mode scan** — deep player probe + F12 / DevTools unlock
+- Minimal popup: detected player links + **Download** (sends to desktop)
+- Localhost bridge to desktop app on `127.0.0.1:28795`
+- Header / cURL capture for authenticated streams
 
-- ⚡ **IDM-Grade Desktop Bridge**: One-click transfer of single or all detected streams directly into the OmniStream Pro desktop application queue.
-- 🎯 **Multi-Format Sniffer**: Intercepts HLS (`.m3u8`), DASH (`.mpd`), MP4, MKV, and WebM video streams automatically in real time.
-- 🛡️ **God Mode Deep Probe**: Deep DOM scanner and player stimulator that surfaces hidden or obfuscated video streams behind complex players.
-- 🔓 **Anti-DevTools & Anti-F12 Neutralizer**: Unblocks F12, developer tools, and right-click context menus on video websites.
-- 📋 **Full Header & cURL Preservation**: Captures User-Agent, Referer, Origin, Cookies, and Authorization headers for exact replay.
-- 🚀 **1-Click "Send All to App"**: Send every detected video link on the page directly to the desktop queue to batch download like Internet Download Manager.
+## Install (Load unpacked)
 
----
+1. Open `chrome://extensions/` (or `edge://extensions/`).
+2. Turn on **Developer mode**.
+3. Click **Load unpacked**.
+4. Select this `extension` folder.
+5. Pin OmniStream in the toolbar.
 
-## 📥 Installation
+## Use with the desktop app
 
-1. Open Google Chrome, Edge, or Brave.
-2. Navigate to `chrome://extensions/` (or `edge://extensions/`).
-3. Enable **Developer mode** toggle in the top-right corner.
-4. Click **Load unpacked**.
-5. Select this `extension` folder.
-6. The **OmniStream Pro** icon will appear in your browser toolbar!
+1. Start **OmniStream Pro** (desktop).
+2. Play a video on any site.
+3. Open the extension popup.
+4. Click **God Mode scan** if the list is empty.
+5. Click **Download** on a detected stream.
+6. In the desktop app, use **Download All** / the queue to save multi-audio MKV when available.
 
----
+## Version
 
-## ⚡ How It Works with the Desktop App
+See `manifest.json` (`2.0.2`).
 
-1. Launch the **OmniStream Pro** desktop software. The extension will automatically detect the localhost bridge server on `127.0.0.1:28795`.
-2. Browse to any website with video content (e.g. streaming platforms, video players).
-3. Click the OmniStream Pro extension icon.
-4. Click **"⚡ Send to OmniStream Pro App"** on individual streams, or click **"Send All to App"** at the top.
-5. In the desktop application, all streams will appear in the **IDM Download Queue**.
-6. Click **"▶ Download All (Start Queue)"** in the desktop app to download and mux all audio and video tracks into lossless `.mkv` files!
+## Author
 
----
-
-## 👤 Author
-
-**XMON4U** — [GitHub Profile](https://github.com/Xmon4u)
+**XMON4U** — [github.com/Xmon4u](https://github.com/Xmon4u)

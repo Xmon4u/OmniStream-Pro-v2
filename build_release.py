@@ -15,7 +15,7 @@ DESKTOP_DIR   = os.path.join(ROOT_DIR, "desktop")
 EXTENSION_DIR = os.path.join(ROOT_DIR, "extension")
 RELEASE_DIR   = os.path.join(ROOT_DIR, "release_output")
 
-VERSION = "v2.0.0"
+VERSION = "v2.0.2"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 

@@ -22,6 +22,76 @@ DEFAULT_UA = (
 )
 DEFAULT_SAVE_DIR = os.path.join(os.environ.get("USERPROFILE", "C:\\"), "Desktop")
 
+
+def _format_eta(seconds: Optional[float]) -> str:
+    if seconds is None or seconds < 0 or seconds == float("inf"):
+        return "—"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {sec:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def _parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
+    """Extract percent / speed / ETA from N_m3u8DL-RE or similar console output."""
+    pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", line)
+    if not pct_match:
+        return None
+    pct = max(0.0, min(100.0, float(pct_match.group(1))))
+
+    speed = None
+    speed_match = re.search(
+        r"(\d+(?:\.\d+)?)\s*(K|M|G)?B(?:ps|/s|·s)?",
+        line,
+        re.IGNORECASE,
+    )
+    if speed_match:
+        val = float(speed_match.group(1))
+        unit = (speed_match.group(2) or "").upper()
+        mult = {"K": 1 / 1024, "M": 1.0, "G": 1024}.get(unit, 1 / (1024 * 1024))
+        speed = val * mult  # MB/s
+
+    eta_sec = None
+    eta_match = re.search(r"(?:ETA|Left|Remain(?:ing)?)\s*[:=]?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?", line, re.I)
+    if eta_match:
+        parts = [int(x) for x in eta_match.groups() if x is not None]
+        if len(parts) == 3:
+            eta_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+        elif len(parts) == 2:
+            eta_sec = parts[0] * 60 + parts[1]
+    else:
+        # N_m3u8DL-RE often prints bare mm:ss / hh:mm:ss near the end of the line
+        time_match = re.search(r"(?:^|[\s|])(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s|$)", line)
+        if time_match and pct < 100:
+            parts = [int(x) for x in time_match.groups() if x is not None]
+            if len(parts) == 3:
+                eta_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            elif len(parts) == 2:
+                eta_sec = parts[0] * 60 + parts[1]
+
+    return {"pct": pct, "speed": speed, "eta_sec": eta_sec, "raw": line}
+
+
+def _build_progress_message(pct: float, speed: Optional[float], eta_sec: Optional[float], fallback: str = "") -> str:
+    left = max(0.0, 100.0 - pct)
+    parts = [f"{pct:.0f}% done", f"{left:.0f}% left"]
+    if eta_sec is not None:
+        parts.append(f"~{_format_eta(eta_sec)} left")
+    if speed is not None and speed > 0:
+        parts.append(f"{speed:.1f} MB/s")
+    elif fallback:
+        snippet = fallback.strip()
+        if len(snippet) > 48:
+            snippet = snippet[:45] + "…"
+        if snippet and "%" not in snippet:
+            parts.append(snippet)
+    return "  ·  ".join(parts)
+
+
 class OmniStreamEngine:
     def __init__(self):
         self.current_process: Optional[subprocess.Popen] = None
@@ -167,13 +237,21 @@ class OmniStreamEngine:
                 downloaded += len(chunk)
 
                 now = time.time()
-                if progress_callback and (now - last_progress_time > 0.25):
-                    pct = (downloaded / total_size * 100.0) if total_size > 0 else 50.0
+                if progress_callback and (now - last_progress_time > 0.2):
                     elapsed = max(0.001, now - start_time)
                     speed_mb = (downloaded / (1024 * 1024)) / elapsed
-                    cur_mb = downloaded / (1024 * 1024)
-                    tot_mb = total_size / (1024 * 1024) if total_size > 0 else 0
-                    msg = f"{cur_mb:.1f}MB/{tot_mb:.1f}MB • {speed_mb:.2f} MB/s ({pct:.0f}%)"
+                    if total_size > 0:
+                        pct = downloaded / total_size * 100.0
+                        remaining = max(0, total_size - downloaded)
+                        eta_sec = (remaining / max(1, downloaded)) * elapsed
+                        msg = _build_progress_message(pct, speed_mb, eta_sec)
+                        msg += f"  ·  {downloaded / (1024 * 1024):.1f}/{total_size / (1024 * 1024):.1f} MB"
+                    else:
+                        pct = min(95.0, 5.0 + (downloaded / (1024 * 1024)) * 2.0)
+                        msg = (
+                            f"Downloading…  {downloaded / (1024 * 1024):.1f} MB  ·  "
+                            f"{speed_mb:.1f} MB/s  ·  size unknown"
+                        )
                     progress_callback(pct, msg)
                     last_progress_time = now
 
@@ -332,44 +410,84 @@ class OmniStreamEngine:
         log("[4/4] Starting concurrent download with 16 parallel threads...")
         log(sep)
 
+        # Binary + split on \r/\n: N_m3u8DL-RE refreshes progress with CR, not NL.
         self.current_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            encoding="utf-8",
-            errors="replace"
+            bufsize=0,
         )
 
         final_mkv = os.path.join(save_dir, f"{save_name}.mkv")
         last_progress_update = 0.0
+        progress_started = time.time()
+        last_pct = 0.0
         _keywords = (
             "Vid ", "Aud ", "INFO", "WARN", "ERROR", "Exception",
             "Mux", "Merging", "Done", "Fail", "success", "stream",
         )
 
-        for line in iter(self.current_process.stdout.readline, ""):
+        if progress_callback:
+            progress_callback(0.0, "Starting stream download…  ·  0% done  ·  100% left")
+
+        buf = b""
+        while True:
             if self._is_aborted:
                 log("[Aborted] Download cancelled by user.")
                 break
 
-            line = line.strip()
-            if not line:
-                continue
+            chunk = self.current_process.stdout.read(256)
+            if not chunk:
+                break
+            buf += chunk
 
-            pct_match = re.search(r"(\d+(?:\.\d+)?)%", line)
-            now = time.time()
-            if pct_match and progress_callback and (now - last_progress_update > 0.2):
-                try:
-                    pct = float(pct_match.group(1))
-                    progress_callback(pct, line[:100])
+            while True:
+                i_n = buf.find(b"\n")
+                i_r = buf.find(b"\r")
+                if i_n < 0 and i_r < 0:
+                    break
+                if i_n < 0:
+                    idx = i_r
+                elif i_r < 0:
+                    idx = i_n
+                else:
+                    idx = min(i_n, i_r)
+
+                raw_line = buf[:idx]
+                buf = buf[idx + 1:]
+                # Swallow LF that follows CR (CRLF)
+                if raw_line.endswith(b"\r"):
+                    raw_line = raw_line[:-1]
+                if buf.startswith(b"\n"):
+                    buf = buf[1:]
+
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+
+                parsed = _parse_progress_line(line)
+                now = time.time()
+                if parsed and progress_callback and (now - last_progress_update > 0.15):
+                    pct = parsed["pct"]
+                    last_pct = max(last_pct, pct)
+                    eta_sec = parsed.get("eta_sec")
+                    speed = parsed.get("speed")
+                    if eta_sec is None and last_pct > 1.0:
+                        elapsed = max(0.001, now - progress_started)
+                        eta_sec = (elapsed / last_pct) * (100.0 - last_pct)
+                    msg = _build_progress_message(last_pct, speed, eta_sec, fallback=line)
+                    progress_callback(last_pct, msg)
                     last_progress_update = now
-                except Exception:
-                    pass
 
-            if any(k in line for k in _keywords):
-                log(f"  {line}")
+                if any(k in line for k in _keywords):
+                    # Avoid flooding the log with CR progress spam
+                    if not parsed or any(k in line for k in ("INFO", "WARN", "ERROR", "Mux", "Merging", "Done")):
+                        log(f"  {line}")
+
+        if buf.strip():
+            leftover = buf.decode("utf-8", errors="replace").strip()
+            if leftover and any(k in leftover for k in _keywords):
+                log(f"  {leftover}")
 
         self.current_process.stdout.close()
         self.current_process.wait()

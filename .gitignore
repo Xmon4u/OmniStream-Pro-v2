@@ -23,12 +23,27 @@ release_output/
 *.exe
 *.zip
 
-# Temporary engine downloads
+# Temporary engine downloads / partial captures
 .omnistream_tmp_*
 *.m3u8
 *.ts
+*.ts.tmp
 *.m4s
+*.mkv
+*.mp4
+
+# Installer staging
+_installer_stage/
+
+# Local probes / temp
+desktop/_*.py
+desktop/_*.js
+desktop/_*.png
 
 # System
 .DS_Store
 Thumbs.db
+*.log
+desktop/bin/Logs/
+
+desktop/hls_smoke/

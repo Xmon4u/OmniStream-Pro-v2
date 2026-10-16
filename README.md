@@ -1,4 +1,4 @@
-# OmniStream Pro v2.0 — Universal Stream Downloader & Extension Suite
+# OmniStream Pro v2.0.2 — Universal Stream Downloader & Extension Suite
 
 <div align="center">
 
@@ -8,7 +8,7 @@
 
 **High-performance stream download suite with concurrent multi-track audio preservation, browser extension integration, and batch queue processing.**
 
-[![Release](https://img.shields.io/badge/Release-v2.0.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0.2-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-06b6d4?style=for-the-badge&logo=windows)](https://github.com/Xmon4u/OmniStream-Pro-v2)
 [![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-10b981?style=for-the-badge&logo=googlechrome)](extension)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
@@ -19,7 +19,7 @@
 
 ## Overview
 
-**OmniStream Pro v2.0** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
+**OmniStream Pro v2.0.2** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
 
 Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all available multi-language audio tracks, and multiplex them into a single `.mkv` container with no quality loss. With batch queuing and live browser-to-desktop link forwarding, downloading streams from any website is straightforward.
 
@@ -40,12 +40,11 @@ Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all ava
 
 ### Browser Extension (Chrome / Edge / Chromium)
 
-- **Instant Desktop Transfer**: Send single or all detected streams directly to the desktop application queue via the localhost bridge (`127.0.0.1:28795`).
-- **Send All to App**: Forward every detected video stream on the active webpage to the desktop app in a single click.
-- **Multi-Format Sniffer**: Intercepts HLS (`.m3u8`), DASH (`.mpd`), MP4, MKV, and WebM video streams in real time.
-- **God Mode Deep Probe**: DOM scanner and player stimulator that surfaces hidden or obfuscated video streams.
-- **Anti-DevTools Neutralizer**: Re-enables F12, developer tools, and right-click context menus on video websites.
-- **Full Header Preservation**: Captures User-Agent, Referer, Origin, Cookies, and Authorization headers for exact request replay.
+- **Minimal popup**: detected player streams + **Download** (sends to the desktop queue).
+- **God Mode scan**: deep player probe and F12 / DevTools unlock on protected sites.
+- **Multi-format sniffer**: HLS (`.m3u8`), DASH (`.mpd`), MP4, MKV, WebM.
+- **Desktop bridge**: localhost transfer on `127.0.0.1:28795`.
+- **Header preservation**: Referer, Origin, User-Agent, and related request metadata when available.
 
 ---
 
@@ -67,7 +66,7 @@ graph LR
         BridgeServer["HTTP Bridge Server (/add, /batch_add)"]
     end
 
-    subgraph DesktopApp ["OmniStream Pro Desktop v2.0"]
+    subgraph DesktopApp ["OmniStream Pro Desktop v2.0.2"]
         GUI["CustomTkinter Dark GUI"]
         QueueMgr["Queue Manager (Download All)"]
         Engine["High-Speed Engine (N_m3u8DL-RE + FFmpeg)"]
@@ -98,13 +97,21 @@ graph LR
 #### Option C: Run from Source
 ```bash
 git clone https://github.com/Xmon4u/OmniStream-Pro-v2.git
-cd OmniStream-Pro-v2/desktop
+cd OmniStream-Pro-v2
 
-pip install customtkinter
+pip install -r requirements.txt
+cd desktop
 python main_gui.py
 ```
 
 Or simply double-click `Start_OmniStream_Pro.bat` in the root folder.
+
+Verify before publishing:
+
+```bash
+cd desktop
+python selftest.py
+```
 
 ---
 
@@ -119,13 +126,14 @@ Or simply double-click `Start_OmniStream_Pro.bat` in the root folder.
 
 ## How to Download Streams
 
-1. Open **OmniStream Pro** desktop application.
-2. In your browser, navigate to any website with video content and play the video.
-3. Click the **OmniStream Pro** extension icon.
-4. Click **Send All to App** to queue all detected streams, or **Send to App** for individual streams.
-5. In OmniStream Pro, click **Download All (Start Queue)**.
+1. Open the **OmniStream Pro** desktop application.
+2. In the browser, open a video page and press play.
+3. Click the **OmniStream** extension icon.
+4. If the list is empty, click **God Mode scan**.
+5. Click **Download** on a detected stream (it appears in the desktop queue).
+6. In OmniStream Pro, click **Download All** / start the queue.
 
-OmniStream Pro downloads all video segments and audio tracks concurrently, muxing each into a lossless `.mkv` file in your chosen output folder.
+OmniStream Pro downloads segments and available audio tracks, then muxes them into an `.mkv` when multi-audio is present.
 
 ---
 
@@ -147,26 +155,31 @@ OmniStream_Pro_v2/
 ├── desktop/
 │   ├── main_gui.py              # CustomTkinter desktop application
 │   ├── core_engine.py           # Multi-audio download manager & FFmpeg muxer
-│   ├── bridge_server.py         # Localhost browser bridge server (127.0.0.1:28795)
+│   ├── bridge_server.py         # Localhost browser bridge (127.0.0.1:28795)
+│   ├── extension_manager.py     # Extension deploy / Chrome profile install
+│   ├── window_chrome.py         # Borderless rounded window chrome
+│   ├── ui_icons.py              # Line icons + app logo helpers
 │   ├── setup_dependencies.py    # Auto-downloader for N_m3u8DL-RE and FFmpeg
-│   ├── build_exe.py             # PyInstaller one-file executable builder
-│   ├── app_icon.ico             # Windows application icon
-│   └── app_icon.png             # Application logo
+│   ├── build_exe.py             # PyInstaller one-file builder
+│   ├── selftest.py              # Offline publish checks
+│   ├── bin/README.md            # Binary tools (auto-downloaded; not in git)
+│   ├── app_icon.ico
+│   └── app_icon.png
 │
 ├── extension/
-│   ├── manifest.json            # Chrome MV3 manifest
-│   ├── background.js            # Background network sniffer & bridge dispatcher
-│   ├── content.js               # Content script & DOM injector
-│   ├── godmode.js               # Deep DOM scanner & anti-devtools protector
-│   ├── popup.html               # Extension user interface
-│   ├── popup.css                # Dark stylesheet
-│   ├── popup.js                 # Popup controller & batch transfer logic
-│   └── icons/                   # Extension icons (16, 32, 48, 128)
+│   ├── manifest.json            # Chrome MV3 manifest (v2.0.2)
+│   ├── background.js            # Network sniffer & bridge
+│   ├── content.js               # Content script injector
+│   ├── godmode.js               # Deep scan + anti-devtools
+│   ├── popup.html / .css / .js  # Minimal popup UI
+│   └── icons/
 │
-├── Start_OmniStream_Pro.bat     # Quick desktop launcher
-├── build_release.py             # Release builder (.exe and extension .zip)
-├── LICENSE                      # MIT License
-└── README.md                    # Documentation
+├── requirements.txt             # Python dependencies
+├── Start_OmniStream_Pro.bat
+├── build_release.py             # Builds exe, installer, extension zip
+├── LICENSE
+├── RELEASE_NOTES.md
+└── README.md
 ```
 
 ---

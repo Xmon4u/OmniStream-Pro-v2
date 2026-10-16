@@ -41,6 +41,8 @@ def build():
         "--windowed",
         "--name", EXE_NAME,
         "--icon", ICON_PATH,
+        "--hidden-import", "ui_icons",
+        "--hidden-import", "window_chrome",
         "--hidden-import", "extension_manager",
         "--hidden-import", "webbrowser",
         "--hidden-import", "glob",

@@ -1,48 +1,37 @@
-## ⚡ OmniStream Pro v2.0.0 — Universal Stream Downloader & Extension Suite
+## OmniStream Pro v2.0.2 — Universal Stream Downloader & Extension Suite
 
-We are thrilled to release **OmniStream Pro v2.0.0**, introducing seamless browser-to-desktop link forwarding, an IDM-grade batch download queue, multi-audio MKV multiplexing, and God Mode deep scanning!
+Release notes for the desktop app + Chrome extension suite.
 
----
+### What's new
 
-### ✨ What's New in v2.0.0
+- **Rounded borderless desktop window** with custom caption buttons (Windows).
+- **App logo + line icons** in the desktop UI (no emoji icons).
+- **Chrome extension install** into the profile you are using, without killing every open profile.
+- **Minimal extension popup**: God Mode scan, player list, **Download** to desktop.
+- **Live download timeline**: percent done / left, ETA, speed, and progress-bar animation.
+- **Cleaner desktop UI**: removed duplicate Chrome/queue buttons; **Clear Logs** kept on the Terminal tab.
+- Stronger stream capture (`webRequest.onBeforeRequest` + God Mode deep scan).
+- Playlist filter fixed so normal `.m3u8` / `.mpd` links are shown (not only multi-audio masters).
+- Fixed Windows Setup EXE PKG packaging (no nested PyInstaller archives).
 
-- 🚀 **IDM-Grade Batch Download Queue**:
-  - Automatically queue video links transferred from the browser extension or pasted manually.
-  - Prominent **"▶ Download All (Start Queue)"** button downloads all queued items sequentially with real-time speed, percentage, ETA, and progress metrics.
-  - Controls to Pause/Stop Queue, Clear Finished, or remove individual items.
-  - One-click **"▶ Play"** and **"📁 Open Folder"** for finished videos.
+### Release assets (build locally)
 
-- ⚡ **Direct Extension-to-Desktop Bridge**:
-  - Browser extension talks directly to the desktop app on `127.0.0.1:28795`.
-  - **"🚀 Send All to App"**: Send all detected video streams on the active page to the desktop queue in a single click.
-  - **"⚡ Send to App"**: Send individual detected streams with all original request headers, referers, cookies, and tokens.
-  - Remote "Start App Queue" trigger from the extension popup.
+1. `OmniStream_Pro.exe` — portable desktop app  
+2. `OmniStream_Pro_Setup.exe` — Windows installer (optional)  
+3. `OmniStream-Pro-Chrome-Extension-v2.0.2.zip` — Load unpacked after unzip, or use the `extension/` folder in the repo  
 
-- 🎧 **Lossless Multi-Audio MKV Multiplexing**:
-  - Preserves every available audio language track (English, Hindi, Bengali, etc.) in HLS/M3U8 master playlists.
-  - Automatically multiplexes video and all audio tracks into a single clean `.mkv` file.
+Build:
 
-- 🌐 **Dual-Mode Media Engine**:
-  - Supports adaptive HLS (`.m3u8`) and DASH (`.mpd`) playlists.
-  - Supports direct streaming video links (`.mp4`, `.mkv`, `.webm`, `.mp3`).
+```bash
+python build_release.py
+```
 
-- 🛡️ **God Mode Deep Probe & Anti-DevTools Neutralizer**:
-  - Deep DOM scanner and player stimulator that surfaces hidden or obfuscated streams.
-  - Bypasses anti-debugger loops and restores F12, DevTools shortcuts, and right-click menus.
+### Requirements
 
-- 📦 **100% Portable & Self-Contained**:
-  - Single standalone `.exe` for Windows 10 & 11—no installation required.
-  - Auto-checks and provisions `N_m3u8DL-RE` and `ffmpeg` if not already present.
+- Windows 10 / 11  
+- Google Chrome (or Edge / Brave) for the extension  
+- Node.js on PATH helps Chrome extension auto-install on branded Chrome  
 
----
+### Author
 
-### 📦 Release Assets
-
-1. **`OmniStream_Pro_Setup.exe`**: Complete Windows Setup Installer with automated Chrome extension setup and desktop shortcuts.
-2. **`OmniStream_Pro.exe`**: Standalone portable Windows Desktop Application.
-3. **`OmniStream-Pro-Chrome-Extension-v2.0.0.zip`**: Chrome / Edge / Brave Browser Extension (Manifest V3).
-
----
-
-### 👤 Author
-Developed with ❤️ by **XMON4U** ([@Xmon4u](https://github.com/Xmon4u)).
+**XMON4U** — [@Xmon4u](https://github.com/Xmon4u)

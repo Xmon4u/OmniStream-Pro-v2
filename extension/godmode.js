@@ -16,6 +16,10 @@
     if (!url || typeof url !== 'string') return false;
     const s = url.trim();
     if (s.startsWith('data:') || s.startsWith('blob:') || s.startsWith('javascript:')) return false;
+    const lo = s.toLowerCase();
+    if (/\.m3u8(\?|#|$)/i.test(lo)) return true;
+    if (/\.mpd(\?|#|$)/i.test(lo)) return true;
+    if (/[?&](?:format|type)=hls\b/i.test(lo)) return true;
     try {
       const pathname = new URL(s).pathname;
       return STREAM_REGEX.test(pathname);
@@ -107,8 +111,13 @@
   // 2. Network Hooks (XHR & Fetch)
   const origXHROpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url) {
-    try { notifyDetected(url); } catch (e) {}
+    try { this.__omniUrl = url; notifyDetected(url); } catch (e) {}
     return origXHROpen.apply(this, arguments);
+  };
+  const origXHRSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function() {
+    try { notifyDetected(this.__omniUrl || ''); } catch (e) {}
+    return origXHRSend.apply(this, arguments);
   };
 
   const origFetch = window.fetch;
@@ -143,31 +152,96 @@
   };
 
   // 4. Deep DOM & Script Scanner
-  const M3U8_SCAN_REGEX = /https?:\/\/[^\s"'<>\\]+\.(m3u8|mpd|mp4)[^\s"'<>\\]*/gi;
+  const M3U8_SCAN_REGEX = /https?:\/\/[^\s"'<>\\]+?\.(m3u8|mpd|mp4)[^\s"'<>\\]*/gi;
 
   function deepDOMScan() {
     document.querySelectorAll('video, audio, video source, audio source').forEach(el => {
-      notifyDetected(el.src || el.getAttribute('src') || '');
+      notifyDetected(el.src || el.currentSrc || el.getAttribute('src') || '');
       for (const attr of el.attributes) {
-        if (attr.name.startsWith('data-') && isStreamUrl(attr.value)) {
-          notifyDetected(attr.value);
-        }
+        if (isStreamUrl(attr.value)) notifyDetected(attr.value);
       }
     });
 
-    document.querySelectorAll('script:not([src])').forEach(sc => {
-      const txt = sc.textContent || '';
-      const matches = txt.match(M3U8_SCAN_REGEX);
-      if (matches) {
-        matches.forEach(m => notifyDetected(m));
+    document.querySelectorAll('iframe').forEach((frame) => {
+      try {
+        const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+        if (frameDoc) {
+          frameDoc.querySelectorAll('video, audio, source').forEach((el) => {
+            notifyDetected(el.src || el.currentSrc || el.getAttribute('src') || '');
+          });
+        }
+      } catch (e) {
+        notifyDetected(frame.src || '');
       }
+    });
+
+    document.querySelectorAll('script').forEach((sc) => {
+      const txt = (sc.textContent || '').slice(0, 300000);
+      if (!/\.m3u8|\.mpd/i.test(txt)) return;
+      const matches = txt.match(M3U8_SCAN_REGEX);
+      if (matches) matches.forEach((m) => notifyDetected(m));
+    });
+
+    try {
+      const html = (document.documentElement && document.documentElement.innerHTML) || '';
+      if (/\.m3u8|\.mpd/i.test(html)) {
+        const matches = html.match(M3U8_SCAN_REGEX);
+        if (matches) matches.slice(0, 40).forEach((m) => notifyDetected(m));
+      }
+    } catch (e) {}
+
+    try {
+      const entries = performance.getEntriesByType('resource') || [];
+      entries.forEach((entry) => notifyDetected(entry.name || ''));
+    } catch (e) {}
+
+    if (window.jwplayer && typeof window.jwplayer === 'function') {
+      try {
+        const jw = window.jwplayer();
+        const playlist = jw && jw.getPlaylist ? jw.getPlaylist() : null;
+        if (Array.isArray(playlist)) {
+          playlist.forEach((entry) => {
+            notifyDetected(entry.file || '');
+            if (entry.sources) entry.sources.forEach((s) => notifyDetected(s.file || ''));
+          });
+        }
+      } catch (e) {}
+    }
+  }
+
+  function nudgePlayers() {
+    document.querySelectorAll('video').forEach((video) => {
+      try {
+        const src = video.currentSrc || video.src;
+        notifyDetected(src);
+        if (video.paused) {
+          const wasMuted = video.muted;
+          video.muted = true;
+          video.play().then(() => {
+            setTimeout(() => {
+              video.pause();
+              video.muted = wasMuted;
+            }, 500);
+          }).catch(() => {});
+        }
+      } catch (e) {}
+    });
+
+    document.querySelectorAll('.vjs-big-play-button, .play-button, [class*="play"], [id*="play"]').forEach((btn) => {
+      try {
+        if (btn.offsetWidth > 0 && btn.offsetHeight > 0) {
+          btn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        }
+      } catch (e) {}
     });
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
     if (event.data && event.data.target === 'OMNISTREAM_GODMODE_INJECT' && event.data.action === 'FORCE_SCAN') {
+      nudgePlayers();
       deepDOMScan();
+      setTimeout(deepDOMScan, 800);
+      setTimeout(deepDOMScan, 2000);
     }
   });
 
@@ -177,4 +251,42 @@
     deepDOMScan();
   }
   setTimeout(deepDOMScan, 2000);
+
+  const observer = new MutationObserver(() => deepDOMScan());
+  if (document.documentElement) {
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  function hookPlayers() {
+    if (window.Hls && window.Hls.prototype && !window.Hls.prototype.__omniHooked) {
+      const orig = window.Hls.prototype.loadSource;
+      window.Hls.prototype.loadSource = function(url) {
+        notifyDetected(url);
+        return orig.apply(this, arguments);
+      };
+      window.Hls.prototype.__omniHooked = true;
+    }
+    if (window.shaka && window.shaka.Player && !window.shaka.Player.__omniHooked) {
+      const orig = window.shaka.Player.prototype.load;
+      window.shaka.Player.prototype.load = function(url) {
+        notifyDetected(url);
+        return orig.apply(this, arguments);
+      };
+      window.shaka.Player.__omniHooked = true;
+    }
+    if (window.videojs && !window.__omniVideoJsHooked) {
+      const orig = window.videojs;
+      window.videojs = function() {
+        const player = orig.apply(this, arguments);
+        try {
+          player.on('loadstart', () => notifyDetected(player.currentSrc() || ''));
+        } catch (e) {}
+        return player;
+      };
+      window.__omniVideoJsHooked = true;
+    }
+  }
+
+  hookPlayers();
+  setInterval(hookPlayers, 1500);
 })();
