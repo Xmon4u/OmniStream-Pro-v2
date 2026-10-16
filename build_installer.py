@@ -82,7 +82,7 @@ def _stage_payload():
 
 def build():
     print("=" * 65)
-    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.0.2 Windows Installer)...")
+    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.1.0 Windows Installer)...")
     print("=" * 65)
 
     stage_desktop = _stage_payload()

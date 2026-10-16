@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0 — Professional Windows Setup Installer
+OmniStream Pro v2.1.0 — Professional Windows Setup Installer
 Installs OmniStream Pro, deploys the Chrome extension, checks extension status,
 creates Desktop and Start Menu shortcuts, and launches the app.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -112,7 +112,7 @@ class OmniStreamInstaller(ctk.CTk):
         ctk.CTkLabel(header, text="", image=self.icons["logo_sm"]).place(x=16, y=16)
 
         ctk.CTkLabel(
-            header, text="OmniStream Pro v2.0 Setup",
+            header, text="OmniStream Pro v2.1.0 Setup",
             font=ctk.CTkFont(family=FONT_MAIN, size=18, weight="bold"),
             text_color=TEXT_TITLE
         ).place(x=78, y=16)

@@ -14,7 +14,7 @@ EXE_NAME    = "OmniStream_Pro"
 
 def build():
     print("=" * 65)
-    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.0.0 Standalone Executable)...")
+    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.1.0 Standalone Executable)...")
     print("=" * 65)
 
     add_data_args = [
@@ -22,6 +22,8 @@ def build():
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'setup_dependencies.py')};.",
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'bridge_server.py')};.",
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'extension_manager.py')};.",
+        "--add-data", f"{os.path.join(DESKTOP_DIR, 'ui_icons.py')};.",
+        "--add-data", f"{os.path.join(DESKTOP_DIR, 'window_chrome.py')};.",
         "--add-data", f"{ICON_PATH};.",
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'app_icon.png')};.",
     ]
