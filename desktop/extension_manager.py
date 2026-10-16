@@ -6,6 +6,7 @@ Author: XMON4U (https://github.com/Xmon4u)
 
 import os
 import sys
+import time
 import glob
 import json
 import shutil
@@ -88,16 +89,25 @@ def get_browser_executable() -> Optional[str]:
             return os.path.abspath(p)
     return None
 
+_last_ext_check_time = 0.0
+_last_ext_check_result = False
+
 def is_extension_installed() -> bool:
     """
     Check if the Chrome extension is installed.
-    Checks:
-    1. Persistent settings.json state.
-    2. Active Chrome/Edge/Brave User Data Preferences AND Secure Preferences profiles.
-    3. Auto-repairs extension folder if Chrome expected it at an older path.
+    Cached with TTL to avoid redundant disk I/O on UI polling loops.
     """
+    global _last_ext_check_time, _last_ext_check_result
+    now = time.time()
+    if _last_ext_check_result:
+        return True
+    if (now - _last_ext_check_time) < 4.0:
+        return _last_ext_check_result
+
+    _last_ext_check_time = now
     settings = load_settings()
     if settings.get("extension_installed", False):
+        _last_ext_check_result = True
         return True
 
     local_appdata = os.environ.get("LOCALAPPDATA", "")
@@ -110,7 +120,7 @@ def is_extension_installed() -> bool:
         os.path.join(local_appdata, "BraveSoftware", "Brave-Browser", "User Data"),
     ]
 
-    deployed_dir = deploy_extension_files()
+    deployed_dir = get_deployed_extension_dir()
 
     for root in browser_data_roots:
         if not os.path.isdir(root):
@@ -135,10 +145,12 @@ def is_extension_installed() -> bool:
                                 except Exception:
                                     pass
                             mark_extension_installed()
+                            _last_ext_check_result = True
                             return True
                 except Exception:
                     continue
 
+    _last_ext_check_result = False
     return False
 
 def deploy_extension_files() -> str:
@@ -181,26 +193,38 @@ def deploy_extension_files() -> str:
     return dest_dir
 
 def copy_path_to_clipboard(text: str = "") -> bool:
-    """Copy text (or deployed extension path) to Windows clipboard."""
+    """
+    Copy text (or deployed extension path) to Windows clipboard instantly using Win32 API.
+    Zero process overhead, zero freeze.
+    """
     if not text:
         text = get_deployed_extension_dir()
     try:
-        # Use PowerShell to set clipboard reliably without external dependencies
-        cmd = f"Set-Clipboard -Value '{text}'"
-        subprocess.run(["powershell", "-NoProfile", "-Command", cmd], creationflags=0x08000000, timeout=4)
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        if user32.OpenClipboard(None):
+            user32.EmptyClipboard()
+            encoded = text.encode('utf-16le') + b'\x00\x00'
+            h_mem = kernel32.GlobalAlloc(0x0042, len(encoded))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+            if h_mem:
+                p_mem = kernel32.GlobalLock(h_mem)
+                if p_mem:
+                    ctypes.memmove(p_mem, encoded, len(encoded))
+                    kernel32.GlobalUnlock(h_mem)
+                    user32.SetClipboardData(13, h_mem)  # CF_UNICODETEXT = 13
+            user32.CloseClipboard()
+            return True
+    except Exception:
+        pass
+
+    # Safe fallback using subprocess without blocking GUI
+    try:
+        p = subprocess.Popen(["clip.exe"], stdin=subprocess.PIPE, creationflags=0x08000000)
+        p.communicate(input=text.encode("utf-8"), timeout=1)
         return True
     except Exception:
-        try:
-            import tkinter as tk
-            r = tk.Tk()
-            r.withdraw()
-            r.clipboard_clear()
-            r.clipboard_append(text)
-            r.update()
-            r.destroy()
-            return True
-        except Exception:
-            return False
+        return False
 
 def launch_browser_with_extension() -> bool:
     """

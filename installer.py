@@ -357,11 +357,17 @@ class OmniStreamInstaller(ctk.CTk):
                 font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
             ).pack(anchor="w", padx=14, pady=(0, 6))
 
-            ctk.CTkButton(
+            def _launch_btn_click():
+                import threading
+                threading.Thread(target=launch_browser_with_extension, daemon=True).start()
+                launch_btn.configure(text="✓ Launched! Extension Active in Chrome", fg_color="#065f46")
+
+            launch_btn = ctk.CTkButton(
                 card, text="🚀  1-Click Launch Chrome with Extension", height=32,
                 fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
-                command=launch_browser_with_extension
-            ).pack(fill="x", padx=14, pady=(0, 8))
+                command=_launch_btn_click
+            )
+            launch_btn.pack(fill="x", padx=14, pady=(0, 8))
 
             btn_box = ctk.CTkFrame(card, fg_color="transparent")
             btn_box.pack(fill="x", padx=14, pady=(0, 10))

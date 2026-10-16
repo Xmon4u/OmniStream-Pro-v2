@@ -287,15 +287,20 @@ class ExtensionSetupDialog(ctk.CTkToplevel):
         ).pack(side="right")
 
     def _launch_chrome(self):
-        success = launch_browser_with_extension()
-        if success:
-            self.btn_launch.configure(text="✓ Launched! Extension Active in Chrome", fg_color="#065f46")
-            if hasattr(self.parent, "update_bridge_status"):
-                self.parent.update_bridge_status(True)
-            self.after(1400, self.destroy)
-        else:
-            open_chrome_extensions()
-            open_extension_folder()
+        def _bg():
+            success = launch_browser_with_extension()
+            if success:
+                self.after(0, lambda: (
+                    self.btn_launch.configure(text="✓ Launched! Extension Active in Chrome", fg_color="#065f46"),
+                    self.parent.update_bridge_status(True) if hasattr(self.parent, "update_bridge_status") else None,
+                    self.after(1400, self.destroy)
+                ))
+            else:
+                self.after(0, lambda: (
+                    open_chrome_extensions(),
+                    open_extension_folder()
+                ))
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _copy_path(self):
         copy_path_to_clipboard()
@@ -361,51 +366,62 @@ class OmniStreamApp(ctk.CTk):
         self.destroy()
 
     def _check_extension_prompt(self):
-        try:
-            deploy_extension_files()
-            copy_path_to_clipboard()
-            if not is_extension_installed():
-                # Maximum Automation: Attempt 1-click launch of Chrome with extension
-                self._auto_setup_extension()
-        except Exception:
-            pass
+        def _bg_check():
+            try:
+                deployed = deploy_extension_files()
+                copy_path_to_clipboard(deployed)
+                installed = is_extension_installed()
+                if installed:
+                    self.after(0, lambda: self.update_bridge_status(True))
+                else:
+                    self.after(0, self._auto_setup_extension)
+            except Exception:
+                pass
+        threading.Thread(target=_bg_check, daemon=True).start()
 
     def _auto_setup_extension(self):
         """Maximum Automation: Auto-launch Chrome with --load-extension and show dynamic status banner."""
         self._log("[Auto-Setup] Initiating automated Chrome extension setup...")
-        browser_exe = get_browser_executable()
-        if browser_exe:
-            success = launch_browser_with_extension()
-            if success:
-                self._log("[Auto-Setup] Google Chrome launched with OmniStream Extension loaded.")
-                self.show_banner(
-                    "🚀 Google Chrome launched with OmniStream Extension loaded! Connecting...",
-                    level="info", show_btn=False
-                )
-                self._poll_auto_setup_connection(attempts=0)
-                return
+        def _bg_launch():
+            browser_exe = get_browser_executable()
+            if browser_exe:
+                success = launch_browser_with_extension()
+                if success:
+                    self.after(0, lambda: (
+                        self._log("[Auto-Setup] Google Chrome launched with OmniStream Extension loaded."),
+                        self.show_banner(
+                            "🚀 Google Chrome launched with OmniStream Extension loaded! Connecting...",
+                            level="info", show_btn=False
+                        ),
+                        self._poll_auto_setup_connection(attempts=0)
+                    ))
+                    return
 
-        # Fallback if browser could not be launched directly
-        self.show_banner(
-            "⚡ Chrome Extension not yet connected. Click to set up in 1 click:",
-            level="warning", show_btn=True, btn_text="🚀 Auto-Setup",
-            btn_cmd=lambda: ExtensionSetupDialog(self)
-        )
+            self.after(0, lambda: self.show_banner(
+                "⚡ Chrome Extension not yet connected. Click to set up in 1 click:",
+                level="warning", show_btn=True, btn_text="🚀 Auto-Setup",
+                btn_cmd=lambda: ExtensionSetupDialog(self)
+            ))
+        threading.Thread(target=_bg_launch, daemon=True).start()
 
     def _poll_auto_setup_connection(self, attempts: int):
-        if is_extension_installed():
-            self.show_banner("🎉 Chrome Extension Connected Successfully! Ready to capture streams.", level="success", show_btn=False)
-            self.update_bridge_status(True)
-            self.after(3500, self.hide_banner)
-            return
-        if attempts < 15:
-            self.after(1000, lambda: self._poll_auto_setup_connection(attempts + 1))
-        else:
-            self.show_banner(
-                "⚡ Extension connection taking longer than expected.",
-                level="warning", show_btn=True, btn_text="📖 View Setup Help",
-                btn_cmd=lambda: ExtensionSetupDialog(self)
-            )
+        def _bg_poll():
+            if is_extension_installed():
+                self.after(0, lambda: (
+                    self.show_banner("🎉 Chrome Extension Connected Successfully! Ready to capture streams.", level="success", show_btn=False),
+                    self.update_bridge_status(True),
+                    self.after(3500, self.hide_banner)
+                ))
+                return
+            if attempts < 15:
+                self.after(1000, lambda: self._poll_auto_setup_connection(attempts + 1))
+            else:
+                self.after(0, lambda: self.show_banner(
+                    "⚡ Extension connection taking longer than expected.",
+                    level="warning", show_btn=True, btn_text="📖 View Setup Help",
+                    btn_cmd=lambda: ExtensionSetupDialog(self)
+                ))
+        threading.Thread(target=_bg_poll, daemon=True).start()
 
     # ── UI Layout ─────────────────────────────────────────────────────────────
     def _build_ui(self):

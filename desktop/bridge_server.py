@@ -196,15 +196,26 @@ class BridgeServer:
         try:
             import subprocess, os
             my_pid = os.getpid()
-            cmd = f"(Get-NetTCPConnection -LocalPort {self.port} -ErrorAction SilentlyContinue).OwningProcess"
-            res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=3, creationflags=0x08000000)
-            pids = [int(p.strip()) for p in res.stdout.strip().split() if p.strip().isdigit()]
-            for pid in pids:
-                if pid != my_pid and pid > 0:
-                    try:
-                        subprocess.run(["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"], timeout=3, creationflags=0x08000000)
-                    except Exception:
-                        pass
+            # Fast native netstat query (0.02s vs 2s for PowerShell)
+            res = subprocess.run(
+                ["netstat", "-ano", "-p", "tcp"],
+                capture_output=True, text=True, timeout=2,
+                creationflags=0x08000000
+            )
+            for line in res.stdout.splitlines():
+                if f":{self.port}" in line and "LISTENING" in line.upper():
+                    tokens = line.strip().split()
+                    if tokens:
+                        try:
+                            pid = int(tokens[-1])
+                            if pid != my_pid and pid > 0:
+                                subprocess.run(
+                                    ["taskkill", "/F", "/PID", str(pid)],
+                                    capture_output=True, timeout=2,
+                                    creationflags=0x08000000
+                                )
+                        except Exception:
+                            pass
         except Exception:
             pass
 

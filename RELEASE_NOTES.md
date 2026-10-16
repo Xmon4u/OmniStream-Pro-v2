@@ -38,8 +38,9 @@ We are thrilled to release **OmniStream Pro v2.0.0**, introducing seamless brows
 
 ### 📦 Release Assets
 
-1. **`OmniStream_Pro.exe`**: Standalone Windows Desktop Application (v2.0.0).
-2. **`OmniStream-Pro-Chrome-Extension-v2.0.0.zip`**: Chrome / Edge / Brave Browser Extension (Manifest V3).
+1. **`OmniStream_Pro_Setup.exe`**: Complete Windows Setup Installer with automated Chrome extension setup and desktop shortcuts.
+2. **`OmniStream_Pro.exe`**: Standalone portable Windows Desktop Application.
+3. **`OmniStream-Pro-Chrome-Extension-v2.0.0.zip`**: Chrome / Edge / Brave Browser Extension (Manifest V3).
 
 ---
 
