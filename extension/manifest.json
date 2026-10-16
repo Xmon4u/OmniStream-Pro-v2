@@ -2,6 +2,8 @@
   "manifest_version": 3,
   "name": "OmniStream Pro - Stream Sniffer & Downloader",
   "version": "2.0.0",
+  "author": "XMON4U",
+  "homepage_url": "https://github.com/Xmon4u/OmniStream-Pro-v2",
   "description": "Universal media stream sniffer with God Mode deep scanner, anti-devtools unblocker, and OmniStream Pro desktop IDM bridge.",
   "icons": {
     "16": "icons/icon16.png",

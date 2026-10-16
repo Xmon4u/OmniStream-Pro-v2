@@ -87,11 +87,15 @@ graph LR
 
 ### 1. Desktop Application
 
-#### Option A: Standalone Executable
-1. Download `OmniStream_Pro.exe` from [GitHub Releases](https://github.com/Xmon4u/OmniStream-Pro-v2/releases).
-2. Double-click to launch.
+#### Option A: Windows Setup Installer (Recommended)
+1. Download **`OmniStream_Pro_Setup.exe`** from [GitHub Releases](https://github.com/Xmon4u/OmniStream-Pro-v2/releases).
+2. Run the installer wizard. It will automatically deploy the software, create Desktop and Start Menu shortcuts, and configure the browser extension with 1 click.
 
-#### Option B: Run from Source
+#### Option B: Standalone Portable Executable
+1. Download **`OmniStream_Pro.exe`** from [GitHub Releases](https://github.com/Xmon4u/OmniStream-Pro-v2/releases).
+2. Double-click to launch directly without installation.
+
+#### Option C: Run from Source
 ```bash
 git clone https://github.com/Xmon4u/OmniStream-Pro-v2.git
 cd OmniStream-Pro-v2/desktop
@@ -100,7 +104,7 @@ pip install customtkinter
 python main_gui.py
 ```
 
-Or double-click `Start_OmniStream_Pro.bat` in the root folder.
+Or simply double-click `Start_OmniStream_Pro.bat` in the root folder.
 
 ---
 

@@ -1,6 +1,6 @@
 """
 OmniStream Pro v2.0.0 - Release Builder
-Builds the standalone Windows executable (.exe) and packages the Chrome Extension (.zip)
+Builds the standalone executable (.exe), Setup Installer (.exe), and packages the Chrome Extension (.zip)
 Author: XMON4U (https://github.com/Xmon4u)
 """
 
