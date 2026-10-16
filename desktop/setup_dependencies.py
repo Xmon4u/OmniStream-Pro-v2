@@ -7,13 +7,42 @@ Author: XMON4U (https://github.com/Xmon4u)
 
 import os
 import sys
+import ssl
 import shutil
 import zipfile
 import urllib.request
 from typing import Tuple, Optional, Callable
 
+# Use stable releases for reliability — with dynamic fallback to latest
 N_M3U8_URL = "https://github.com/nilaoda/N_m3u8DL-RE/releases/download/v0.6.0-beta/N_m3u8DL-RE_v0.6.0-beta_win-x64_20260629.zip"
 FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+
+# SSL context that works on fresh Windows installations without updated certificate stores
+def _make_ssl_ctx():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+def _get_n_m3u8_url() -> str:
+    """Try to fetch the latest N_m3u8DL-RE win-x64 download URL from GitHub API.
+    Falls back to hardcoded URL if network or API is unavailable."""
+    try:
+        import json as _json
+        req = urllib.request.Request(
+            "https://api.github.com/repos/nilaoda/N_m3u8DL-RE/releases/latest",
+            headers={"User-Agent": "OmniStreamPro/2.0"}
+        )
+        ctx = _make_ssl_ctx()
+        with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
+            data = _json.load(r)
+            for asset in data.get("assets", []):
+                name = asset["name"].lower()
+                if "win" in name and "x64" in name and name.endswith(".zip"):
+                    return asset["browser_download_url"]
+    except Exception:
+        pass
+    return N_M3U8_URL
 
 def get_base_dir() -> str:
     """Return the base directory of the running app or executable."""
@@ -89,11 +118,12 @@ def download_file_with_progress(
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     )
 
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    ctx = _make_ssl_ctx()
+    with urllib.request.urlopen(req, timeout=90, context=ctx) as resp:
         total_size = resp.getheader("Content-Length")
         total_size = int(total_size) if total_size else 0
         downloaded = 0
-        chunk_size = 64 * 1024
+        chunk_size = 128 * 1024  # 128 KB chunks for faster downloads
 
         with open(dest_path, "wb") as f:
             while True:
@@ -130,30 +160,35 @@ def ensure_dependencies(
     ffmpeg_path = find_binary("ffmpeg.exe")
 
     if not n_m3u8_path:
-        log("[Setup] N_m3u8DL-RE not found. Initiating automatic download...")
+        log("[Setup] N_m3u8DL-RE not found. Downloading automatically...")
         zip_path = os.path.join(bin_dir, "nm3u8_dl.zip")
         try:
+            dl_url = _get_n_m3u8_url()
+            log(f"[Setup] Source: {dl_url.split('/')[-1]}")
             download_file_with_progress(
-                N_M3U8_URL, zip_path,
+                dl_url, zip_path,
                 lambda pct, txt: progress_callback(pct, f"Downloading N_m3u8DL-RE: {txt}") if progress_callback else None
             )
             log("[Setup] Extracting N_m3u8DL-RE...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # Search for the exe anywhere in the zip (handles nested dirs)
                 for file_info in zip_ref.infolist():
-                    if file_info.filename.endswith("N_m3u8DL-RE.exe"):
+                    if file_info.filename.lower().endswith("n_m3u8dl-re.exe"):
                         file_info.filename = "N_m3u8DL-RE.exe"
                         zip_ref.extract(file_info, bin_dir)
                         break
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             n_m3u8_path = os.path.join(bin_dir, "N_m3u8DL-RE.exe")
+            if not os.path.exists(n_m3u8_path):
+                raise RuntimeError("N_m3u8DL-RE.exe not found in the downloaded archive.")
             log("[Setup] N_m3u8DL-RE installed successfully.")
         except Exception as e:
             log(f"[Setup Error] Failed to download N_m3u8DL-RE: {e}")
             raise RuntimeError(f"Could not auto-download N_m3u8DL-RE: {e}")
 
     if not ffmpeg_path:
-        log("[Setup] FFmpeg not found. Initiating automatic download...")
+        log("[Setup] FFmpeg not found. Downloading automatically...")
         zip_path = os.path.join(bin_dir, "ffmpeg_dl.zip")
         try:
             download_file_with_progress(
@@ -162,14 +197,18 @@ def ensure_dependencies(
             )
             log("[Setup] Extracting FFmpeg...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # FFmpeg zip has nested dirs like ffmpeg-master.../bin/ffmpeg.exe
                 for file_info in zip_ref.infolist():
-                    if file_info.filename.endswith("ffmpeg.exe"):
+                    fname = file_info.filename.lower()
+                    if fname.endswith("/ffmpeg.exe") or fname == "ffmpeg.exe":
                         file_info.filename = "ffmpeg.exe"
                         zip_ref.extract(file_info, bin_dir)
                         break
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             ffmpeg_path = os.path.join(bin_dir, "ffmpeg.exe")
+            if not os.path.exists(ffmpeg_path):
+                raise RuntimeError("ffmpeg.exe not found in the downloaded archive.")
             log("[Setup] FFmpeg installed successfully.")
         except Exception as e:
             log(f"[Setup Error] Failed to download FFmpeg: {e}")

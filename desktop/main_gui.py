@@ -15,6 +15,17 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
+# Enable Windows DPI awareness so the UI renders crisp on high-DPI displays
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
@@ -228,8 +239,17 @@ class OmniStreamApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("OmniStream Pro v2.0 — IDM-Grade Stream Downloader")
-        self.geometry("1060x880")
-        self.minsize(960, 780)
+
+        # Responsive sizing: use 80% of screen, but cap to comfortable defaults
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        win_w = min(1020, max(900, int(sw * 0.75)))
+        win_h = min(780, max(680, int(sh * 0.80)))
+        x = (sw - win_w) // 2
+        y = max(0, (sh - win_h) // 2 - 20)
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.minsize(860, 640)
         self.configure(fg_color=BG_ROOT)
 
         icon_path = os.path.join(BASE_DIR, "app_icon.ico")
@@ -247,17 +267,28 @@ class OmniStreamApp(ctk.CTk):
         self.current_item_id  = None
         self.item_progress_bars = {}  # item_id -> (CTkProgressBar, CTkLabel)
 
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._build_ui()
         self._poll_log_queue()
         self._start_dependency_check()
         self._start_bridge_server()
-        self.after(600, self._check_extension_prompt)
+        self.after(800, self._check_extension_prompt)
+
+    def _on_close(self):
+        """Gracefully stop bridge server and clean up before exit."""
+        try:
+            if hasattr(self, 'bridge') and self.bridge:
+                self.bridge.stop()
+        except Exception:
+            pass
+        self.destroy()
 
     def _check_extension_prompt(self):
         try:
             deploy_extension_files()
             if not is_extension_installed():
-                ExtensionSetupDialog(self)
+                self.after_idle(lambda: ExtensionSetupDialog(self))
         except Exception:
             pass
 
@@ -314,7 +345,7 @@ class OmniStreamApp(ctk.CTk):
         # Subtitle
         ctk.CTkLabel(
             hdr,
-            text="IDM-Grade Batch Queue  ·  Lossless Multi-Audio MKV  ·  Browser Extension Integration  ·  16x Acceleration",
+            text="IDM-Grade Batch Queue  ·  Multi-Audio MKV  ·  Extension Bridge  ·  16x Acceleration",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_BODY, anchor="w"
         ).grid(row=1, column=1, sticky="nw", pady=(2, 12))
@@ -461,15 +492,16 @@ class OmniStreamApp(ctk.CTk):
     def _build_action_buttons(self):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=ROW_ACTIONS, column=0, sticky="ew", padx=18, pady=(4, 4))
-        bar.grid_columnconfigure(0, weight=3)
-        bar.grid_columnconfigure(1, weight=2)
-        bar.grid_columnconfigure(2, weight=1)
-        bar.grid_columnconfigure(3, weight=1)
+        # Fixed widths via minsize so buttons stay visible on small screens
+        bar.grid_columnconfigure(0, weight=1, minsize=240)
+        bar.grid_columnconfigure(1, weight=1, minsize=160)
+        bar.grid_columnconfigure(2, weight=0, minsize=90)
+        bar.grid_columnconfigure(3, weight=0, minsize=90)
 
         # Start Download
         self.start_btn = ctk.CTkButton(
             bar,
-            text="▶   Start Download & Mux",
+            text="▶  Start Download & Mux",
             font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
             height=40, corner_radius=10,
             fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
@@ -530,8 +562,8 @@ class OmniStreamApp(ctk.CTk):
 
         self.progress_lbl = ctk.CTkLabel(
             prog,
-            text="Ready — Paste a stream source above or send links from browser extension.",
-            font=ctk.CTkFont(family=FONT_MAIN, size=10),
+            text="Ready — Paste a stream URL above or send links from the browser extension.",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
             text_color=TEXT_MUTED, anchor="w"
         )
         self.progress_lbl.pack(anchor="w", padx=14, pady=(0, 6))
@@ -596,38 +628,39 @@ class OmniStreamApp(ctk.CTk):
         # IDM-style Queue Toolbar
         q_tool = ctk.CTkFrame(self.queue_frame, fg_color="transparent")
         q_tool.grid(row=0, column=0, sticky="ew", padx=6, pady=(0, 8))
+        q_tool.grid_columnconfigure(10, weight=1)  # spacer
 
         self.start_queue_btn = ctk.CTkButton(
-            q_tool, text="▶  Download All (Start Queue)",
+            q_tool, text="▶  Download All",
             font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
             fg_color="#059669", hover_color="#047857", text_color="white",
-            height=32, corner_radius=8, command=self._start_queue_processing
+            width=150, height=32, corner_radius=8, command=self._start_queue_processing
         )
-        self.start_queue_btn.pack(side="left", padx=(0, 8))
+        self.start_queue_btn.pack(side="left", padx=(0, 6))
 
         self.stop_queue_btn = ctk.CTkButton(
-            q_tool, text="⏸ Stop Queue",
+            q_tool, text="⏸ Stop",
             font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
             fg_color=BG_CARD2, hover_color="#881337", text_color="#fca5a5",
             border_width=1, border_color=BORDER_SUB,
-            height=32, corner_radius=8, command=self._stop_queue_processing
+            width=80, height=32, corner_radius=8, command=self._stop_queue_processing
         )
-        self.stop_queue_btn.pack(side="left", padx=(0, 8))
+        self.stop_queue_btn.pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
-            q_tool, text="🧹 Clear Finished",
+            q_tool, text="Clear Done",
             font=ctk.CTkFont(family=FONT_MAIN, size=11),
             fg_color=BG_CARD2, hover_color=BORDER_MAIN, text_color=TEXT_BODY,
             border_width=1, border_color=BORDER_SUB,
-            height=32, corner_radius=8, command=self._clear_finished_queue
+            width=90, height=32, corner_radius=8, command=self._clear_finished_queue
         ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
-            q_tool, text="🗑️ Clear All",
+            q_tool, text="Clear All",
             font=ctk.CTkFont(family=FONT_MAIN, size=11),
             fg_color=BG_CARD2, hover_color="#7f1d1d", text_color="#fca5a5",
             border_width=1, border_color=BORDER_SUB,
-            height=32, corner_radius=8, command=self._clear_all_queue
+            width=80, height=32, corner_radius=8, command=self._clear_all_queue
         ).pack(side="left")
 
         self.queue_stats_lbl = ctk.CTkLabel(
@@ -687,11 +720,11 @@ class OmniStreamApp(ctk.CTk):
         self.bridge = BridgeServer(self)
         success = self.bridge.start()
         if success:
-            self._log("[Bridge] Localhost extension bridge active on 127.0.0.1:28795")
-            self.bridge_badge.configure(text="🌐 Extension Bridge: Active (Port 28795)", text_color=ACCENT_EMERALD)
+            self._log("[Bridge] Extension bridge active — listening on 127.0.0.1:28795")
+            self.bridge_badge.configure(text="🌐 Bridge: Active  ●", text_color=ACCENT_EMERALD)
         else:
-            self._log("[Bridge] Port 28795 in use by existing instance.")
-            self.bridge_badge.configure(text="🌐 Bridge: Secondary", text_color=ACCENT_AMBER)
+            self._log("[Bridge] Port 28795 already in use — extension will connect to existing instance.")
+            self.bridge_badge.configure(text="🌐 Bridge: Connected", text_color=ACCENT_AMBER)
 
     # ── Log & Event Dispatcher ────────────────────────────────────────────────
     def _log(self, text: str):
@@ -1004,13 +1037,13 @@ class OmniStreamApp(ctk.CTk):
             return
 
         self.is_queue_running = True
-        self.start_queue_btn.configure(text="⏳ Downloading Queue...", state="disabled")
+        self.start_queue_btn.configure(text="⏳ Downloading...", state="disabled")
         first_item = waiting_items[0]
         self._start_download_item(first_item, is_queue_batch=True)
 
     def _stop_queue_processing(self):
         self.is_queue_running = False
-        self.start_queue_btn.configure(text="▶  Download All (Start Queue)", state="normal")
+        self.start_queue_btn.configure(text="▶  Download All", state="normal")
         if self.is_downloading:
             self._abort_download()
 
@@ -1036,8 +1069,8 @@ class OmniStreamApp(ctk.CTk):
                 self._start_download_item(next_item, is_queue_batch=True)
             else:
                 self.is_queue_running = False
-                self.start_queue_btn.configure(text="▶  Download All (Start Queue)", state="normal")
-                messagebox.showinfo("IDM Queue Finished", "All streams in the download queue have been downloaded & muxed successfully!")
+                self.start_queue_btn.configure(text="▶  Download All", state="normal")
+                messagebox.showinfo("Queue Complete", "All items in the download queue have been saved successfully!")
 
     # ── User Actions ──────────────────────────────────────────────────────────
     def _paste_clipboard(self):
@@ -1148,7 +1181,8 @@ class OmniStreamApp(ctk.CTk):
                     progress_callback=self._set_progress,
                 )
                 self._set_status("done")
-                self._set_progress(100.0, f"Saved: {os.path.basename(saved_out)}")
+                basename = os.path.basename(saved_out) if saved_out else "output file"
+                self._set_progress(100.0, f"Saved: {basename}")
                 if not is_queue_batch:
                     messagebox.showinfo("Download Complete", f"File saved successfully.\n\n{saved_out}")
             except RuntimeError as exc:
