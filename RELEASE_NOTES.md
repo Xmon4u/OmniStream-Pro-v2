@@ -26,6 +26,11 @@ Release notes for the desktop app + Chrome extension suite.
 - **Smooth Animated Progress Bar**: Animation line advances proportionally and smoothly with actual download progress, turning emerald green on completion.
 - **ANSI Escape Strip & Multi-Track Weighting**: Output is cleanly parsed and normalized across concurrent video and audio streams.
 
+#### 🗑️ Control Panel Integration & Native Uninstaller
+- **Windows Control Panel & Settings Integration**: Installs with full registration under Windows `Programs and Features` and `Installed Apps`.
+- **Dedicated Uninstaller (`uninstall.exe`)**: Built-in native uninstaller with confirmation prompt, safe process termination, shortcut cleanup, registry removal, and disk cleanup.
+- **Start Menu Uninstall Shortcut**: Provides a direct "Uninstall OmniStream Pro" shortcut in Start Menu.
+
 ---
 
 ### Previous: v2.0.2 Features
@@ -43,7 +48,7 @@ Release notes for the desktop app + Chrome extension suite.
 ### Release assets (build locally)
 
 1. `OmniStream_Pro.exe` — portable desktop app  
-2. `OmniStream_Pro_Setup.exe` — Windows installer (optional)  
+2. `OmniStream_Pro_Setup.exe` — Windows installer (with Control Panel registration & uninstaller)
 3. `OmniStream-Pro-Chrome-Extension-v2.1.0.zip` — Load unpacked after unzip
 
 Build:

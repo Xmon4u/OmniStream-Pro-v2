@@ -82,6 +82,62 @@ def create_windows_shortcut(target_exe: str, shortcut_path: str, icon_path: str 
         return False
 
 
+def register_windows_uninstaller(target_dir: str, version: str = "2.1.0") -> bool:
+    """Register OmniStream Pro in Windows Registry so it appears in Control Panel and Settings."""
+    try:
+        import winreg
+        import datetime
+
+        uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\OmniStreamPro"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, uninstall_key) as k:
+            winreg.SetValueEx(k, "DisplayName", 0, winreg.REG_SZ, "OmniStream Pro")
+            winreg.SetValueEx(k, "DisplayVersion", 0, winreg.REG_SZ, version)
+            winreg.SetValueEx(k, "Publisher", 0, winreg.REG_SZ, "Xmon4u")
+
+            icon_path = os.path.join(target_dir, "app_icon.ico")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(target_dir, "OmniStream_Pro.exe")
+            winreg.SetValueEx(k, "DisplayIcon", 0, winreg.REG_SZ, icon_path)
+
+            winreg.SetValueEx(k, "InstallLocation", 0, winreg.REG_SZ, target_dir)
+
+            uninstaller_exe = os.path.join(target_dir, "uninstall.exe")
+            winreg.SetValueEx(k, "UninstallString", 0, winreg.REG_SZ, f'"{uninstaller_exe}"')
+            winreg.SetValueEx(k, "QuietUninstallString", 0, winreg.REG_SZ, f'"{uninstaller_exe}" --quiet')
+
+            today = datetime.datetime.now().strftime("%Y%m%d")
+            winreg.SetValueEx(k, "InstallDate", 0, winreg.REG_SZ, today)
+
+            total_size_kb = 0
+            for root, _, files in os.walk(target_dir):
+                for f in files:
+                    try:
+                        total_size_kb += os.path.getsize(os.path.join(root, f)) // 1024
+                    except Exception:
+                        pass
+            winreg.SetValueEx(k, "EstimatedSize", 0, winreg.REG_DWORD, max(total_size_kb, 90000))
+
+            winreg.SetValueEx(k, "NoModify", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(k, "NoRepair", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(k, "HelpLink", 0, winreg.REG_SZ, "https://github.com/Xmon4u/OmniStream-Pro-v2")
+            winreg.SetValueEx(k, "URLInfoAbout", 0, winreg.REG_SZ, "https://github.com/Xmon4u/OmniStream-Pro-v2")
+        return True
+    except Exception as exc:
+        print(f"Warning: could not register Windows uninstaller: {exc}")
+        return False
+
+
+def unregister_windows_uninstaller() -> bool:
+    """Remove OmniStream Pro from Windows Registry."""
+    try:
+        import winreg
+        uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\OmniStreamPro"
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, uninstall_key)
+        return True
+    except Exception:
+        return False
+
+
 class OmniStreamInstaller(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -249,8 +305,11 @@ class OmniStreamInstaller(ctk.CTk):
                 "window_chrome.py",
                 "app_icon.ico",
                 "app_icon.png",
+                "uninstall.exe",
             ]:
                 src = os.path.join(DESKTOP_DIR, item)
+                if not os.path.exists(src):
+                    src = os.path.join(INSTALLER_DIR, item)
                 if os.path.exists(src):
                     shutil.copy2(src, os.path.join(target_dir, item))
 
@@ -283,6 +342,21 @@ class OmniStreamInstaller(ctk.CTk):
                     except Exception:
                         pass
 
+            # Copy uninstall executable if present
+            target_uninst = os.path.join(target_dir, "uninstall.exe")
+            candidate_uninst = [
+                os.path.join(DESKTOP_DIR, "uninstall.exe"),
+                os.path.join(INSTALLER_DIR, "desktop", "uninstall.exe"),
+                os.path.join(INSTALLER_DIR, "uninstall.exe"),
+            ]
+            for cand in candidate_uninst:
+                if os.path.isfile(cand):
+                    try:
+                        shutil.copy2(cand, target_uninst)
+                        break
+                    except Exception:
+                        pass
+
             # 2. Deploy Chrome Extension
             self.status_lbl.configure(text="Deploying browser extension...")
             self.pbar.set(0.6)
@@ -305,7 +379,7 @@ class OmniStreamInstaller(ctk.CTk):
                     icon_path=icon_file
                 )
 
-            # Start Menu shortcut
+            # Start Menu shortcuts
             appdata_roaming = os.environ.get("APPDATA", "")
             if appdata_roaming:
                 start_menu_dir = os.path.join(appdata_roaming, "Microsoft", "Windows", "Start Menu", "Programs", "OmniStream Pro")
@@ -315,8 +389,20 @@ class OmniStreamInstaller(ctk.CTk):
                     shortcut_path=os.path.join(start_menu_dir, "OmniStream Pro.lnk"),
                     icon_path=icon_file
                 )
+                if os.path.exists(target_uninst):
+                    create_windows_shortcut(
+                        target_exe=target_uninst,
+                        shortcut_path=os.path.join(start_menu_dir, "Uninstall OmniStream Pro.lnk"),
+                        icon_path=icon_file
+                    )
 
-            # 4. Check Extension Status
+            # 4. Register in Windows Control Panel / Settings
+            self.status_lbl.configure(text="Registering Windows uninstaller...")
+            self.pbar.set(0.9)
+            self.update_idletasks()
+            register_windows_uninstaller(target_dir, version="2.1.0")
+
+            # 5. Check Extension Status
             self.pbar.set(1.0)
             self.status_lbl.configure(text="Finalizing setup...")
             self.update_idletasks()

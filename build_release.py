@@ -41,8 +41,21 @@ def build_executable():
         raise FileNotFoundError(f"Expected compiled executable at {dist_exe}")
     return dist_exe
 
+def build_uninstaller():
+    print(f"\n[3/5] Compiling native uninstaller (uninstall.exe)...")
+    build_script = os.path.join(DESKTOP_DIR, "build_uninstaller.py")
+    res = subprocess.run([sys.executable, build_script], cwd=DESKTOP_DIR)
+    if res.returncode != 0:
+        raise RuntimeError("Uninstaller compilation failed.")
+    dist_uninst = os.path.join(DESKTOP_DIR, "uninstall.exe")
+    if not os.path.exists(dist_uninst):
+        raise FileNotFoundError(f"Expected uninstaller at {dist_uninst}")
+    release_uninst = os.path.join(RELEASE_DIR, "uninstall.exe")
+    shutil.copy2(dist_uninst, release_uninst)
+    return release_uninst
+
 def build_installer():
-    print(f"\n[3/4] Compiling Windows Setup Installer (OmniStream_Pro_Setup.exe)...")
+    print(f"\n[4/5] Compiling Windows Setup Installer (OmniStream_Pro_Setup.exe)...")
     build_script = os.path.join(ROOT_DIR, "build_installer.py")
     res = subprocess.run([sys.executable, build_script], cwd=ROOT_DIR)
     if res.returncode != 0:
@@ -80,16 +93,20 @@ def main():
     else:
         shutil.copy2(dist_exe_path, release_exe_path)
     size_mb = os.path.getsize(release_exe_path) / (1024 * 1024)
-    print(f"\n[2/4] Copied {EXE_NAME} to release folder ({size_mb:.2f} MB).")
+    print(f"\n[2/5] Copied {EXE_NAME} to release folder ({size_mb:.2f} MB).")
 
-    # 3. Compile Windows Setup Installer
+    # 3. Compile native uninstaller
+    uninst_path = build_uninstaller()
+
+    # 4. Compile Windows Setup Installer
     setup_path = build_installer()
 
     print("\n" + "=" * 65)
     print(f"[SUCCESS] All {VERSION} release assets prepared:")
     print(f"  1. Windows Installer EXE : {setup_path}")
     print(f"  2. Portable Desktop App  : {release_exe_path}")
-    print(f"  3. Chrome Extension Zip  : {ext_zip_path}")
+    print(f"  3. Native Uninstaller    : {uninst_path}")
+    print(f"  4. Chrome Extension Zip  : {ext_zip_path}")
     print("=" * 65)
 
 if __name__ == "__main__":

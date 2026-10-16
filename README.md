@@ -31,6 +31,7 @@ Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all ava
 
 - **Live Download Progress & Speed**: Real-time download percentage completed (`XX.X% done`), speed indicator in MB/s or KB/s, estimated time remaining (ETA), and smooth progress bar animation with ANSI escape filtering.
 - **Inline Title Edit / Rename**: Edit titles directly from the software upon download completion — click the pencil (✏) icon in the queue to rename both the card and the file on disk instantly.
+- **Control Panel Integration & Native Uninstaller**: Full Windows Control Panel ("Programs and Features") and Settings ("Installed Apps") registration with a dedicated native uninstaller (`uninstall.exe`) and Start Menu shortcut for clean removal.
 - **Auto-Cleanup**: Automatically deletes temporary cache and intermediate segment files (`.m4a`, `.aac`, `.ts`, `.mp4` chunks) after multiplexing, preserving disk space and keeping only the clean final video.
 - **Batch Queue**: Links sent from the extension or pasted manually queue up automatically. Click **Download All** to process the entire queue.
 - **Multi-Audio MKV Muxing**: Downloads and muxes every audio track into a single container with proper language track metadata.

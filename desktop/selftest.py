@@ -254,6 +254,9 @@ def test_release_binaries_optional():
         ok("setup exe PKG cookie", magic in data and not data.endswith(b"\x00" * 64))
     else:
         print("[SKIP] setup exe not in release_output yet")
+    uninst = os.path.join(out, "uninstall.exe")
+    if os.path.isfile(uninst):
+        ok("native uninstaller exists", os.path.getsize(uninst) > 10000)
     if os.path.isfile(zip_path):
         import zipfile
         with zipfile.ZipFile(zip_path, "r") as zf:

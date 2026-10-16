@@ -20,7 +20,7 @@ ICON_PATH = os.path.join(DESKTOP_DIR, "app_icon.ico")
 SETUP_NAME = "OmniStream_Pro_Setup"
 STAGE_DIR = os.path.join(ROOT_DIR, "_installer_stage")
 
-# Files the installer copies into AppData (source modules + icons).
+# Files the installer copies into AppData (source modules + icons + uninstaller).
 DESKTOP_FILES = [
     "main_gui.py",
     "core_engine.py",
@@ -31,6 +31,7 @@ DESKTOP_FILES = [
     "window_chrome.py",
     "app_icon.ico",
     "app_icon.png",
+    "uninstall.exe",
 ]
 
 
@@ -40,9 +41,18 @@ def _clean_stage():
     os.makedirs(STAGE_DIR, exist_ok=True)
 
 
+def _ensure_uninstaller():
+    uninst_exe = os.path.join(DESKTOP_DIR, "uninstall.exe")
+    if not os.path.isfile(uninst_exe):
+        build_script = os.path.join(DESKTOP_DIR, "build_uninstaller.py")
+        if os.path.isfile(build_script):
+            subprocess.run([sys.executable, build_script], cwd=DESKTOP_DIR, check=True)
+
+
 def _stage_payload():
     """Build a clean payload tree without nested PyInstaller artifacts."""
     _clean_stage()
+    _ensure_uninstaller()
 
     stage_desktop = os.path.join(STAGE_DIR, "desktop")
     os.makedirs(stage_desktop, exist_ok=True)
