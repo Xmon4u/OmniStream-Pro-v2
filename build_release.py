@@ -66,7 +66,19 @@ def main():
     # 2. Compile desktop portable exe
     dist_exe_path = build_executable()
     release_exe_path = os.path.join(RELEASE_DIR, EXE_NAME)
-    shutil.copy2(dist_exe_path, release_exe_path)
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", EXE_NAME], capture_output=True, creationflags=0x08000000)
+    except Exception:
+        pass
+    import time
+    for _ in range(5):
+        try:
+            shutil.copy2(dist_exe_path, release_exe_path)
+            break
+        except PermissionError:
+            time.sleep(0.5)
+    else:
+        shutil.copy2(dist_exe_path, release_exe_path)
     size_mb = os.path.getsize(release_exe_path) / (1024 * 1024)
     print(f"\n[2/4] Copied {EXE_NAME} to release folder ({size_mb:.2f} MB).")
 

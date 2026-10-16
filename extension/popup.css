@@ -228,6 +228,7 @@ body {
 }
 
 .download:hover { background: #4338ca; }
+.download.sent { background: #059669; border-color: #10b981; }
 .download svg, .copy-btn svg { width: 13px; height: 13px; flex: none; }
 
 .copy-btn:hover {

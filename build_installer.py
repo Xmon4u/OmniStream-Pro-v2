@@ -141,7 +141,19 @@ def build():
     release_out = os.path.join(ROOT_DIR, "release_output")
     os.makedirs(release_out, exist_ok=True)
     out_path = os.path.join(release_out, f"{SETUP_NAME}.exe")
-    shutil.copy2(dist_exe, out_path)
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", f"{SETUP_NAME}.exe"], capture_output=True, creationflags=0x08000000)
+    except Exception:
+        pass
+    import time
+    for _ in range(5):
+        try:
+            shutil.copy2(dist_exe, out_path)
+            break
+        except PermissionError:
+            time.sleep(0.5)
+    else:
+        shutil.copy2(dist_exe, out_path)
 
     size_mb = os.path.getsize(out_path) / (1024 * 1024)
     print("=" * 65)

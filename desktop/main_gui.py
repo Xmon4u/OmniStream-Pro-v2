@@ -1048,6 +1048,8 @@ class OmniStreamApp(ctk.CTk):
             elif msg_type == "progress":
                 pct, status_text = data
                 self._apply_progress_ui(pct, status_text)
+            elif msg_type == "bring_to_foreground":
+                self._bring_to_foreground()
             elif msg_type == "bridge_connected":
                 self.update_bridge_status(True)
             elif msg_type == "bridge_job":
@@ -1649,6 +1651,26 @@ class OmniStreamApp(ctk.CTk):
         threading.Thread(target=_worker, daemon=True).start()
 
 
+def _check_single_instance() -> bool:
+    """If OmniStream Pro is already running, focus that window and return False."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "http://127.0.0.1:28795/focus",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            if resp.status == 200:
+                return False
+    except Exception:
+        pass
+    return True
+
+
 if __name__ == "__main__":
+    if not _check_single_instance():
+        sys.exit(0)
     app = OmniStreamApp()
     app.mainloop()

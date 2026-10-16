@@ -39,7 +39,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         app = getattr(self.server, "app_instance", None)
 
-        if self.path == "/health":
+        if self.path in ("/", "/health"):
             note_extension_heartbeat()
             if app and hasattr(app, "log_queue"):
                 app.log_queue.put(("bridge_connected", {}))
@@ -54,7 +54,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             response = {
                 "status": "ok",
                 "app": "OmniStream Pro",
-                "version": "2.0.0",
+                "version": "2.1.0",
                 "bridge": "active",
                 "port": BRIDGE_PORT,
                 "queue_count": queue_len,
@@ -160,10 +160,41 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
 
+        elif self.path == "/focus":
+            try:
+                if app and hasattr(app, "log_queue"):
+                    app.log_queue.put(("bring_to_foreground", {}))
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "message": "Window focused"}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+
         else:
             self.send_response(404)
             self._send_cors_headers()
             self.end_headers()
+
+
+class ExclusiveHTTPServer(HTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self):
+        import sys, socket
+        if sys.platform == "win32":
+            try:
+                # SO_EXCLUSIVEADDRUSE prevents other zombie processes from sharing or stealing the port on Windows
+                self.socket.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", -5), 1)
+            except Exception:
+                pass
+        super().server_bind()
 
 
 class BridgeServer:
@@ -175,9 +206,11 @@ class BridgeServer:
         self.is_running = False
 
     def start(self):
+        # Always proactively clear any orphaned/stale processes on port 28795
+        self._free_port_if_needed()
         for attempt in range(2):
             try:
-                self.httpd = HTTPServer(("127.0.0.1", self.port), BridgeHandler)
+                self.httpd = ExclusiveHTTPServer(("127.0.0.1", self.port), BridgeHandler)
                 self.httpd.app_instance = self.app_instance
                 self.is_running = True
                 self.thread = threading.Thread(target=self._run, daemon=True)

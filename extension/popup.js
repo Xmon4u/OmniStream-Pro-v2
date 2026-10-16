@@ -13,6 +13,7 @@ const toastEl = $('toast');
 
 const downloadIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
 const playIcon = '<svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M9 7.5v9l8-4.5-8-4.5z"/></svg>';
 
 let toastTimer = null;
@@ -143,7 +144,7 @@ function renderDetected() {
         <button class="copy-btn" type="button" title="Copy link">${copyIcon}<span>Copy</span></button>
       </div>
     `;
-    card.querySelector('.download').onclick = () => sendToDesktop(item);
+    card.querySelector('.download').onclick = (e) => sendToDesktop(item, e.currentTarget);
     card.querySelector('.copy-btn').onclick = () => copyLink(item.url);
     detectedListEl.appendChild(card);
   });
@@ -165,7 +166,7 @@ function copyLink(url) {
   });
 }
 
-function sendToDesktop(item) {
+function sendToDesktop(item, btn) {
   const payload = {
     url: item.url,
     title: fileLabel(item.url),
@@ -180,6 +181,14 @@ function sendToDesktop(item) {
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (res && res.success) {
       showToast('Sent to OmniStream');
+      if (btn) {
+        btn.classList.add('sent');
+        btn.innerHTML = `${checkIcon}<span>Queued</span>`;
+        setTimeout(() => {
+          btn.classList.remove('sent');
+          btn.innerHTML = `${downloadIcon}<span>Download</span>`;
+        }, 2500);
+      }
       checkBridge();
     } else {
       showToast('Open the OmniStream app first');
