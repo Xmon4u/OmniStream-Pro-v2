@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# PyInstaller / Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Binaries (> 100MB cannot be pushed to GitHub)
+desktop/bin/*.exe
+desktop/bin/*.zip
+bin/*.exe
+bin/*.zip
+release_output/
+*.exe
+*.zip
+
+# Temporary engine downloads
+.omnistream_tmp_*
+*.m3u8
+*.ts
+*.m4s
+
+# System
+.DS_Store
+Thumbs.db
