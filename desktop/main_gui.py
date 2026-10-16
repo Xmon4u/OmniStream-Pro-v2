@@ -21,6 +21,14 @@ sys.path.insert(0, BASE_DIR)
 from core_engine import OmniStreamEngine, DEFAULT_SAVE_DIR
 from setup_dependencies import ensure_dependencies
 from bridge_server import BridgeServer
+from extension_manager import (
+    deploy_extension_files,
+    is_extension_installed,
+    mark_extension_installed,
+    get_deployed_extension_dir,
+    open_chrome_extensions,
+    open_extension_folder
+)
 
 # CustomTkinter Appearance
 ctk.set_appearance_mode("Dark")
@@ -59,6 +67,161 @@ ROW_CONTAINER= 5
 ROW_FOOTER   = 6
 
 
+class ExtensionSetupDialog(ctk.CTkToplevel):
+    """Professional setup modal for Chrome extension onboarding."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.title("Chrome Extension Setup — OmniStream Pro")
+        self.geometry("580x420")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_ROOT)
+
+        icon_path = os.path.join(BASE_DIR, "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
+
+        self.transient(parent)
+        self.grab_set()
+
+        try:
+            self.update_idletasks()
+            px = parent.winfo_x() + (parent.winfo_width() // 2) - 290
+            py = parent.winfo_y() + (parent.winfo_height() // 2) - 210
+            self.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+
+        self._build_content()
+
+    def _build_content(self):
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=22, pady=18)
+
+        # Header
+        header = ctk.CTkFrame(container, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 12))
+
+        icon_box = ctk.CTkFrame(header, fg_color=ACCENT_PRIMARY, width=38, height=38, corner_radius=10)
+        icon_box.pack(side="left", padx=(0, 12))
+        icon_box.grid_propagate(False)
+        ctk.CTkLabel(icon_box, text="⚡", font=ctk.CTkFont(size=18), text_color="white").place(relx=0.5, rely=0.5, anchor="center")
+
+        title_box = ctk.CTkFrame(header, fg_color="transparent")
+        title_box.pack(side="left", fill="both", expand=True)
+
+        ctk.CTkLabel(
+            title_box, text="Browser Extension Setup",
+            font=ctk.CTkFont(family=FONT_MAIN, size=15, weight="bold"),
+            text_color=TEXT_TITLE, anchor="w"
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            title_box, text="Connect Google Chrome to enable 1-click video stream capture.",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            text_color=TEXT_MUTED, anchor="w"
+        ).pack(anchor="w")
+
+        # Instruction Card
+        card = ctk.CTkFrame(container, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
+        card.pack(fill="x", pady=(0, 14))
+
+        step1 = ctk.CTkFrame(card, fg_color="transparent")
+        step1.pack(fill="x", padx=14, pady=(12, 6))
+        ctk.CTkLabel(
+            step1, text="Step 1:", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color=ACCENT_GLOW
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(
+            step1, text="Click 'Open Extensions Page' below and turn ON 'Developer mode'.",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
+        ).pack(side="left")
+
+        step2 = ctk.CTkFrame(card, fg_color="transparent")
+        step2.pack(fill="x", padx=14, pady=(2, 6))
+        ctk.CTkLabel(
+            step2, text="Step 2:", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color=ACCENT_GLOW
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(
+            step2, text="Click 'Load unpacked' and select this extension folder:",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
+        ).pack(side="left")
+
+        ext_dir = get_deployed_extension_dir()
+        path_box = ctk.CTkFrame(card, fg_color="transparent")
+        path_box.pack(fill="x", padx=14, pady=(2, 14))
+
+        self.path_entry = ctk.CTkEntry(
+            path_box,
+            fg_color=BG_INPUT, border_color=BORDER_SUB, border_width=1,
+            height=32, text_color="#c8deff",
+            font=ctk.CTkFont(family=FONT_CODE, size=10), corner_radius=6
+        )
+        self.path_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.path_entry.insert(0, ext_dir)
+        self.path_entry.configure(state="readonly")
+
+        self.btn_copy_path = ctk.CTkButton(
+            path_box, text="Copy Path", width=80, height=32,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN,
+            border_width=1, border_color=BORDER_SUB,
+            text_color=TEXT_BODY, font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            corner_radius=6, command=self._copy_path
+        )
+        self.btn_copy_path.pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(
+            path_box, text="📁", width=36, height=32,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN,
+            border_width=1, border_color=BORDER_SUB,
+            text_color=TEXT_BODY, font=ctk.CTkFont(size=12),
+            corner_radius=6, command=open_extension_folder
+        ).pack(side="left")
+
+        # Bottom Buttons
+        btn_row = ctk.CTkFrame(container, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(4, 0))
+
+        ctk.CTkButton(
+            btn_row, text="🌐  Open Extensions Page", width=190, height=36,
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
+            text_color="white", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            corner_radius=8, command=open_chrome_extensions
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row, text="✓  I've Installed It", width=145, height=36,
+            fg_color="#065f46", hover_color="#047857",
+            text_color="#a7f3d0", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            corner_radius=8, command=self._confirm_installed
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row, text="Remind Me Later", width=120, height=36,
+            fg_color="transparent", hover_color=BG_CARD2,
+            text_color=TEXT_MUTED, font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            corner_radius=8, command=self.destroy
+        ).pack(side="right")
+
+    def _copy_path(self):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(get_deployed_extension_dir())
+            self.btn_copy_path.configure(text="Copied!")
+            self.after(1500, lambda: self.btn_copy_path.configure(text="Copy Path"))
+        except Exception:
+            pass
+
+    def _confirm_installed(self):
+        mark_extension_installed()
+        self.destroy()
+
+
 class OmniStreamApp(ctk.CTk):
     """OmniStream Pro v2.0.0 Main Application Window."""
 
@@ -88,6 +251,15 @@ class OmniStreamApp(ctk.CTk):
         self._poll_log_queue()
         self._start_dependency_check()
         self._start_bridge_server()
+        self.after(600, self._check_extension_prompt)
+
+    def _check_extension_prompt(self):
+        try:
+            deploy_extension_files()
+            if not is_extension_installed():
+                ExtensionSetupDialog(self)
+        except Exception:
+            pass
 
     # ── UI Layout ─────────────────────────────────────────────────────────────
     def _build_ui(self):

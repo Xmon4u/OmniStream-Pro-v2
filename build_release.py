@@ -41,6 +41,17 @@ def build_executable():
         raise FileNotFoundError(f"Expected compiled executable at {dist_exe}")
     return dist_exe
 
+def build_installer():
+    print(f"\n[3/4] Compiling Windows Setup Installer (OmniStream_Pro_Setup.exe)...")
+    build_script = os.path.join(ROOT_DIR, "build_installer.py")
+    res = subprocess.run([sys.executable, build_script], cwd=ROOT_DIR)
+    if res.returncode != 0:
+        raise RuntimeError("Installer PyInstaller build failed.")
+    dist_setup = os.path.join(RELEASE_DIR, "OmniStream_Pro_Setup.exe")
+    if not os.path.exists(dist_setup):
+        raise FileNotFoundError(f"Expected compiled installer at {dist_setup}")
+    return dist_setup
+
 def main():
     print("=" * 65)
     print(f"  OmniStream Pro {VERSION} - Automated Release Builder")
@@ -52,19 +63,21 @@ def main():
     ext_zip_path = os.path.join(RELEASE_DIR, ZIP_NAME)
     package_extension(ext_zip_path)
 
-    # 2. Compile desktop exe
+    # 2. Compile desktop portable exe
     dist_exe_path = build_executable()
-
-    # 3. Copy to release output
     release_exe_path = os.path.join(RELEASE_DIR, EXE_NAME)
     shutil.copy2(dist_exe_path, release_exe_path)
     size_mb = os.path.getsize(release_exe_path) / (1024 * 1024)
-    print(f"\n[3/3] Copied {EXE_NAME} to release folder ({size_mb:.2f} MB).")
+    print(f"\n[2/4] Copied {EXE_NAME} to release folder ({size_mb:.2f} MB).")
+
+    # 3. Compile Windows Setup Installer
+    setup_path = build_installer()
 
     print("\n" + "=" * 65)
     print(f"[SUCCESS] All {VERSION} release assets prepared:")
-    print(f"  1. Desktop App Executable: {release_exe_path}")
-    print(f"  2. Chrome Extension Zip  : {ext_zip_path}")
+    print(f"  1. Windows Installer EXE : {setup_path}")
+    print(f"  2. Portable Desktop App  : {release_exe_path}")
+    print(f"  3. Chrome Extension Zip  : {ext_zip_path}")
     print("=" * 65)
 
 if __name__ == "__main__":

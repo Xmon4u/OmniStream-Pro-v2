@@ -21,9 +21,14 @@ def build():
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'core_engine.py')};.",
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'setup_dependencies.py')};.",
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'bridge_server.py')};.",
+        "--add-data", f"{os.path.join(DESKTOP_DIR, 'extension_manager.py')};.",
         "--add-data", f"{ICON_PATH};.",
         "--add-data", f"{os.path.join(DESKTOP_DIR, 'app_icon.png')};.",
     ]
+
+    ext_dir = os.path.join(os.path.dirname(DESKTOP_DIR), "extension")
+    if os.path.exists(ext_dir):
+        add_data_args.extend(["--add-data", f"{ext_dir};extension"])
 
     bin_dir = os.path.join(DESKTOP_DIR, "bin")
     if os.path.exists(bin_dir):

@@ -11,6 +11,12 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from typing import Optional
 
+try:
+    from extension_manager import mark_extension_installed
+except ImportError:
+    def mark_extension_installed():
+        pass
+
 BRIDGE_PORT = 28795
 
 class BridgeHandler(BaseHTTPRequestHandler):
@@ -32,6 +38,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         app = getattr(self.server, "app_instance", None)
 
         if self.path == "/health":
+            mark_extension_installed()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
