@@ -12,6 +12,7 @@ const godScanLabel = $('godScanLabel');
 const toastEl = $('toast');
 
 const downloadIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
+const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const playIcon = '<svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M9 7.5v9l8-4.5-8-4.5z"/></svg>';
 
 let toastTimer = null;
@@ -137,10 +138,30 @@ function renderDetected() {
       </div>
       ${langLine}
       <div class="url" title="${url}">${url}</div>
-      <button class="download" type="button">${downloadIcon}<span>Download</span></button>
+      <div class="btn-row">
+        <button class="download" type="button">${downloadIcon}<span>Download</span></button>
+        <button class="copy-btn" type="button" title="Copy link">${copyIcon}<span>Copy</span></button>
+      </div>
     `;
     card.querySelector('.download').onclick = () => sendToDesktop(item);
+    card.querySelector('.copy-btn').onclick = () => copyLink(item.url);
     detectedListEl.appendChild(card);
+  });
+}
+
+function copyLink(url) {
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('Link copied!');
+  }).catch(() => {
+    // Fallback for older Chrome
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('Link copied!'); }
+    catch (e) { showToast('Copy failed'); }
+    document.body.removeChild(ta);
   });
 }
 

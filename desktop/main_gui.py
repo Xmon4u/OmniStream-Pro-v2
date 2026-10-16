@@ -337,7 +337,7 @@ class OmniStreamApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-        self.title("OmniStream Pro v2.0 — IDM-Grade Stream Downloader")
+        self.title("OmniStream Pro v2.1 — IDM-Grade Stream Downloader")
 
         # Responsive sizing: use 80% of screen, but cap to comfortable defaults
         self.update_idletasks()
@@ -559,7 +559,7 @@ class OmniStreamApp(ctk.CTk):
         ).pack(side="left")
 
         ctk.CTkLabel(
-            title_box, text=" v2.0 PRO ",
+            title_box, text=" v2.1 PRO ",
             font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
             fg_color="#1e1b4b", text_color="#a5b4fc", corner_radius=6
         ).pack(side="left", padx=(8, 0))
@@ -936,7 +936,7 @@ class OmniStreamApp(ctk.CTk):
 
         ctk.CTkButton(
             footer,
-            text="OmniStream Pro v2.0.2  •  Developed by XMON4U  •  GitHub Repository",
+            text="OmniStream Pro v2.1.0  •  Developed by XMON4U  •  GitHub Repository",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED, fg_color="transparent",
             hover_color=BG_CARD, cursor="hand2",
@@ -963,21 +963,23 @@ class OmniStreamApp(ctk.CTk):
 
     def _format_progress_label(self, pct: float, msg: str) -> str:
         pct = max(0.0, min(100.0, float(pct)))
-        left = max(0.0, 100.0 - pct)
         base = (msg or "").strip()
-        # Engine already sends a rich status line — keep it when present.
-        if "% done" in base or "% left" in base:
+        # Engine already sends a rich status line — pass it through unchanged.
+        if "% done" in base or "% left" in base or "ETA" in base or "MB/s" in base or "KB/s" in base:
             return base
         if pct >= 100:
-            return base or "100% done  ·  Complete"
+            return base or "100.0% done  ·  Complete!"
         if base:
-            return f"{pct:.0f}% done  ·  {left:.0f}% left  ·  {base}"
-        return f"{pct:.0f}% done  ·  {left:.0f}% left"
+            left = max(0.0, 100.0 - pct)
+            return f"{pct:.1f}% done  ·  {left:.1f}% left  ·  {base}"
+        left = max(0.0, 100.0 - pct)
+        return f"{pct:.1f}% done  ·  {left:.1f}% left"
 
     def _apply_progress_ui(self, pct: float, status_text: str):
         pct = max(0.0, min(100.0, float(pct)))
         self._target_pct = pct
-        self._progress_pulse_on = self.is_downloading and pct < 1.0
+        # Show pulse animation only while waiting for first real progress data
+        self._progress_pulse_on = self.is_downloading and pct < 3.0
         label = self._format_progress_label(pct, status_text)
         try:
             self.progress_lbl.configure(text=label)
@@ -1004,17 +1006,19 @@ class OmniStreamApp(ctk.CTk):
         """Smooth bar fill + gentle pulse while waiting for the first % update."""
         try:
             if self._progress_pulse_on and self.is_downloading:
-                # Soft indeterminate pulse between ~4% and ~18% until real progress arrives.
-                phase = (time.time() * 2.4) % (2 * math.pi)
-                pulse = 0.04 + 0.14 * (0.5 + 0.5 * math.sin(phase))
+                # Soft indeterminate pulse between ~3% and ~15% until real progress arrives.
+                phase = (time.time() * 2.2) % (2 * math.pi)
+                pulse = 0.03 + 0.12 * (0.5 + 0.5 * math.sin(phase))
                 shown = pulse
             else:
-                # Ease displayed value toward target for a live timeline feel.
+                # Ease displayed value toward target for a smooth live-bar feel.
                 delta = self._target_pct - self._display_pct
-                if abs(delta) < 0.15:
+                if abs(delta) < 0.10:
                     self._display_pct = self._target_pct
                 else:
-                    self._display_pct += delta * 0.22
+                    # Faster ease when behind, slower near target
+                    speed = 0.18 if delta > 0 else 0.30
+                    self._display_pct += delta * speed
                 shown = max(0.0, min(1.0, self._display_pct / 100.0))
 
             self.progress_bar.set(shown)
@@ -1022,9 +1026,11 @@ class OmniStreamApp(ctk.CTk):
                 pbar, _plbl = self.item_progress_bars[self.current_item_id]
                 try:
                     pbar.set(shown)
-                    # Cyan glow while active
+                    # Color: cyan while downloading, emerald when complete
                     if self.is_downloading:
                         pbar.configure(progress_color=ACCENT_CYAN)
+                    elif shown >= 0.999:
+                        pbar.configure(progress_color=ACCENT_EMERALD)
                 except Exception:
                     pass
         except Exception:
@@ -1222,11 +1228,26 @@ class OmniStreamApp(ctk.CTk):
             detail_frame = ctk.CTkFrame(card, fg_color="transparent")
             detail_frame.grid(row=0, column=1, sticky="ew", padx=4, pady=(6, 2))
 
-            ctk.CTkLabel(
-                detail_frame, text=item["title"],
+            title_row = ctk.CTkFrame(detail_frame, fg_color="transparent")
+            title_row.pack(fill="x", anchor="w")
+
+            title_lbl = ctk.CTkLabel(
+                title_row, text=item["title"],
                 font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
                 text_color=TEXT_TITLE, anchor="w"
-            ).pack(anchor="w")
+            )
+            title_lbl.pack(side="left", anchor="w")
+
+            # Show Edit button only for completed items with a saved file
+            if item["status"] == "Completed" and item.get("saved_file") and os.path.exists(item.get("saved_file", "")):
+                ctk.CTkButton(
+                    title_row,
+                    text="", image=self.icons["edit"],
+                    width=24, height=20,
+                    fg_color="transparent", hover_color=BORDER_MAIN,
+                    corner_radius=4,
+                    command=lambda it=item: self._rename_file_dialog(it)
+                ).pack(side="left", padx=(6, 0))
 
             info_str = f"Quality: {item['resolution']} | Audio: {item['audio']} | Folder: {os.path.basename(item['save_dir'])}"
             ctk.CTkLabel(
@@ -1311,6 +1332,117 @@ class OmniStreamApp(ctk.CTk):
                 fg_color=BG_CARD, hover_color="#7f1d1d", text_color="#fca5a5",
                 command=lambda it=item: self._remove_queue_item(it)
             ).pack(side="left", padx=2)
+
+    def _rename_file_dialog(self, item: dict):
+        """Open an inline rename dialog for a completed download item."""
+        saved_file = item.get("saved_file", "")
+        if not saved_file or not os.path.exists(saved_file):
+            messagebox.showerror("Rename Error", "File not found on disk.")
+            return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Rename File")
+        dialog.geometry("480x190")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color=BG_ROOT)
+        dialog.transient(self)
+        dialog.grab_set()
+        apply_window_icon(dialog, BASE_DIR)
+
+        # Center over parent
+        try:
+            dialog.update_idletasks()
+            px = self.winfo_x() + (self.winfo_width() // 2) - 240
+            py = self.winfo_y() + (self.winfo_height() // 2) - 95
+            dialog.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+
+        frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=22, pady=18)
+
+        ctk.CTkLabel(
+            frame, text="Rename File",
+            font=ctk.CTkFont(family=FONT_MAIN, size=14, weight="bold"),
+            text_color=TEXT_TITLE, anchor="w"
+        ).pack(anchor="w", pady=(0, 6))
+
+        current_stem = os.path.splitext(os.path.basename(saved_file))[0]
+        ext = os.path.splitext(saved_file)[1]  # e.g. .mkv
+
+        ctk.CTkLabel(
+            frame, text="New filename (without extension):",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            text_color=TEXT_MUTED, anchor="w"
+        ).pack(anchor="w", pady=(0, 4))
+
+        name_entry = ctk.CTkEntry(
+            frame, fg_color=BG_INPUT, border_color=BORDER_SUB, border_width=1,
+            height=34, text_color=TEXT_TITLE,
+            font=ctk.CTkFont(family=FONT_MAIN, size=12), corner_radius=8
+        )
+        name_entry.pack(fill="x", pady=(0, 14))
+        name_entry.insert(0, current_stem)
+        name_entry.select_range(0, "end")
+        name_entry.focus()
+
+        def _do_rename():
+            new_name = name_entry.get().strip()
+            if not new_name:
+                messagebox.showwarning("Rename", "Please enter a filename.", parent=dialog)
+                return
+            # Sanitize
+            import re as _re
+            new_name = _re.sub(r'[\\/*?"<>|:]', "", new_name).strip()
+            if not new_name:
+                messagebox.showwarning("Rename", "Invalid filename.", parent=dialog)
+                return
+
+            new_path = os.path.join(os.path.dirname(saved_file), new_name + ext)
+            if os.path.abspath(new_path) == os.path.abspath(saved_file):
+                dialog.destroy()
+                return
+            if os.path.exists(new_path):
+                if not messagebox.askyesno("Rename",
+                        f"A file named '{new_name + ext}' already exists.\nOverwrite it?",
+                        parent=dialog):
+                    return
+                try:
+                    os.remove(new_path)
+                except Exception:
+                    pass
+
+            try:
+                os.rename(saved_file, new_path)
+                item["saved_file"] = new_path
+                item["title"] = new_name
+                self._log(f"[Rename] '{os.path.basename(saved_file)}' → '{new_name + ext}'")
+                dialog.destroy()
+                self._refresh_queue_ui()
+            except Exception as exc:
+                messagebox.showerror("Rename Failed",
+                    f"Could not rename the file:\n{exc}", parent=dialog)
+
+        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_row.pack(fill="x")
+
+        ctk.CTkButton(
+            btn_row, text="Rename", image=self.icons["edit"], compound="left",
+            width=120, height=32, corner_radius=8,
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, text_color="white",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            command=_do_rename
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row, text="Cancel", width=80, height=32, corner_radius=8,
+            fg_color="transparent", hover_color=BG_CARD2,
+            text_color=TEXT_MUTED, font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            command=dialog.destroy
+        ).pack(side="left")
+
+        dialog.bind("<Return>", lambda e: _do_rename())
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
 
     def _remove_queue_item(self, item):
         if item in self.queue_items:

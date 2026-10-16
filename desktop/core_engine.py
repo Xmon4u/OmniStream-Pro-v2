@@ -36,59 +36,132 @@ def _format_eta(seconds: Optional[float]) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+# Compiled regex for ANSI escape code stripping
+_ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFJABCDEFGHILMSTsu]|\][^\x07]*(?:\x07|\x1b\\)|[0-9A-Za-z])')
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI terminal escape sequences from a string."""
+    return _ANSI_RE.sub('', text)
+
+
+def _format_speed(speed_bps: Optional[float]) -> str:
+    """Format speed in B/s to human-readable KB/s or MB/s string."""
+    if speed_bps is None or speed_bps <= 0:
+        return ""
+    if speed_bps >= 1024 * 1024:
+        return f"{speed_bps / (1024*1024):.1f} MB/s"
+    elif speed_bps >= 1024:
+        return f"{speed_bps / 1024:.0f} KB/s"
+    return f"{speed_bps:.0f} B/s"
+
+
 def _parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
-    """Extract percent / speed / ETA from N_m3u8DL-RE or similar console output."""
-    pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", line)
+    """Extract percent / speed / ETA from N_m3u8DL-RE or similar console output.
+
+    N_m3u8DL-RE progress line examples:
+      Vid  [============>   ] 58.2%  12.4 MB/s  ETA: 0:01:23
+      Aud  [====>           ] 23.0%  8.1 MB/s  ETA: 0:02:41
+      [Progress] 45%  |  10.5 MB/s  |  00:01:30
+      Downloading: 67.3%  Speed: 15.2 MB/s  ETA: 0:00:45
+    """
+    # Strip ANSI escape codes first
+    clean = _strip_ansi(line)
+
+    # Must contain a percentage
+    pct_match = re.search(r'(\d+(?:\.\d+)?)\s*%', clean)
     if not pct_match:
         return None
+
     pct = max(0.0, min(100.0, float(pct_match.group(1))))
 
-    speed = None
+    # ── Speed parsing (handles KB/s, MB/s, GB/s, KiB/s, MiB/s) ──────────────
+    speed_bps: Optional[float] = None
+    # Pattern: number + optional space + unit
     speed_match = re.search(
-        r"(\d+(?:\.\d+)?)\s*(K|M|G)?B(?:ps|/s|·s)?",
-        line,
-        re.IGNORECASE,
+        r'(\d+(?:\.\d+)?)\s*([KMGT]i?B)(?:/s|ps|\s+/\s*s)',
+        clean, re.IGNORECASE
     )
     if speed_match:
         val = float(speed_match.group(1))
-        unit = (speed_match.group(2) or "").upper()
-        mult = {"K": 1 / 1024, "M": 1.0, "G": 1024}.get(unit, 1 / (1024 * 1024))
-        speed = val * mult  # MB/s
-
-    eta_sec = None
-    eta_match = re.search(r"(?:ETA|Left|Remain(?:ing)?)\s*[:=]?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?", line, re.I)
-    if eta_match:
-        parts = [int(x) for x in eta_match.groups() if x is not None]
-        if len(parts) == 3:
-            eta_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
-        elif len(parts) == 2:
-            eta_sec = parts[0] * 60 + parts[1]
+        unit = speed_match.group(2).upper().replace('IB', 'B')  # KiB -> KB
+        multipliers = {'KB': 1024, 'MB': 1024**2, 'GB': 1024**3, 'TB': 1024**4}
+        speed_bps = val * multipliers.get(unit, 1024**2)
     else:
-        # N_m3u8DL-RE often prints bare mm:ss / hh:mm:ss near the end of the line
-        time_match = re.search(r"(?:^|[\s|])(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s|$)", line)
-        if time_match and pct < 100:
-            parts = [int(x) for x in time_match.groups() if x is not None]
-            if len(parts) == 3:
-                eta_sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
-            elif len(parts) == 2:
-                eta_sec = parts[0] * 60 + parts[1]
+        # Fallback: bare number + B/s / KB/s / MB/s without slash
+        speed_match2 = re.search(
+            r'(\d+(?:\.\d+)?)\s*(K|M|G)?B/?s',
+            clean, re.IGNORECASE
+        )
+        if speed_match2:
+            val = float(speed_match2.group(1))
+            unit = (speed_match2.group(2) or '').upper()
+            mult = {'K': 1024, 'M': 1024**2, 'G': 1024**3}.get(unit, 1)
+            speed_bps = val * mult
 
-    return {"pct": pct, "speed": speed, "eta_sec": eta_sec, "raw": line}
+    # ── ETA parsing ───────────────────────────────────────────────────────────
+    eta_sec: Optional[float] = None
+
+    # Format: ETA: H:MM:SS or ETA: MM:SS or ETA: 0:MM:SS
+    eta_match = re.search(
+        r'(?:ETA|Left|Remain(?:ing)?|Time(?:left|\s+left)?)'  # keyword
+        r'\s*[:\-]?\s*'                                        # separator
+        r'(\d{1,2}):(\d{2})(?::(\d{2}))?',                   # H:MM:SS or MM:SS
+        clean, re.IGNORECASE
+    )
+    if eta_match:
+        g = [int(x) for x in eta_match.groups() if x is not None]
+        if len(g) == 3:
+            eta_sec = g[0] * 3600 + g[1] * 60 + g[2]
+        elif len(g) == 2:
+            eta_sec = g[0] * 60 + g[1]
+    else:
+        # Bare time near end of line (N_m3u8DL-RE style: "| 00:01:23 |")
+        time_match = re.search(
+            r'(?:[|\s])\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:[|\s]|$)',
+            clean
+        )
+        if time_match and pct < 99.5:
+            g = [int(x) for x in time_match.groups() if x is not None]
+            if len(g) == 3:
+                eta_sec = g[0] * 3600 + g[1] * 60 + g[2]
+            elif len(g) == 2:
+                eta_sec = g[0] * 60 + g[1]
+
+    return {"pct": pct, "speed_bps": speed_bps, "eta_sec": eta_sec, "raw": clean}
 
 
-def _build_progress_message(pct: float, speed: Optional[float], eta_sec: Optional[float], fallback: str = "") -> str:
+def _build_progress_message(
+    pct: float,
+    speed_bps: Optional[float] = None,
+    eta_sec: Optional[float] = None,
+    fallback: str = "",
+    # Legacy compat: accept 'speed' as MB/s float
+    speed: Optional[float] = None,
+) -> str:
+    """Build a human-readable progress status string."""
+    pct = max(0.0, min(100.0, pct))
     left = max(0.0, 100.0 - pct)
-    parts = [f"{pct:.0f}% done", f"{left:.0f}% left"]
-    if eta_sec is not None:
-        parts.append(f"~{_format_eta(eta_sec)} left")
-    if speed is not None and speed > 0:
-        parts.append(f"{speed:.1f} MB/s")
+
+    # Normalise speed to BPS
+    if speed_bps is None and speed is not None:
+        speed_bps = speed * 1024 * 1024  # legacy: was in MB/s
+
+    parts = [f"{pct:.1f}% done", f"{left:.1f}% left"]
+
+    if eta_sec is not None and eta_sec >= 0:
+        parts.append(f"ETA {_format_eta(eta_sec)}")
+
+    if speed_bps is not None and speed_bps > 0:
+        parts.append(_format_speed(speed_bps))
     elif fallback:
         snippet = fallback.strip()
-        if len(snippet) > 48:
-            snippet = snippet[:45] + "…"
-        if snippet and "%" not in snippet:
+        if len(snippet) > 60:
+            snippet = snippet[:57] + "…"
+        # Only append if it adds useful info
+        if snippet and "%" not in snippet and ":" not in snippet:
             parts.append(snippet)
+
     return "  ·  ".join(parts)
 
 
@@ -108,6 +181,98 @@ class OmniStreamEngine:
                     self.current_process.kill()
             except Exception:
                 pass
+
+    @staticmethod
+    def cleanup_intermediate_files(save_dir: str, save_name: str, final_file: str,
+                                    log_callback=None) -> None:
+        """Delete intermediate video/audio segment files after successful mux.
+
+        N_m3u8DL-RE leaves behind per-track files like:
+            <save_name>.mkv_video.mp4
+            <save_name>_hin.m4a  /  <save_name>_eng.m4a
+            <save_name>_audio_*.mp4  etc.
+        We keep ONLY the final merged MKV and remove everything else that
+        matches the save_name prefix and is NOT the final_file.
+        """
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+
+        if not final_file or not os.path.exists(final_file):
+            return
+
+        final_abs = os.path.abspath(final_file)
+        removed = []
+        errors = []
+
+        # Patterns produced by N_m3u8DL-RE for intermediate tracks
+        intermediate_patterns = [
+            # video-only tracks before mux
+            f"{save_name}.video.mp4",
+            f"{save_name}.video.mkv",
+            f"{save_name}_video.mp4",
+            f"{save_name}_video.mkv",
+            f"{save_name}.mp4",        # raw video stream (non-muxed)
+        ]
+
+        try:
+            for fname in os.listdir(save_dir):
+                fpath = os.path.abspath(os.path.join(save_dir, fname))
+                if fpath == final_abs:
+                    continue  # Never delete the final output
+
+                base = fname.lower()
+                stem = save_name.lower()
+
+                # Skip if name doesn't start with our save_name
+                if not base.startswith(stem):
+                    continue
+
+                # Remove intermediate audio/video segment files
+                is_intermediate = (
+                    base in [p.lower() for p in intermediate_patterns] or
+                    # Audio track files: name_lang.m4a / name_lang.aac / name_audio_N.*
+                    any(base.endswith(ext) for ext in (".m4a", ".aac", ".ts", ".mp4"))
+                    and ("audio" in base or "_hin" in base or "_eng" in base
+                         or "_jpn" in base or "_spa" in base or "_por" in base
+                         or "_ara" in base or "_tel" in base or "_tam" in base
+                         or "_kan" in base or "_mal" in base or "_ben" in base
+                         or base.endswith(".ts")
+                    ) or
+                    # Catch-all: any .mp4 / .m4a / .ts / .aac with our prefix
+                    # but NOT our final mkv
+                    (
+                        base.startswith(stem) and
+                        base != os.path.basename(final_abs).lower() and
+                        any(base.endswith(ext) for ext in (".mp4", ".m4a", ".aac", ".ts"))
+                    )
+                )
+
+                if is_intermediate:
+                    try:
+                        os.remove(fpath)
+                        removed.append(fname)
+                    except Exception as e:
+                        errors.append(f"{fname}: {e}")
+        except Exception as e:
+            _log(f"  [Cleanup] Directory scan error: {e}")
+            return
+
+        # Also remove the .omnistream_tmp_* temp folder if present
+        try:
+            for entry in os.listdir(save_dir):
+                if entry.startswith(".omnistream_tmp_"):
+                    tmp_path = os.path.join(save_dir, entry)
+                    if os.path.isdir(tmp_path):
+                        shutil.rmtree(tmp_path, ignore_errors=True)
+                        removed.append(entry + "/")
+        except Exception:
+            pass
+
+        if removed:
+            _log(f"  [Cleanup] Removed {len(removed)} intermediate file(s): {', '.join(removed[:5])}{'...' if len(removed) > 5 else ''}")
+        if errors:
+            _log(f"  [Cleanup] Could not delete: {', '.join(errors[:3])}")
 
     @staticmethod
     def parse_input(raw_text: str) -> Dict[str, Any]:
@@ -422,13 +587,16 @@ class OmniStreamEngine:
         last_progress_update = 0.0
         progress_started = time.time()
         last_pct = 0.0
+        last_speed_bps: Optional[float] = None    # EMA-smoothed speed (B/s)
+        last_eta_sec:   Optional[float] = None    # last known ETA
+        track_progress: Dict[str, float] = {}     # per-track % for weighted avg
         _keywords = (
             "Vid ", "Aud ", "INFO", "WARN", "ERROR", "Exception",
             "Mux", "Merging", "Done", "Fail", "success", "stream",
         )
 
         if progress_callback:
-            progress_callback(0.0, "Starting stream download…  ·  0% done  ·  100% left")
+            progress_callback(0.0, "Starting download…  ·  0.0% done  ·  100.0% left")
 
         buf = b""
         while True:
@@ -465,24 +633,70 @@ class OmniStreamEngine:
                 if not line:
                     continue
 
+                # Strip ANSI for logging / keyword matching
+                clean_line = _strip_ansi(line)
+
                 parsed = _parse_progress_line(line)
                 now = time.time()
-                if parsed and progress_callback and (now - last_progress_update > 0.15):
-                    pct = parsed["pct"]
-                    last_pct = max(last_pct, pct)
-                    eta_sec = parsed.get("eta_sec")
-                    speed = parsed.get("speed")
-                    if eta_sec is None and last_pct > 1.0:
+                if parsed and progress_callback and (now - last_progress_update > 0.12):
+                    raw_pct   = parsed["pct"]
+                    speed_bps = parsed.get("speed_bps")
+                    eta_sec   = parsed.get("eta_sec")
+
+                    # ── Multi-track weighted average ───────────────────────────
+                    cl = clean_line.lower()
+                    if cl.startswith("vid") or "video" in cl[:14]:
+                        track_progress["vid"] = raw_pct
+                    elif cl.startswith("aud") or "audio" in cl[:14]:
+                        # Find closest existing aud bucket or create new one
+                        existing = {k: v for k, v in track_progress.items()
+                                    if k.startswith("aud")}
+                        if existing:
+                            closest = min(existing, key=lambda k: abs(existing[k] - raw_pct))
+                            track_progress[closest] = raw_pct
+                        else:
+                            track_progress["aud_0"] = raw_pct
+                    else:
+                        track_progress["main"] = raw_pct
+
+                    if len(track_progress) >= 2:
+                        vid_pct  = track_progress.get("vid", 0.0)
+                        aud_vals = [v for k, v in track_progress.items()
+                                    if k.startswith("aud")]
+                        aud_avg  = sum(aud_vals) / len(aud_vals) if aud_vals else 0.0
+                        avg_pct  = vid_pct * 0.60 + aud_avg * 0.40
+                    else:
+                        avg_pct = raw_pct
+
+                    last_pct = max(last_pct, avg_pct)
+
+                    # ── EMA speed smoothing (alpha=0.25) ──────────────────────
+                    if speed_bps and speed_bps > 0:
+                        last_speed_bps = (
+                            speed_bps if last_speed_bps is None
+                            else 0.25 * speed_bps + 0.75 * last_speed_bps
+                        )
+
+                    # ── ETA: use reported value or calculate from elapsed ──────
+                    if eta_sec is not None:
+                        last_eta_sec = eta_sec
+                    elif last_pct > 1.0:
                         elapsed = max(0.001, now - progress_started)
-                        eta_sec = (elapsed / last_pct) * (100.0 - last_pct)
-                    msg = _build_progress_message(last_pct, speed, eta_sec, fallback=line)
+                        last_eta_sec = (elapsed / last_pct) * (100.0 - last_pct)
+
+                    msg = _build_progress_message(
+                        last_pct,
+                        speed_bps=last_speed_bps,
+                        eta_sec=last_eta_sec,
+                    )
                     progress_callback(last_pct, msg)
                     last_progress_update = now
 
-                if any(k in line for k in _keywords):
+                if any(k in clean_line for k in _keywords):
                     # Avoid flooding the log with CR progress spam
-                    if not parsed or any(k in line for k in ("INFO", "WARN", "ERROR", "Mux", "Merging", "Done")):
-                        log(f"  {line}")
+                    if not parsed or any(k in clean_line for k in
+                                        ("INFO", "WARN", "ERROR", "Mux", "Merging", "Done")):
+                        log(f"  {clean_line}")
 
         if buf.strip():
             leftover = buf.decode("utf-8", errors="replace").strip()
@@ -511,6 +725,14 @@ class OmniStreamEngine:
             log(f"  File : {final_mkv}")
             log(f"  Size : {size_mb:.2f} MB")
             log(sep)
+            # ── Auto-cleanup: remove intermediate files, keep only the final MKV
+            log("  [Cleanup] Removing intermediate segment files...")
+            self.cleanup_intermediate_files(
+                save_dir=save_dir,
+                save_name=save_name,
+                final_file=final_mkv,
+                log_callback=log,
+            )
             if progress_callback:
                 progress_callback(100.0, "Download and mux complete!")
             return final_mkv

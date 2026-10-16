@@ -186,8 +186,13 @@ body {
   margin-bottom: 8px;
 }
 
+.btn-row {
+  display: flex;
+  gap: 6px;
+}
+
 .download {
-  width: 100%;
+  flex: 1;
   height: 30px;
   border: 0;
   border-radius: 7px;
@@ -203,8 +208,33 @@ body {
   cursor: pointer;
 }
 
+.copy-btn {
+  flex: none;
+  height: 30px;
+  width: 72px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
 .download:hover { background: #4338ca; }
-.download svg { width: 13px; height: 13px; }
+.download svg, .copy-btn svg { width: 13px; height: 13px; flex: none; }
+
+.copy-btn:hover {
+  background: #1e293b;
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
 
 .empty {
   padding: 28px 8px 18px;

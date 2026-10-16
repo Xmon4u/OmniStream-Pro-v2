@@ -140,6 +140,44 @@ def icon_close(size=16, color=_STROKE):
     return _down(image, size)
 
 
+def icon_edit(size=16, color=_STROKE):
+    """Pencil/edit icon for rename functionality."""
+    image, draw, s, w = _new(size)
+    # Pencil body (rotated rectangle approximation using polygon)
+    draw.polygon([
+        (int(s * 0.58), int(s * 0.14)),
+        (int(s * 0.86), int(s * 0.42)),
+        (int(s * 0.28), int(s * 0.84)),
+        (int(s * 0.14), int(s * 0.84)),
+    ], outline=color)
+    draw.line([
+        (int(s * 0.14), int(s * 0.84)),
+        (int(s * 0.14), int(s * 0.86)),
+        (int(s * 0.28), int(s * 0.86)),
+    ], fill=color, width=w)
+    # Diagonal pencil stroke
+    draw.line([
+        (int(s * 0.58), int(s * 0.14)),
+        (int(s * 0.72), int(s * 0.28)),
+    ], fill=color, width=w)
+    # Bottom baseline
+    draw.line([
+        (int(s * 0.16), int(s * 0.84)),
+        (int(s * 0.82), int(s * 0.84)),
+    ], fill=color, width=w)
+    return _down(image, size)
+
+
+def icon_copy(size=16, color=_STROKE):
+    """Copy/duplicate icon."""
+    image, draw, s, w = _new(size)
+    # Back rect
+    _round_rect(draw, [int(s * 0.16), int(s * 0.28), int(s * 0.72), int(s * 0.86)], int(s * 0.08), w, color)
+    # Front rect
+    _round_rect(draw, [int(s * 0.28), int(s * 0.14), int(s * 0.84), int(s * 0.72)], int(s * 0.08), w, color)
+    return _down(image, size)
+
+
 def icon_globe(size=16, color=_STROKE):
     image, draw, s, w = _new(size)
     pad = int(s * 0.16)
@@ -171,6 +209,8 @@ def build_icon_set(base_dir):
         "queue": (icon_queue, 15),
         "close": (icon_close, 14),
         "globe": (icon_globe, 15),
+        "edit": (icon_edit, 14),
+        "copy": (icon_copy, 14),
     }
     icons = {name: _ctk(fn(size), size) for name, (fn, size) in specs.items()}
 
