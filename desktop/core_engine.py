@@ -405,18 +405,18 @@ class OmniStreamEngine:
                 now = time.time()
                 if progress_callback and (now - last_progress_time > 0.2):
                     elapsed = max(0.001, now - start_time)
-                    speed_mb = (downloaded / (1024 * 1024)) / elapsed
+                    speed_bps = downloaded / elapsed
                     if total_size > 0:
                         pct = downloaded / total_size * 100.0
                         remaining = max(0, total_size - downloaded)
                         eta_sec = (remaining / max(1, downloaded)) * elapsed
-                        msg = _build_progress_message(pct, speed_mb, eta_sec)
+                        msg = _build_progress_message(pct, speed_bps=speed_bps, eta_sec=eta_sec)
                         msg += f"  ·  {downloaded / (1024 * 1024):.1f}/{total_size / (1024 * 1024):.1f} MB"
                     else:
                         pct = min(95.0, 5.0 + (downloaded / (1024 * 1024)) * 2.0)
                         msg = (
                             f"Downloading…  {downloaded / (1024 * 1024):.1f} MB  ·  "
-                            f"{speed_mb:.1f} MB/s  ·  size unknown"
+                            f"{_format_speed(speed_bps)}  ·  size unknown"
                         )
                     progress_callback(pct, msg)
                     last_progress_time = now

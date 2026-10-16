@@ -15,7 +15,7 @@ DESKTOP_DIR   = os.path.join(ROOT_DIR, "desktop")
 EXTENSION_DIR = os.path.join(ROOT_DIR, "extension")
 RELEASE_DIR   = os.path.join(ROOT_DIR, "release_output")
 
-VERSION = "v2.1.0"
+VERSION = "v2.2.0"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 
@@ -101,12 +101,20 @@ def main():
     # 4. Compile Windows Setup Installer
     setup_path = build_installer()
 
+    # 5. Copy downloader engine binary (N_m3u8DL-RE.exe)
+    dl_engine_src = os.path.join(DESKTOP_DIR, "bin", "N_m3u8DL-RE.exe")
+    dl_engine_dst = os.path.join(RELEASE_DIR, "N_m3u8DL-RE.exe")
+    if os.path.exists(dl_engine_src):
+        shutil.copy2(dl_engine_src, dl_engine_dst)
+        print(f"\n[5/5] Copied Downloader engine (N_m3u8DL-RE.exe) to release folder.")
+
     print("\n" + "=" * 65)
     print(f"[SUCCESS] All {VERSION} release assets prepared:")
     print(f"  1. Windows Installer EXE : {setup_path}")
     print(f"  2. Portable Desktop App  : {release_exe_path}")
-    print(f"  3. Native Uninstaller    : {uninst_path}")
-    print(f"  4. Chrome Extension Zip  : {ext_zip_path}")
+    print(f"  3. Downloader Engine EXE : {dl_engine_dst}")
+    print(f"  4. Native Uninstaller    : {uninst_path}")
+    print(f"  5. Chrome Extension Zip  : {ext_zip_path}")
     print("=" * 65)
 
 if __name__ == "__main__":

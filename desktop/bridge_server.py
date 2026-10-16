@@ -54,7 +54,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             response = {
                 "status": "ok",
                 "app": "OmniStream Pro",
-                "version": "2.1.0",
+                "version": "2.2.0",
                 "bridge": "active",
                 "port": BRIDGE_PORT,
                 "queue_count": queue_len,

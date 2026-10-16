@@ -1,4 +1,4 @@
-# OmniStream Pro v2.1.0 — Universal Stream Downloader & Extension Suite
+# OmniStream Pro v2.2.0 — Universal Stream Downloader & Extension Suite
 
 <div align="center">
 
@@ -6,11 +6,11 @@
 
 ### Universal Multi-Audio HLS/M3U8 Stream Downloader & Browser Bridge
 
-**High-performance stream download suite with concurrent multi-track audio preservation, browser extension integration, and batch queue processing.**
+**High-performance stream download suite with concurrent multi-file downloads, browser extension integration, and real-time progress tracking.**
 
-[![Release](https://img.shields.io/badge/Release-v2.1.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
+[![Release](https://img.shields.io/badge/Release-v2.2.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-06b6d4?style=for-the-badge&logo=windows)](https://github.com/Xmon4u/OmniStream-Pro-v2)
-[![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3%20v2.1.0-10b981?style=for-the-badge&logo=googlechrome)](extension)
+[![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3%20v2.2.0-10b981?style=for-the-badge&logo=googlechrome)](extension)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
 </div>
@@ -19,9 +19,9 @@
 
 ## Overview
 
-**OmniStream Pro v2.1.0** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
+**OmniStream Pro v2.2.0** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
 
-Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all available multi-language audio tracks, and multiplex them into a single `.mkv` container with no quality loss. With batch queuing and live browser-to-desktop link forwarding, downloading streams from any website is straightforward.
+Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all available multi-language audio tracks, and multiplex them into a single `.mkv` container with no quality loss. Download multiple files simultaneously, each with its own real-time progress bar, speed indicator, and individual cancel button.
 
 ---
 
@@ -29,7 +29,9 @@ Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all ava
 
 ### Desktop Application
 
-- **Live Download Progress & Speed**: Real-time download percentage completed (`XX.X% done`), speed indicator in MB/s or KB/s, estimated time remaining (ETA), and smooth progress bar animation with ANSI escape filtering.
+- **Live Download Progress & Speed**: Real-time download percentage completed (`XX.X% done`), speed indicator in MB/s or KB/s, estimated time remaining (ETA), and smooth Chrome-style progress bar animation.
+- **Concurrent Multi-File Downloads**: Download multiple files simultaneously — each with its own engine, progress bar, speed indicator, and **Cancel** button. No more "busy" errors.
+- **Individual Cancel per Item**: Cancel any specific download without stopping others. Active downloads are never blocked by queue operations.
 - **Inline Title Edit / Rename**: Edit titles directly from the software upon download completion — click the pencil (✏) icon in the queue to rename both the card and the file on disk instantly.
 - **Control Panel Integration & Native Uninstaller**: Full Windows Control Panel ("Programs and Features") and Settings ("Installed Apps") registration with a dedicated native uninstaller (`uninstall.exe`) and Start Menu shortcut for clean removal.
 - **Auto-Cleanup**: Automatically deletes temporary cache and intermediate segment files (`.m4a`, `.aac`, `.ts`, `.mp4` chunks) after multiplexing, preserving disk space and keeping only the clean final video.
@@ -71,7 +73,7 @@ graph LR
         BridgeServer["HTTP Bridge Server (/add, /batch_add)"]
     end
 
-    subgraph DesktopApp ["OmniStream Pro Desktop v2.1.0"]
+    subgraph DesktopApp ["OmniStream Pro Desktop v2.2.0"]
         GUI["CustomTkinter Dark GUI"]
         QueueMgr["Queue Manager (Download All)"]
         Engine["High-Speed Engine (N_m3u8DL-RE + FFmpeg)"]
@@ -172,7 +174,7 @@ OmniStream_Pro_v2/
 │   └── app_icon.png
 │
 ├── extension/
-│   ├── manifest.json            # Chrome MV3 manifest (v2.1.0)
+│   ├── manifest.json            # Chrome MV3 manifest (v2.2.0)
 │   ├── background.js            # Network sniffer & bridge
 │   ├── content.js               # Content script injector
 │   ├── godmode.js               # Deep scan + anti-devtools

@@ -5,7 +5,6 @@ Features: IDM-Style Batch Queue, "Download All", Extension Bridge, and Multi-Aud
 Author: XMON4U (https://github.com/Xmon4u)
 """
 
-import math
 import os
 import sys
 import queue
@@ -337,7 +336,7 @@ class OmniStreamApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-        self.title("OmniStream Pro v2.1 — IDM-Grade Stream Downloader")
+        self.title("OmniStream Pro v2.2 — IDM-Grade Stream Downloader")
 
         # Responsive sizing: use 80% of screen, but cap to comfortable defaults
         self.update_idletasks()
@@ -356,17 +355,19 @@ class OmniStreamApp(ctk.CTk):
         self.icons = build_icon_set(BASE_DIR)
         self._chrome = RoundedFrame(self, radius=18)
 
-        self.engine           = OmniStreamEngine()
-        self.log_queue        = queue.Queue()
-        self.is_downloading   = False
-        self.queue_items      = []  # list of dicts
-        self.is_queue_running = False
-        self.current_item_id  = None
-        self.item_progress_bars = {}  # item_id -> (CTkProgressBar, CTkLabel)
-        self._display_pct = 0.0
-        self._target_pct = 0.0
-        self._progress_pulse_on = False
-        self._progress_anim_job = None
+        self.log_queue           = queue.Queue()
+        self._active_downloads   = {}  # item_id -> OmniStreamEngine (currently downloading)
+        self.queue_items         = []  # list of dicts
+        self.is_queue_running    = False
+        self.item_progress_bars  = {}  # item_id -> (CTkProgressBar, CTkLabel)
+        # Per-item progress tracking: item_id -> (display_pct, target_pct)
+        self._item_display_pct   = {}  # item_id -> float
+        self._item_target_pct    = {}  # item_id -> float
+        # Global progress bar state (shows the most-recently-started item)
+        self._active_item_id     = None  # which item the top progress bar shows
+        self._display_pct        = 0.0
+        self._target_pct         = 0.0
+        self._progress_anim_job  = None
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -559,7 +560,7 @@ class OmniStreamApp(ctk.CTk):
         ).pack(side="left")
 
         ctk.CTkLabel(
-            title_box, text=" v2.1 PRO ",
+            title_box, text=" v2.2 PRO ",
             font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
             fg_color="#1e1b4b", text_color="#a5b4fc", corner_radius=6
         ).pack(side="left", padx=(8, 0))
@@ -936,7 +937,7 @@ class OmniStreamApp(ctk.CTk):
 
         ctk.CTkButton(
             footer,
-            text="OmniStream Pro v2.1.0  •  Developed by XMON4U  •  GitHub Repository",
+            text="OmniStream Pro v2.2.0  •  Developed by XMON4U  •  GitHub Repository",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED, fg_color="transparent",
             hover_color=BG_CARD, cursor="hand2",
@@ -958,8 +959,8 @@ class OmniStreamApp(ctk.CTk):
     def _log(self, text: str):
         self.log_queue.put(("log", text))
 
-    def _set_progress(self, pct: float, msg: str):
-        self.log_queue.put(("progress", (pct, msg)))
+    def _set_progress(self, pct: float, msg: str, item_id: str = None):
+        self.log_queue.put(("progress", (pct, msg, item_id)))
 
     def _format_progress_label(self, pct: float, msg: str) -> str:
         pct = max(0.0, min(100.0, float(pct)))
@@ -975,25 +976,23 @@ class OmniStreamApp(ctk.CTk):
         left = max(0.0, 100.0 - pct)
         return f"{pct:.1f}% done  ·  {left:.1f}% left"
 
-    def _apply_progress_ui(self, pct: float, status_text: str):
+    def _apply_progress_ui(self, pct: float, status_text: str, item_id: str = None):
         pct = max(0.0, min(100.0, float(pct)))
-        self._target_pct = pct
-        # Show pulse animation only while waiting for first real progress data
-        self._progress_pulse_on = self.is_downloading and pct < 3.0
         label = self._format_progress_label(pct, status_text)
-        try:
-            self.progress_lbl.configure(text=label)
-        except Exception:
-            pass
 
-        if self.current_item_id:
+        # Update the specific item's data
+        target_id = item_id
+        if target_id:
             for item in self.queue_items:
-                if item["id"] == self.current_item_id:
+                if item["id"] == target_id:
                     item["progress_pct"] = pct
                     item["progress_text"] = label
                     break
-            if self.current_item_id in self.item_progress_bars:
-                _pbar, plbl = self.item_progress_bars[self.current_item_id]
+            self._item_target_pct[target_id] = pct
+            if target_id not in self._item_display_pct:
+                self._item_display_pct[target_id] = 0.0
+            if target_id in self.item_progress_bars:
+                _pbar, plbl = self.item_progress_bars[target_id]
                 try:
                     plbl.configure(
                         text=label,
@@ -1002,40 +1001,63 @@ class OmniStreamApp(ctk.CTk):
                 except Exception:
                     pass
 
-    def _tick_progress_animation(self):
-        """Smooth bar fill + gentle pulse while waiting for the first % update."""
-        try:
-            if self._progress_pulse_on and self.is_downloading:
-                # Soft indeterminate pulse between ~3% and ~15% until real progress arrives.
-                phase = (time.time() * 2.2) % (2 * math.pi)
-                pulse = 0.03 + 0.12 * (0.5 + 0.5 * math.sin(phase))
-                shown = pulse
-            else:
-                # Ease displayed value toward target for a smooth live-bar feel.
-                delta = self._target_pct - self._display_pct
-                if abs(delta) < 0.10:
-                    self._display_pct = self._target_pct
-                else:
-                    # Faster ease when behind, slower near target
-                    speed = 0.18 if delta > 0 else 0.30
-                    self._display_pct += delta * speed
-                shown = max(0.0, min(1.0, self._display_pct / 100.0))
+        # Top progress bar: track the most recently active item
+        if target_id and target_id == self._active_item_id:
+            self._target_pct = pct
+            try:
+                self.progress_lbl.configure(text=label)
+            except Exception:
+                pass
+        elif target_id and self._active_item_id is None:
+            self._active_item_id = target_id
+            self._target_pct = pct
+            try:
+                self.progress_lbl.configure(text=label)
+            except Exception:
+                pass
 
+    def _tick_progress_animation(self):
+        """Smooth Chrome-style bar fill — no bouncing, no indeterminate pulse."""
+        try:
+            # ── Top global progress bar ───────────────────────────────────────
+            delta = self._target_pct - self._display_pct
+            if abs(delta) < 0.05:
+                self._display_pct = self._target_pct
+            else:
+                # Smooth ease-out: faster when far behind, gracefully slows to target with zero overshoot
+                step = min(abs(delta), max(0.1, min(8.0, abs(delta) * 0.15)))
+                self._display_pct += step if delta > 0 else -step
+            shown = max(0.0, min(1.0, self._display_pct / 100.0))
             self.progress_bar.set(shown)
-            if self.current_item_id and self.current_item_id in self.item_progress_bars:
-                pbar, _plbl = self.item_progress_bars[self.current_item_id]
-                try:
-                    pbar.set(shown)
-                    # Color: cyan while downloading, emerald when complete
-                    if self.is_downloading:
-                        pbar.configure(progress_color=ACCENT_CYAN)
-                    elif shown >= 0.999:
-                        pbar.configure(progress_color=ACCENT_EMERALD)
-                except Exception:
-                    pass
+
+            # ── Per-item progress bars (smooth fill for each active download) ─
+            for iid, tgt in list(self._item_target_pct.items()):
+                cur = self._item_display_pct.get(iid, 0.0)
+                d = tgt - cur
+                if abs(d) < 0.05:
+                    self._item_display_pct[iid] = tgt
+                else:
+                    step2 = min(abs(d), max(0.1, min(8.0, abs(d) * 0.15)))
+                    self._item_display_pct[iid] = cur + (step2 if d > 0 else -step2)
+                shown_i = max(0.0, min(1.0, self._item_display_pct[iid] / 100.0))
+                if iid in self.item_progress_bars:
+                    pbar, _plbl = self.item_progress_bars[iid]
+                    try:
+                        pbar.set(shown_i)
+                        if iid in self._active_downloads:
+                            pbar.configure(progress_color=ACCENT_CYAN)
+                        elif shown_i >= 0.999:
+                            pbar.configure(progress_color=ACCENT_EMERALD)
+                    except Exception:
+                        pass
         except Exception:
             pass
         self._progress_anim_job = self.after(40, self._tick_progress_animation)
+
+    @property
+    def is_downloading(self) -> bool:
+        """True when at least one download is currently active."""
+        return bool(self._active_downloads)
 
     def _poll_log_queue(self):
         processed = 0
@@ -1046,8 +1068,8 @@ class OmniStreamApp(ctk.CTk):
                 self.log_textbox.insert("end", data + "\n")
                 self.log_textbox.see("end")
             elif msg_type == "progress":
-                pct, status_text = data
-                self._apply_progress_ui(pct, status_text)
+                pct, status_text, item_id = data
+                self._apply_progress_ui(pct, status_text, item_id)
             elif msg_type == "bring_to_foreground":
                 self._bring_to_foreground()
             elif msg_type == "bridge_connected":
@@ -1116,7 +1138,7 @@ class OmniStreamApp(ctk.CTk):
         self._log(f"\n[Extension Bridge] Received stream: {title or 'Video Stream'}")
         self._log(f"  Source queued for IDM batch download.")
 
-        if auto_start and not self.is_downloading:
+        if auto_start:
             self._start_download_item(item, is_queue_batch=False)
 
     def _handle_bridge_batch_jobs(self, data: dict):
@@ -1312,7 +1334,15 @@ class OmniStreamApp(ctk.CTk):
                     btn_box, text="Download", image=self.icons["download"], compound="left", width=108, height=26,
                     font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
                     fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
-                    command=lambda it=item: self._download_single_queue_item(it)
+                    command=lambda it=item: self._start_download_item(it, is_queue_batch=False)
+                ).pack(side="left", padx=3)
+            elif item["status"] == "Downloading":
+                # Per-item Cancel button
+                ctk.CTkButton(
+                    btn_box, text="Cancel", image=self.icons["stop"], compound="left", width=90, height=26,
+                    font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
+                    fg_color="#881337", hover_color="#9f1239", text_color="#fecdd3",
+                    command=lambda it=item: self._cancel_item(it)
                 ).pack(side="left", padx=3)
             elif item["status"] == "Completed" and item.get("saved_file") and os.path.exists(item["saved_file"]):
                 ctk.CTkButton(
@@ -1328,11 +1358,12 @@ class OmniStreamApp(ctk.CTk):
                     command=lambda it=item: os.startfile(os.path.dirname(it["saved_file"]))
                 ).pack(side="left", padx=2)
 
+            # Remove button: cancel if downloading, and remove from queue
             ctk.CTkButton(
                 btn_box, text="", image=self.icons["close"], width=28, height=26,
                 font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
                 fg_color=BG_CARD, hover_color="#7f1d1d", text_color="#fca5a5",
-                command=lambda it=item: self._remove_queue_item(it)
+                command=lambda it=item: self._cancel_and_remove(it)
             ).pack(side="left", padx=2)
 
     def _rename_file_dialog(self, item: dict):
@@ -1446,44 +1477,65 @@ class OmniStreamApp(ctk.CTk):
         dialog.bind("<Return>", lambda e: _do_rename())
         dialog.bind("<Escape>", lambda e: dialog.destroy())
 
-    def _remove_queue_item(self, item):
+    def _cancel_and_remove(self, item):
+        """Cancel the download if active, and remove the item from queue."""
+        if item["id"] in self._active_downloads:
+            self._cancel_item(item)
         if item in self.queue_items:
             self.queue_items.remove(item)
+            self._item_target_pct.pop(item["id"], None)
+            self._item_display_pct.pop(item["id"], None)
             self._refresh_queue_ui()
 
+    def _remove_queue_item(self, item):
+        self._cancel_and_remove(item)
+
+    def _cancel_item(self, item):
+        """Cancel a specific downloading item without affecting others."""
+        item_id = item["id"]
+        engine = self._active_downloads.get(item_id)
+        if engine:
+            self._log(f"\n[Action] Cancelling: {item['title']}")
+            engine.abort()
+
     def _clear_all_queue(self):
-        if self.is_queue_running or self.is_downloading:
-            messagebox.showwarning("Queue Busy", "Stop the current download first.")
-            return
-        self.queue_items = []
+        # Only remove items that are NOT currently downloading
+        non_active = [it for it in self.queue_items if it["id"] not in self._active_downloads]
+        for it in non_active:
+            self._item_target_pct.pop(it["id"], None)
+            self._item_display_pct.pop(it["id"], None)
+        self.queue_items = [it for it in self.queue_items if it["id"] in self._active_downloads]
+        if not self._active_downloads:
+            self.is_queue_running = False
+            self.start_queue_btn.configure(text="Download All", state="normal")
         self._refresh_queue_ui()
 
-    def _download_single_queue_item(self, item):
-        if self.is_downloading:
-            messagebox.showwarning("Busy", "A download is already in progress.")
-            return
-        self._start_download_item(item, is_queue_batch=False)
-
     def _start_queue_processing(self):
-        if self.is_downloading:
-            messagebox.showwarning("Busy", "A download is already running.")
-            return
-
         waiting_items = [it for it in self.queue_items if it["status"] in ("Waiting", "Failed", "Paused")]
         if not waiting_items:
             messagebox.showinfo("Queue", "No waiting items in the queue.")
             return
 
         self.is_queue_running = True
-        self.start_queue_btn.configure(text="Downloading", state="disabled")
-        first_item = waiting_items[0]
-        self._start_download_item(first_item, is_queue_batch=True)
+        self.start_queue_btn.configure(text="Downloading…", state="disabled")
+        # Start up to 3 downloads concurrently
+        MAX_CONCURRENT_QUEUE = 3
+        count = 0
+        for it in waiting_items:
+            if it["id"] not in self._active_downloads:
+                self._start_download_item(it, is_queue_batch=True)
+                count += 1
+                if count >= MAX_CONCURRENT_QUEUE:
+                    break
 
     def _handle_queue_item_finished(self, data: dict):
         item_id = data.get("id")
         status = data.get("status")
         saved_file = data.get("saved_file")
         is_queue_batch = data.get("is_queue_batch", False)
+
+        # Remove from active downloads
+        self._active_downloads.pop(item_id, None)
 
         for it in self.queue_items:
             if it["id"] == item_id:
@@ -1493,26 +1545,52 @@ class OmniStreamApp(ctk.CTk):
                 if status == "Completed":
                     it["progress_pct"] = 100.0
                     it["progress_text"] = "100% done  ·  Finished"
+                    self._item_target_pct[item_id] = 100.0
                 elif status == "Failed":
-                    it["progress_text"] = it.get("progress_text") or "Failed"
+                    it["progress_text"] = it.get("progress_text") or "Cancelled / Failed"
                 break
 
-        self._progress_pulse_on = False
-        if not self.is_downloading:
-            self._target_pct = 100.0 if status == "Completed" else self._target_pct
-            self._display_pct = self._target_pct
+        # Update top progress bar if this was the active item
+        if item_id == self._active_item_id:
+            if self._active_downloads:
+                # Hand off to another active download
+                self._active_item_id = next(iter(self._active_downloads))
+            else:
+                self._active_item_id = None
+                if status == "Completed":
+                    self._target_pct = 100.0
 
         self._refresh_queue_ui()
 
+        # Update header status badge
+        if not self._active_downloads:
+            self._set_status("done" if status == "Completed" else "aborted")
+            self.after(0, lambda: self.start_btn.configure(
+                state="normal", fg_color=ACCENT_PRIMARY,
+                text="Start Download", image=self.icons["play"]
+            ))
+            self.after(0, lambda: self.abort_btn.configure(state="disabled"))
+
+        # Queue batch: check for more waiting items or completion
         if is_queue_batch and self.is_queue_running:
-            waiting = [it for it in self.queue_items if it["status"] == "Waiting"]
-            if waiting:
-                next_item = waiting[0]
-                self._start_download_item(next_item, is_queue_batch=True)
-            else:
+            MAX_CONCURRENT_QUEUE = 3
+            waiting_items = [it for it in self.queue_items
+                             if it["status"] == "Waiting" and it["id"] not in self._active_downloads]
+            while waiting_items and len(self._active_downloads) < MAX_CONCURRENT_QUEUE:
+                next_it = waiting_items.pop(0)
+                self._start_download_item(next_it, is_queue_batch=True)
+
+            if not waiting_items and not self._active_downloads:
                 self.is_queue_running = False
                 self.start_queue_btn.configure(text="Download All", state="normal")
-                messagebox.showinfo("Queue Complete", "All items in the download queue have been saved successfully!")
+                completed = sum(1 for it in self.queue_items if it["status"] == "Completed")
+                failed = sum(1 for it in self.queue_items if it["status"] == "Failed")
+                if failed:
+                    messagebox.showinfo("Queue Complete",
+                        f"Queue finished: {completed} completed, {failed} failed.")
+                else:
+                    messagebox.showinfo("Queue Complete",
+                        "All items in the download queue have been saved successfully!")
 
     # ── User Actions ──────────────────────────────────────────────────────────
     def _paste_clipboard(self):
@@ -1530,119 +1608,103 @@ class OmniStreamApp(ctk.CTk):
             self.folder_entry.insert(0, folder)
 
     def _abort_download(self):
-        if self.is_downloading:
-            self._log("\n[Action] Sending stop signal to download engine...")
-            self.engine.abort()
+        """Abort ALL active downloads (Stop button in main bar)."""
+        if self._active_downloads:
+            self._log("\n[Action] Stopping all active downloads...")
+            for engine in list(self._active_downloads.values()):
+                try:
+                    engine.abort()
+                except Exception:
+                    pass
             self.is_queue_running = False
             self.start_queue_btn.configure(text="Download All", state="normal")
 
     def _start_download(self):
-        if self.is_downloading:
-            return
-
+        """Start Download button handler — adds input to queue and begins immediately."""
         raw_input = self.input_box.get("1.0", "end").strip()
         if not raw_input:
             messagebox.showwarning("Missing Input", "Please paste a cURL command or direct M3U8 link first.")
             return
-
-        filename = self.filename_entry.get().strip()
-        save_dir = self.folder_entry.get().strip()
-
-        res_raw = self.res_menu.get().lower()
-        if "1080p" in res_raw:
-            resolution = "1080p"
-        elif "720p" in res_raw:
-            resolution = "720p"
-        elif "480p" in res_raw:
-            resolution = "480p"
-        elif "audio only" in res_raw:
-            resolution = "audio_only"
-        else:
-            resolution = "best"
-
-        aud_raw = self.audio_menu.get().lower()
-        if "english + hindi" in aud_raw:
-            audio_choice = "en_hi"
-        elif "english only" in aud_raw:
-            audio_choice = "eng"
-        elif "hindi only" in aud_raw:
-            audio_choice = "hin"
-        else:
-            audio_choice = "all"
-
-        item = {
-            "id": "direct_input",
-            "title": filename or "Video",
-            "input": raw_input,
-            "save_dir": save_dir,
-            "resolution": resolution,
-            "audio": audio_choice,
-            "status": "Downloading",
-            "saved_file": None,
-            "progress_pct": 0.0,
-            "progress_text": "Starting…  ·  0% done  ·  100% left",
-        }
+        item = self._add_to_queue(raw_input=raw_input,
+                                  custom_title=self.filename_entry.get().strip(),
+                                  auto_show_tab=True)
+        # Clear input box and filename for next item
+        self.input_box.delete("1.0", "end")
+        self.filename_entry.delete(0, "end")
         self._start_download_item(item, is_queue_batch=False)
 
     def _start_download_item(self, item: dict, is_queue_batch: bool = False):
-        self.is_downloading = True
-        self.current_item_id = item["id"]
+        item_id = item["id"]
+
+        # Already downloading this item? Skip.
+        if item_id in self._active_downloads:
+            return
+
+        # Create a fresh engine instance per download
+        engine = OmniStreamEngine()
+        self._active_downloads[item_id] = engine
+
         item["status"] = "Downloading"
         item["progress_pct"] = 0.0
         item["progress_text"] = "Starting…  ·  0% done  ·  100% left"
-        self._display_pct = 0.0
-        self._target_pct = 0.0
-        self._progress_pulse_on = True
-        self._refresh_queue_ui()
+        self._item_target_pct[item_id] = 0.0
+        self._item_display_pct[item_id] = 0.0
 
-        self.start_btn.configure(state="disabled", fg_color="#312e81", text="Downloading")
+        # Top progress bar: assign to first download or keep existing
+        if self._active_item_id is None:
+            self._active_item_id = item_id
+            self._display_pct = 0.0
+            self._target_pct = 0.0
+            self.progress_bar.set(0.0)
+            try:
+                self.progress_lbl.configure(text=item["progress_text"])
+            except Exception:
+                pass
+
+        self._refresh_queue_ui()
+        # Keep start button enabled so more downloads can be started concurrently
+        self.start_btn.configure(state="normal", fg_color=ACCENT_PRIMARY, text="Start Download", image=self.icons["play"])
         self.abort_btn.configure(state="normal")
         self._set_status("downloading")
-        self.progress_bar.set(0.02)
-        self.progress_lbl.configure(text=item["progress_text"])
-        self._set_progress(0.0, item["progress_text"])
+
+        def _progress_cb(pct: float, msg: str):
+            self._set_progress(pct, msg, item_id)
 
         def _worker():
             status = "Completed"
             saved_out = None
             try:
                 self._log(f"\n[Task] Starting download: {item['title']}")
-                saved_out = self.engine.run_download(
+                saved_out = engine.run_download(
                     input_text=item["input"],
-                    save_name=item["title"] if item["title"] != "Video" else "",
+                    save_name=item["title"] if item["title"] not in ("", "Video") else "",
                     save_dir=item["save_dir"],
                     resolution=item["resolution"],
                     audio_choice=item["audio"],
                     log_callback=self._log,
-                    progress_callback=self._set_progress,
+                    progress_callback=_progress_cb,
                 )
-                self._set_status("done")
                 basename = os.path.basename(saved_out) if saved_out else "output file"
-                self._set_progress(100.0, f"Saved: {basename}")
+                _progress_cb(100.0, f"Saved: {basename}")
                 if not is_queue_batch:
-                    self.after(0, lambda p=saved_out: messagebox.showinfo("Download Complete", f"File saved successfully.\n\n{p}"))
+                    self.after(0, lambda p=saved_out: messagebox.showinfo(
+                        "Download Complete", f"File saved successfully.\n\n{p}"))
             except RuntimeError as exc:
                 err = str(exc)
                 status = "Failed"
-                self._set_status("aborted" if "aborted" in err.lower() else "error")
                 self._log(f"\n[Error] {err}")
-                self._set_progress(0, f"Failed: {err[:100]}")
-                if not is_queue_batch and "aborted" not in err.lower():
+                _progress_cb(0.0, f"Cancelled" if "abort" in err.lower() else f"Failed: {err[:80]}")
+                if not is_queue_batch and "abort" not in err.lower():
                     self.after(0, lambda e=err: messagebox.showerror("Download Failed", e))
             except Exception as exc:
                 status = "Failed"
-                self._set_status("error")
                 self._log(f"\n[Unexpected Error] {exc}")
-                self._set_progress(0, "An unexpected error occurred.")
+                _progress_cb(0.0, "An unexpected error occurred.")
                 if not is_queue_batch:
                     self.after(0, lambda e=str(exc): messagebox.showerror("Unexpected Error", e))
             finally:
-                self.is_downloading = False
-                self.current_item_id = None
-                self.after(0, lambda: self.start_btn.configure(state="normal", fg_color=ACCENT_PRIMARY, text="Start Download", image=self.icons["play"]))
-                self.after(0, lambda: self.abort_btn.configure(state="disabled"))
                 self.log_queue.put(("queue_item_finished", {
-                    "id": item["id"],
+                    "id": item_id,
                     "status": status,
                     "saved_file": saved_out,
                     "is_queue_batch": is_queue_batch

@@ -1,10 +1,26 @@
-## OmniStream Pro v2.1.0 — Universal Stream Downloader & Extension Suite
+## OmniStream Pro v2.2.0 — Concurrent Downloads & Smooth Progress
 
 Release notes for the desktop app + Chrome extension suite.
 
 ---
 
-### ✨ What's new in v2.1.0
+### ✨ What's new in v2.2.0
+
+#### ⚡ Concurrent Multi-File Downloads
+- **Simultaneous Downloads** — Start multiple downloads at the same time. No more "A download is already in progress" error. Each file downloads independently in its own engine instance.
+- **Individual Cancel** — Every actively-downloading item shows a dedicated **Cancel** button. Cancel one download without affecting the others.
+- **Parallel Download All** — "Download All" now launches all waiting items concurrently instead of sequentially.
+- **Smart Queue Cleanup** — "Clear All" only removes waiting/completed items; active downloads are preserved.
+
+#### 🎞️ Smooth Chrome-Style Progress Animation
+- **No More Bouncing Bar** — The indeterminate bounce/pulse animation (3%–15% oscillation) has been removed.
+- **Smooth Linear Fill** — Progress bars now use a smooth ease-out fill, just like Chrome's download bar — advancing steadily with real download data.
+- **Per-Item Progress** — Each download card in the queue has its own independent progress bar that fills smoothly and accurately.
+- **Live Speed & ETA** — Each item shows real-time download speed (KB/s / MB/s) and estimated time remaining.
+
+---
+
+### Previous: v2.1.0 Features
 
 #### 🔗 Chrome Extension
 - **Copy Button** — Every detected stream now shows a **Copy** button next to the **Download** button. Click it to instantly copy the download link to your clipboard without opening the desktop app.
@@ -47,9 +63,11 @@ Release notes for the desktop app + Chrome extension suite.
 
 ### Release assets (build locally)
 
-1. `OmniStream_Pro.exe` — portable desktop app  
-2. `OmniStream_Pro_Setup.exe` — Windows installer (with Control Panel registration & uninstaller)
-3. `OmniStream-Pro-Chrome-Extension-v2.1.0.zip` — Load unpacked after unzip
+1. `OmniStream_Pro_Setup.exe` — Windows setup installer (with Control Panel registration & uninstaller)
+2. `OmniStream_Pro.exe` — Standalone portable desktop application
+3. `N_m3u8DL-RE.exe` — Native high-speed stream downloader CLI binary
+4. `uninstall.exe` — Dedicated native uninstaller
+5. `OmniStream-Pro-Chrome-Extension-v2.2.0.zip` — Chrome/Edge browser extension package
 
 Build:
 

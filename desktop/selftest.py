@@ -38,7 +38,7 @@ def load_bg_helpers():
     ok("popup has Download wiring", "SEND_TO_OMNISTREAM" in popup_js or "Download" in popup_js)
     ok("popup has no Clear button", "clearDetectedBtn" not in popup_html)
     man = json.load(open(os.path.join(EXT, "manifest.json"), encoding="utf-8"))
-    ok("manifest version", man.get("version") in ("2.0.2", "2.1.0"))
+    ok("manifest version", man.get("version") in ("2.0.2", "2.1.0", "2.2.0"))
     ok("manifest webRequest", "webRequest" in man.get("permissions", []))
     ok("manifest host localhost", any("127.0.0.1" in h for h in man.get("host_permissions", [])))
     ok("godmode FORCE_SCAN", "FORCE_SCAN" in open(os.path.join(EXT, "godmode.js"), encoding="utf-8").read())
@@ -193,7 +193,15 @@ def test_gui_declutter():
     ok("has Start Download", "Start Download" in gui)
     ok("has Download All", "Download All" in gui)
     ok("progress animation tick", "_tick_progress_animation" in gui)
-    ok("footer version", "v2.1.0" in gui or "v2.0.2" in gui)
+    ok("footer version", "v2.2.0" in gui or "v2.1.0" in gui)
+    # Concurrent download / cancel feature checks (v2.2.0)
+    ok("concurrent: no global is_downloading flag", "self.is_downloading = False" not in gui)
+    ok("concurrent: per-item active_downloads dict", "_active_downloads" in gui)
+    ok("concurrent: per-item cancel method", "_cancel_item" in gui)
+    ok("concurrent: per-item engine instantiation", "engine = OmniStreamEngine()" in gui)
+    ok("concurrent: no Busy popup", "A download is already in progress" not in gui)
+    ok("smooth animation: no math.sin bounce", "math.sin" not in gui)
+    ok("smooth animation: Chrome-style comment", "Chrome-style" in gui)
 
 
 def test_release_files():
@@ -240,9 +248,9 @@ def test_release_binaries_optional():
     out = os.path.join(ROOT, "release_output")
     portable = os.path.join(out, "OmniStream_Pro.exe")
     setup = os.path.join(out, "OmniStream_Pro_Setup.exe")
+    zip_v220 = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.2.0.zip")
     zip_v210 = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.1.0.zip")
-    zip_v202 = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.0.2.zip")
-    zip_path = zip_v210 if os.path.isfile(zip_v210) else zip_v202
+    zip_path = zip_v220 if os.path.isfile(zip_v220) else zip_v210
     magic = b"MEI\x0c\x0b\x0a\x0b\x0e"
     if os.path.isfile(portable):
         data = open(portable, "rb").read()

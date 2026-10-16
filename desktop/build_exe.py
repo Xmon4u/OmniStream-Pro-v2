@@ -14,7 +14,7 @@ EXE_NAME    = "OmniStream_Pro"
 
 def build():
     print("=" * 65)
-    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.1.0 Standalone Executable)...")
+    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.2.0 Standalone Executable)...")
     print("=" * 65)
 
     add_data_args = [
