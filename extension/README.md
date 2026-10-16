@@ -5,8 +5,9 @@ Manifest V3 extension for Chrome, Edge, and Brave. Sniffs player streams and sen
 ## Features
 
 - Real-time HLS (`.m3u8`), DASH (`.mpd`), and direct video detection
+- **Copy Button** — Copy any stream URL to clipboard instantly with one click
 - **God Mode scan** — deep player probe + F12 / DevTools unlock
-- Minimal popup: detected player links + **Download** (sends to desktop)
+- Minimal popup: detected player links + **Download** (sends to desktop) + **Copy**
 - Localhost bridge to desktop app on `127.0.0.1:28795`
 - Header / cURL capture for authenticated streams
 
@@ -24,12 +25,12 @@ Manifest V3 extension for Chrome, Edge, and Brave. Sniffs player streams and sen
 2. Play a video on any site.
 3. Open the extension popup.
 4. Click **God Mode scan** if the list is empty.
-5. Click **Download** on a detected stream.
+5. Click **Download** to send a stream to the desktop queue, or **Copy** to copy its URL.
 6. In the desktop app, use **Download All** / the queue to save multi-audio MKV when available.
 
 ## Version
 
-See `manifest.json` (`2.0.2`).
+See `manifest.json` (`2.1.0`).
 
 ## Author
 

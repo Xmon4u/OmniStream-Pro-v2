@@ -128,7 +128,8 @@ def _parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
             elif len(g) == 2:
                 eta_sec = g[0] * 60 + g[1]
 
-    return {"pct": pct, "speed_bps": speed_bps, "eta_sec": eta_sec, "raw": clean}
+    speed_mb = (speed_bps / (1024 * 1024)) if speed_bps is not None else None
+    return {"pct": pct, "speed_bps": speed_bps, "speed": speed_mb, "eta_sec": eta_sec, "raw": clean}
 
 
 def _build_progress_message(

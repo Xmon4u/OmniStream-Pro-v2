@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.2 - Windows Installer (.exe) Compiler
+OmniStream Pro v2.1.0 - Windows Installer (.exe) Compiler
 Compiles installer.py into OmniStream_Pro_Setup.exe using PyInstaller.
 
 IMPORTANT: Never bundle desktop/dist or desktop/build. Nested PyInstaller
