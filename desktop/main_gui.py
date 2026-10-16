@@ -38,7 +38,10 @@ from extension_manager import (
     mark_extension_installed,
     get_deployed_extension_dir,
     open_chrome_extensions,
-    open_extension_folder
+    open_extension_folder,
+    launch_browser_with_extension,
+    copy_path_to_clipboard,
+    get_browser_executable
 )
 
 # CustomTkinter Appearance
@@ -47,11 +50,11 @@ ctk.set_default_color_theme("blue")
 
 # ── Color Palette & Design Tokens ─────────────────────────────────────────────
 BG_ROOT        = "#080c14"
-BG_HEADER      = "#0c1220"
-BG_CARD        = "#101827"
-BG_CARD2       = "#0f172a"
+BG_HEADER      = "#0b1220"
+BG_CARD        = "#0f172a"
+BG_CARD2       = "#131d33"
 BG_INPUT       = "#060911"
-BG_TERMINAL    = "#04070d"
+BG_TERMINAL    = "#030712"
 ACCENT_PRIMARY = "#6366f1"
 ACCENT_HOVER   = "#4f46e5"
 ACCENT_CYAN    = "#06b6d4"
@@ -70,22 +73,23 @@ FONT_CODE      = "Cascadia Code"
 
 # Grid Rows
 ROW_HEADER   = 0
-ROW_INPUT    = 1
-ROW_OPTIONS  = 2
-ROW_ACTIONS  = 3
-ROW_PROGRESS = 4
-ROW_CONTAINER= 5
-ROW_FOOTER   = 6
+ROW_BANNER   = 1
+ROW_INPUT    = 2
+ROW_OPTIONS  = 3
+ROW_ACTIONS  = 4
+ROW_PROGRESS = 5
+ROW_CONTAINER= 6
+ROW_FOOTER   = 7
 
 
 class ExtensionSetupDialog(ctk.CTkToplevel):
-    """Professional setup modal for Chrome extension onboarding."""
+    """Ultra-modern, 1-click Chrome extension setup modal."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
         self.title("Chrome Extension Setup — OmniStream Pro")
-        self.geometry("580x420")
+        self.geometry("620x510")
         self.resizable(False, False)
         self.configure(fg_color=BG_ROOT)
 
@@ -101,135 +105,207 @@ class ExtensionSetupDialog(ctk.CTkToplevel):
 
         try:
             self.update_idletasks()
-            px = parent.winfo_x() + (parent.winfo_width() // 2) - 290
-            py = parent.winfo_y() + (parent.winfo_height() // 2) - 210
+            px = parent.winfo_x() + (parent.winfo_width() // 2) - 310
+            py = parent.winfo_y() + (parent.winfo_height() // 2) - 255
             self.geometry(f"+{max(0, px)}+{max(0, py)}")
         except Exception:
             pass
 
+        # Auto-copy path to clipboard immediately upon opening!
+        copy_path_to_clipboard()
+
         self._build_content()
+        self.after(900, self._poll_connection)
+
+    def _poll_connection(self):
+        """Auto-detect if extension gets installed or connects to bridge."""
+        try:
+            if is_extension_installed():
+                self._show_connected_success()
+                return
+        except Exception:
+            pass
+        self.after(1000, self._poll_connection)
+
+    def _show_connected_success(self):
+        try:
+            self.success_frame.pack(fill="x", pady=(0, 10), before=self.btn_row)
+            self.btn_launch.configure(text="✓ Extension Connected Successfully!", fg_color="#065f46", state="disabled")
+            if hasattr(self.parent, "update_bridge_status"):
+                self.parent.update_bridge_status(True)
+            self.after(1400, self.destroy)
+        except Exception:
+            pass
 
     def _build_content(self):
         container = ctk.CTkFrame(self, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=22, pady=18)
 
-        # Header
+        # Header Banner
         header = ctk.CTkFrame(container, fg_color="transparent")
         header.pack(fill="x", pady=(0, 12))
 
-        icon_box = ctk.CTkFrame(header, fg_color=ACCENT_PRIMARY, width=38, height=38, corner_radius=10)
+        icon_box = ctk.CTkFrame(header, fg_color=ACCENT_PRIMARY, width=42, height=42, corner_radius=10)
         icon_box.pack(side="left", padx=(0, 12))
         icon_box.grid_propagate(False)
-        ctk.CTkLabel(icon_box, text="⚡", font=ctk.CTkFont(size=18), text_color="white").place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(icon_box, text="⚡", font=ctk.CTkFont(size=20), text_color="white").place(relx=0.5, rely=0.5, anchor="center")
 
         title_box = ctk.CTkFrame(header, fg_color="transparent")
         title_box.pack(side="left", fill="both", expand=True)
 
         ctk.CTkLabel(
             title_box, text="Browser Extension Setup",
-            font=ctk.CTkFont(family=FONT_MAIN, size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=16, weight="bold"),
             text_color=TEXT_TITLE, anchor="w"
         ).pack(anchor="w")
 
         ctk.CTkLabel(
-            title_box, text="Connect Google Chrome to enable 1-click video stream capture.",
+            title_box, text="Connect Google Chrome to enable 1-click video stream capture from any website.",
             font=ctk.CTkFont(family=FONT_MAIN, size=11),
             text_color=TEXT_MUTED, anchor="w"
         ).pack(anchor="w")
 
-        # Instruction Card
-        card = ctk.CTkFrame(container, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
-        card.pack(fill="x", pady=(0, 14))
+        # ── Option 1: 1-Click Auto Launch Card ────────────────────────────────
+        hero_card = ctk.CTkFrame(container, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color="#312e81")
+        hero_card.pack(fill="x", pady=(0, 12))
 
-        step1 = ctk.CTkFrame(card, fg_color="transparent")
-        step1.pack(fill="x", padx=14, pady=(12, 6))
+        hero_top = ctk.CTkFrame(hero_card, fg_color="transparent")
+        hero_top.pack(fill="x", padx=14, pady=(10, 4))
+
         ctk.CTkLabel(
-            step1, text="Step 1:", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            hero_top, text="⚡  Option 1: 1-Click Auto-Launch Chrome (Fastest)",
+            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
             text_color=ACCENT_GLOW
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkLabel(
-            step1, text="Click 'Open Extensions Page' below and turn ON 'Developer mode'.",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
         ).pack(side="left")
 
-        step2 = ctk.CTkFrame(card, fg_color="transparent")
+        badge = ctk.CTkLabel(
+            hero_top, text=" Zero Clicks ", font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
+            fg_color="#064e3b", text_color="#6ee7b7", corner_radius=4, padx=6, pady=1
+        )
+        badge.pack(side="right")
+
+        ctk.CTkLabel(
+            hero_card,
+            text="Launches Google Chrome with OmniStream Extension loaded and activated automatically.",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY, anchor="w"
+        ).pack(fill="x", padx=14, pady=(0, 8))
+
+        self.btn_launch = ctk.CTkButton(
+            hero_card, text="🚀  1-Click Launch Chrome with Extension",
+            height=36, corner_radius=8,
+            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, text_color="white",
+            command=self._launch_chrome
+        )
+        self.btn_launch.pack(fill="x", padx=14, pady=(0, 12))
+
+        # ── Option 2: 2-Step Manual Guide Card ────────────────────────────────
+        manual_card = ctk.CTkFrame(container, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
+        manual_card.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            manual_card, text="📁  Option 2: Add to Already Open Chrome (2 Steps)",
+            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
+            text_color=TEXT_TITLE
+        ).pack(anchor="w", padx=14, pady=(10, 4))
+
+        step1 = ctk.CTkFrame(manual_card, fg_color="transparent")
+        step1.pack(fill="x", padx=14, pady=(2, 4))
+        ctk.CTkLabel(step1, text="1.", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"), text_color=ACCENT_CYAN).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(step1, text="Open chrome://extensions and turn ON 'Developer mode' (top-right).", font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY).pack(side="left")
+
+        step2 = ctk.CTkFrame(manual_card, fg_color="transparent")
         step2.pack(fill="x", padx=14, pady=(2, 6))
-        ctk.CTkLabel(
-            step2, text="Step 2:", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
-            text_color=ACCENT_GLOW
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkLabel(
-            step2, text="Click 'Load unpacked' and select this extension folder:",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
-        ).pack(side="left")
+        ctk.CTkLabel(step2, text="2.", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"), text_color=ACCENT_CYAN).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(step2, text="Drag the opened folder into Chrome, OR click 'Load unpacked' and paste (Ctrl+V).", font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY).pack(side="left")
 
+        # Path Row
         ext_dir = get_deployed_extension_dir()
-        path_box = ctk.CTkFrame(card, fg_color="transparent")
-        path_box.pack(fill="x", padx=14, pady=(2, 14))
+        path_box = ctk.CTkFrame(manual_card, fg_color="transparent")
+        path_box.pack(fill="x", padx=14, pady=(2, 10))
 
         self.path_entry = ctk.CTkEntry(
-            path_box,
-            fg_color=BG_INPUT, border_color=BORDER_SUB, border_width=1,
-            height=32, text_color="#c8deff",
-            font=ctk.CTkFont(family=FONT_CODE, size=10), corner_radius=6
+            path_box, fg_color=BG_INPUT, border_color=BORDER_SUB, border_width=1,
+            height=30, text_color="#c8deff", font=ctk.CTkFont(family=FONT_CODE, size=10), corner_radius=6
         )
         self.path_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.path_entry.insert(0, ext_dir)
         self.path_entry.configure(state="readonly")
 
         self.btn_copy_path = ctk.CTkButton(
-            path_box, text="Copy Path", width=80, height=32,
-            fg_color=BG_CARD2, hover_color=BORDER_MAIN,
-            border_width=1, border_color=BORDER_SUB,
-            text_color=TEXT_BODY, font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            path_box, text="Copy Path", width=75, height=30,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN, border_width=1, border_color=BORDER_SUB,
+            text_color=TEXT_BODY, font=ctk.CTkFont(family=FONT_MAIN, size=10),
             corner_radius=6, command=self._copy_path
         )
         self.btn_copy_path.pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            path_box, text="📁", width=36, height=32,
-            fg_color=BG_CARD2, hover_color=BORDER_MAIN,
-            border_width=1, border_color=BORDER_SUB,
-            text_color=TEXT_BODY, font=ctk.CTkFont(size=12),
-            corner_radius=6, command=open_extension_folder
+            path_box, text="📁", width=34, height=30,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN, border_width=1, border_color=BORDER_SUB,
+            text_color=TEXT_BODY, font=ctk.CTkFont(size=12), corner_radius=6,
+            command=open_extension_folder
         ).pack(side="left")
 
+        # Success Banner (Hidden by default, shown when connected)
+        self.success_frame = ctk.CTkFrame(container, fg_color="#064e3b", corner_radius=8, border_width=1, border_color="#059669")
+        ctk.CTkLabel(
+            self.success_frame, text="🎉  Chrome Extension Connected! Ready to capture video streams.",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"), text_color="#a7f3d0", padx=12, pady=8
+        ).pack()
+
         # Bottom Buttons
-        btn_row = ctk.CTkFrame(container, fg_color="transparent")
-        btn_row.pack(fill="x", pady=(4, 0))
+        self.btn_row = ctk.CTkFrame(container, fg_color="transparent")
+        self.btn_row.pack(fill="x", pady=(4, 0))
 
         ctk.CTkButton(
-            btn_row, text="🌐  Open Extensions Page", width=190, height=36,
+            self.btn_row, text="🌐  Open Extensions Page", width=175, height=34,
             fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
             text_color="white", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
             corner_radius=8, command=open_chrome_extensions
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
-            btn_row, text="✓  I've Installed It", width=145, height=36,
+            self.btn_row, text="📁  Open Folder", width=120, height=34,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN, border_width=1, border_color=BORDER_SUB,
+            text_color=TEXT_TITLE, font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            corner_radius=8, command=open_extension_folder
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            self.btn_row, text="✓  I've Installed It", width=130, height=34,
             fg_color="#065f46", hover_color="#047857",
             text_color="#a7f3d0", font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
             corner_radius=8, command=self._confirm_installed
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left")
 
         ctk.CTkButton(
-            btn_row, text="Remind Me Later", width=120, height=36,
+            self.btn_row, text="Later", width=70, height=34,
             fg_color="transparent", hover_color=BG_CARD2,
             text_color=TEXT_MUTED, font=ctk.CTkFont(family=FONT_MAIN, size=11),
             corner_radius=8, command=self.destroy
         ).pack(side="right")
 
+    def _launch_chrome(self):
+        success = launch_browser_with_extension()
+        if success:
+            self.btn_launch.configure(text="✓ Launched! Extension Active in Chrome", fg_color="#065f46")
+            if hasattr(self.parent, "update_bridge_status"):
+                self.parent.update_bridge_status(True)
+            self.after(1400, self.destroy)
+        else:
+            open_chrome_extensions()
+            open_extension_folder()
+
     def _copy_path(self):
-        try:
-            self.clipboard_clear()
-            self.clipboard_append(get_deployed_extension_dir())
-            self.btn_copy_path.configure(text="Copied!")
-            self.after(1500, lambda: self.btn_copy_path.configure(text="Copy Path"))
-        except Exception:
-            pass
+        copy_path_to_clipboard()
+        self.btn_copy_path.configure(text="Copied!")
+        self.after(1500, lambda: self.btn_copy_path.configure(text="Copy Path"))
 
     def _confirm_installed(self):
         mark_extension_installed()
+        if hasattr(self.parent, "update_bridge_status"):
+            self.parent.update_bridge_status(True)
         self.destroy()
 
 
@@ -287,10 +363,49 @@ class OmniStreamApp(ctk.CTk):
     def _check_extension_prompt(self):
         try:
             deploy_extension_files()
+            copy_path_to_clipboard()
             if not is_extension_installed():
-                self.after_idle(lambda: ExtensionSetupDialog(self))
+                # Maximum Automation: Attempt 1-click launch of Chrome with extension
+                self._auto_setup_extension()
         except Exception:
             pass
+
+    def _auto_setup_extension(self):
+        """Maximum Automation: Auto-launch Chrome with --load-extension and show dynamic status banner."""
+        self._log("[Auto-Setup] Initiating automated Chrome extension setup...")
+        browser_exe = get_browser_executable()
+        if browser_exe:
+            success = launch_browser_with_extension()
+            if success:
+                self._log("[Auto-Setup] Google Chrome launched with OmniStream Extension loaded.")
+                self.show_banner(
+                    "🚀 Google Chrome launched with OmniStream Extension loaded! Connecting...",
+                    level="info", show_btn=False
+                )
+                self._poll_auto_setup_connection(attempts=0)
+                return
+
+        # Fallback if browser could not be launched directly
+        self.show_banner(
+            "⚡ Chrome Extension not yet connected. Click to set up in 1 click:",
+            level="warning", show_btn=True, btn_text="🚀 Auto-Setup",
+            btn_cmd=lambda: ExtensionSetupDialog(self)
+        )
+
+    def _poll_auto_setup_connection(self, attempts: int):
+        if is_extension_installed():
+            self.show_banner("🎉 Chrome Extension Connected Successfully! Ready to capture streams.", level="success", show_btn=False)
+            self.update_bridge_status(True)
+            self.after(3500, self.hide_banner)
+            return
+        if attempts < 15:
+            self.after(1000, lambda: self._poll_auto_setup_connection(attempts + 1))
+        else:
+            self.show_banner(
+                "⚡ Extension connection taking longer than expected.",
+                level="warning", show_btn=True, btn_text="📖 View Setup Help",
+                btn_cmd=lambda: ExtensionSetupDialog(self)
+            )
 
     # ── UI Layout ─────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -298,6 +413,7 @@ class OmniStreamApp(ctk.CTk):
         self.grid_rowconfigure(ROW_CONTAINER, weight=1)
 
         self._build_header()
+        self._build_banner()
         self._build_input_card()
         self._build_options_card()
         self._build_action_buttons()
@@ -305,31 +421,81 @@ class OmniStreamApp(ctk.CTk):
         self._build_container_and_queue()
         self._build_footer()
 
+    def _build_banner(self):
+        self.banner_frame = ctk.CTkFrame(self, fg_color="#1e1b4b", corner_radius=10, border_width=1, border_color="#3730a3", height=42)
+        # Hidden by default; shown dynamically
+        self.banner_lbl = ctk.CTkLabel(
+            self.banner_frame, text="",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color="#c7d2fe"
+        )
+        self.banner_lbl.pack(side="left", padx=16, pady=6)
+
+        self.btn_banner_action = ctk.CTkButton(
+            self.banner_frame, text="🚀 Setup Extension", width=120, height=28,
+            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, corner_radius=6,
+            command=lambda: ExtensionSetupDialog(self)
+        )
+        self.btn_banner_action.pack(side="right", padx=(0, 10), pady=6)
+
+        self.btn_banner_close = ctk.CTkButton(
+            self.banner_frame, text="✕", width=26, height=26,
+            font=ctk.CTkFont(size=11), fg_color="transparent", hover_color="#312e81",
+            text_color="#a5b4fc", corner_radius=6,
+            command=self.hide_banner
+        )
+        self.btn_banner_close.pack(side="right", padx=(0, 6), pady=6)
+
+    def show_banner(self, text: str, level: str = "info", show_btn: bool = False, btn_text: str = "", btn_cmd = None):
+        colors = {
+            "info":    ("#1e1b4b", "#3730a3", "#c7d2fe"),
+            "success": ("#064e3b", "#059669", "#a7f3d0"),
+            "warning": ("#78350f", "#d97706", "#fef3c7"),
+            "error":   ("#881337", "#e11d48", "#fecdd3")
+        }
+        bg, border, fg = colors.get(level, colors["info"])
+        self.banner_frame.configure(fg_color=bg, border_color=border)
+        self.banner_lbl.configure(text=text, text_color=fg)
+        if show_btn:
+            self.btn_banner_action.pack(side="right", padx=(0, 10), pady=6)
+            if btn_text:
+                self.btn_banner_action.configure(text=btn_text)
+            if btn_cmd:
+                self.btn_banner_action.configure(command=btn_cmd)
+        else:
+            self.btn_banner_action.pack_forget()
+
+        self.banner_frame.grid(row=ROW_BANNER, column=0, sticky="ew", padx=18, pady=(6, 2))
+
+    def hide_banner(self):
+        self.banner_frame.grid_forget()
+
     # ── Header ────────────────────────────────────────────────────────────────
     def _build_header(self):
-        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=76)
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=80)
         hdr.grid(row=ROW_HEADER, column=0, sticky="ew")
         hdr.grid_propagate(False)
         hdr.grid_columnconfigure(1, weight=1)
 
         # Icon box
-        icon_box = ctk.CTkFrame(hdr, fg_color=ACCENT_PRIMARY, width=44, height=44, corner_radius=12)
+        icon_box = ctk.CTkFrame(hdr, fg_color=ACCENT_PRIMARY, width=46, height=46, corner_radius=12)
         icon_box.grid(row=0, column=0, rowspan=2, padx=(20, 14), pady=16)
         icon_box.grid_propagate(False)
-        ctk.CTkLabel(icon_box, text="⚡", font=ctk.CTkFont(size=22), text_color="white").place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(icon_box, text="⚡", font=ctk.CTkFont(size=24), text_color="white").place(relx=0.5, rely=0.5, anchor="center")
 
         # Title & Extension Bridge status
         title_box = ctk.CTkFrame(hdr, fg_color="transparent")
-        title_box.grid(row=0, column=1, sticky="sw", pady=(14, 0))
+        title_box.grid(row=0, column=1, sticky="sw", pady=(12, 0))
 
         ctk.CTkLabel(
-            title_box, text="OmniStream Pro  •  Multi-Audio Stream Downloader",
-            font=ctk.CTkFont(family=FONT_MAIN, size=18, weight="bold"),
+            title_box, text="OmniStream Pro",
+            font=ctk.CTkFont(family=FONT_MAIN, size=19, weight="bold"),
             text_color=TEXT_TITLE
         ).pack(side="left")
 
         ctk.CTkLabel(
-            title_box, text=" v2.0.0 ",
+            title_box, text=" v2.0 PRO ",
             font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
             fg_color="#1e1b4b", text_color="#a5b4fc", corner_radius=6
         ).pack(side="left", padx=(8, 10))
@@ -345,19 +511,60 @@ class OmniStreamApp(ctk.CTk):
         # Subtitle
         ctk.CTkLabel(
             hdr,
-            text="IDM-Grade Batch Queue  ·  Multi-Audio MKV  ·  Extension Bridge  ·  16x Acceleration",
+            text="High-Speed Multi-Audio Stream Capture  ·  16x Concurrent Threads  ·  IDM Batch Queue",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_BODY, anchor="w"
         ).grid(row=1, column=1, sticky="nw", pady=(2, 12))
 
+        # Header Action Controls
+        header_actions = ctk.CTkFrame(hdr, fg_color="transparent")
+        header_actions.grid(row=0, column=2, rowspan=2, padx=(0, 20), pady=16, sticky="e")
+
+        self.btn_header_chrome = ctk.CTkButton(
+            header_actions, text="🚀 Launch Chrome", width=130, height=34,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            fg_color="#1e1b4b", hover_color="#312e81", text_color="#c7d2fe",
+            border_width=1, border_color="#3730a3", corner_radius=8,
+            command=self._launch_chrome_with_extension
+        )
+        self.btn_header_chrome.pack(side="left", padx=(0, 8))
+
+        self.btn_header_ext = ctk.CTkButton(
+            header_actions, text="🧩 Extension Setup", width=125, height=34,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            fg_color=BG_CARD, hover_color=BORDER_MAIN, text_color=TEXT_TITLE,
+            border_width=1, border_color=BORDER_SUB, corner_radius=8,
+            command=lambda: ExtensionSetupDialog(self)
+        )
+        self.btn_header_ext.pack(side="left", padx=(0, 8))
+
         # Status badge
         self.status_badge = ctk.CTkLabel(
-            hdr, text="  ●  Initializing Engine",
+            header_actions, text="  ●  Engine Ready",
             font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
-            text_color=ACCENT_AMBER,
-            fg_color=BG_CARD, corner_radius=20, padx=16, pady=6
+            text_color=ACCENT_EMERALD,
+            fg_color=BG_CARD, corner_radius=18, padx=14, pady=6
         )
-        self.status_badge.grid(row=0, column=2, rowspan=2, padx=20, pady=16)
+        self.status_badge.pack(side="left")
+
+    def _launch_chrome_with_extension(self):
+        """1-click launcher for Google Chrome with OmniStream extension loaded."""
+        success = launch_browser_with_extension()
+        if success:
+            self._log("[Chrome] Google Chrome launched with OmniStream Extension auto-loaded.")
+            self.update_bridge_status(True)
+        else:
+            self._log("[Chrome] Chrome could not be auto-launched. Opening extension wizard...")
+            ExtensionSetupDialog(self)
+
+    def update_bridge_status(self, is_active: bool):
+        """Update extension bridge connection status badge."""
+        if is_active:
+            self.bridge_badge.configure(text="🌐 Extension Bridge: Active ●", text_color=ACCENT_EMERALD)
+            if hasattr(self, "btn_header_ext"):
+                self.btn_header_ext.configure(text="✓ Extension Ready", text_color=ACCENT_EMERALD, fg_color="#064e3b", border_color="#065f46")
+        else:
+            self.bridge_badge.configure(text="🌐 Extension Bridge: Standby", text_color=ACCENT_AMBER)
 
     # ── Card 1: Input Source ──────────────────────────────────────────────────
     def _build_input_card(self):
@@ -370,13 +577,13 @@ class OmniStreamApp(ctk.CTk):
         top.pack(fill="x", padx=16, pady=(10, 5))
 
         ctk.CTkLabel(
-            top, text="Stream Source",
+            top, text="📡  Stream Source & cURL Importer",
             font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
             text_color=ACCENT_GLOW
         ).pack(side="left")
 
         ctk.CTkLabel(
-            top, text="  Paste cURL command or direct M3U8/MP4 link, or send automatically from extension",
+            top, text="  Auto-parses cURL bash/cmd, M3U8, MPD, MP4, and MKV links",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED
         ).pack(side="left")
@@ -386,7 +593,7 @@ class OmniStreamApp(ctk.CTk):
         btn_row.pack(side="right")
 
         ctk.CTkButton(
-            btn_row, text="Clear", width=62, height=28,
+            btn_row, text="Clear", width=55, height=28,
             fg_color=BG_CARD2, hover_color=BORDER_MAIN,
             border_width=1, border_color=BORDER_SUB,
             text_color=TEXT_BODY,
@@ -404,7 +611,7 @@ class OmniStreamApp(ctk.CTk):
 
         # Input Box
         self.input_box = ctk.CTkTextbox(
-            card, height=64,
+            card, height=66,
             font=ctk.CTkFont(family=FONT_CODE, size=10),
             fg_color=BG_INPUT, text_color="#c8deff",
             border_width=1, border_color=BORDER_SUB, corner_radius=8
@@ -513,7 +720,7 @@ class OmniStreamApp(ctk.CTk):
         # Add to Queue
         self.add_queue_btn = ctk.CTkButton(
             bar,
-            text="📥  Add to Queue",
+            text="📥  Add to IDM Queue",
             font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
             height=40, corner_radius=10,
             fg_color="#065f46", hover_color="#047857",
@@ -562,7 +769,7 @@ class OmniStreamApp(ctk.CTk):
 
         self.progress_lbl = ctk.CTkLabel(
             prog,
-            text="Ready — Paste a stream URL above or send links from the browser extension.",
+            text="Ready — Paste a stream URL above or send links from the Chrome extension.",
             font=ctk.CTkFont(family=FONT_MAIN, size=11),
             text_color=TEXT_MUTED, anchor="w"
         )
@@ -752,6 +959,8 @@ class OmniStreamApp(ctk.CTk):
                         plbl.configure(text=status_text)
                     except Exception:
                         pass
+            elif msg_type == "bridge_connected":
+                self.update_bridge_status(True)
             elif msg_type == "bridge_job":
                 self._handle_bridge_job(data)
             elif msg_type == "bridge_batch_jobs":
@@ -764,15 +973,17 @@ class OmniStreamApp(ctk.CTk):
         self.after(60, self._poll_log_queue)
 
     def _set_status(self, state: str):
-        states = {
-            "ready":       ("  ●  Engine Ready",     ACCENT_EMERALD),
-            "downloading": ("  ●  Downloading...",   ACCENT_CYAN),
-            "done":        ("  ●  Task Complete",    ACCENT_EMERALD),
-            "error":       ("  ●  Task Error",       ACCENT_ROSE),
-            "aborted":     ("  ●  Stopped",          ACCENT_AMBER),
-        }
-        text, color = states.get(state, ("  ●  Ready", ACCENT_EMERALD))
-        self.status_badge.configure(text=text, text_color=color)
+        def _apply():
+            states = {
+                "ready":       ("  ●  Engine Ready",     ACCENT_EMERALD),
+                "downloading": ("  ●  Downloading...",   ACCENT_CYAN),
+                "done":        ("  ●  Task Complete",    ACCENT_EMERALD),
+                "error":       ("  ●  Task Error",       ACCENT_ROSE),
+                "aborted":     ("  ●  Stopped",          ACCENT_AMBER),
+            }
+            text, color = states.get(state, ("  ●  Ready", ACCENT_EMERALD))
+            self.status_badge.configure(text=text, text_color=color)
+        self.after(0, _apply)
 
     # ── Dependency Check ──────────────────────────────────────────────────────
     def _start_dependency_check(self):
@@ -1184,7 +1395,7 @@ class OmniStreamApp(ctk.CTk):
                 basename = os.path.basename(saved_out) if saved_out else "output file"
                 self._set_progress(100.0, f"Saved: {basename}")
                 if not is_queue_batch:
-                    messagebox.showinfo("Download Complete", f"File saved successfully.\n\n{saved_out}")
+                    self.after(0, lambda p=saved_out: messagebox.showinfo("Download Complete", f"File saved successfully.\n\n{p}"))
             except RuntimeError as exc:
                 err = str(exc)
                 status = "Failed"
@@ -1192,19 +1403,19 @@ class OmniStreamApp(ctk.CTk):
                 self._log(f"\n[Error] {err}")
                 self._set_progress(0, f"Failed: {err[:100]}")
                 if not is_queue_batch and "aborted" not in err.lower():
-                    messagebox.showerror("Download Failed", err)
+                    self.after(0, lambda e=err: messagebox.showerror("Download Failed", e))
             except Exception as exc:
                 status = "Failed"
                 self._set_status("error")
                 self._log(f"\n[Unexpected Error] {exc}")
                 self._set_progress(0, "An unexpected error occurred.")
                 if not is_queue_batch:
-                    messagebox.showerror("Unexpected Error", str(exc))
+                    self.after(0, lambda e=str(exc): messagebox.showerror("Unexpected Error", e))
             finally:
                 self.is_downloading = False
                 self.current_item_id = None
-                self.start_btn.configure(state="normal", fg_color=ACCENT_PRIMARY, text="▶   Start Download & Mux")
-                self.abort_btn.configure(state="disabled")
+                self.after(0, lambda: self.start_btn.configure(state="normal", fg_color=ACCENT_PRIMARY, text="▶  Start Download & Mux"))
+                self.after(0, lambda: self.abort_btn.configure(state="disabled"))
                 self.log_queue.put(("queue_item_finished", {
                     "id": item["id"],
                     "status": status,

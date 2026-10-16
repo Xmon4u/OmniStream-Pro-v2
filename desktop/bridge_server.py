@@ -6,6 +6,7 @@ Author: XMON4U (https://github.com/Xmon4u)
 """
 
 import json
+import time
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
@@ -39,6 +40,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         if self.path == "/health":
             mark_extension_installed()
+            if app and hasattr(app, "log_queue"):
+                app.log_queue.put(("bridge_connected", {}))
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
@@ -171,17 +174,39 @@ class BridgeServer:
         self.is_running = False
 
     def start(self):
+        for attempt in range(2):
+            try:
+                self.httpd = HTTPServer(("127.0.0.1", self.port), BridgeHandler)
+                self.httpd.app_instance = self.app_instance
+                self.is_running = True
+                self.thread = threading.Thread(target=self._run, daemon=True)
+                self.thread.start()
+                return True
+            except OSError:
+                if attempt == 0:
+                    self._free_port_if_needed()
+                    time.sleep(0.3)
+                else:
+                    self.is_running = False
+                    return False
+        return False
+
+    def _free_port_if_needed(self):
+        """If an orphaned process is holding port 28795, terminate it so new instance can bind."""
         try:
-            self.httpd = HTTPServer(("127.0.0.1", self.port), BridgeHandler)
-            self.httpd.app_instance = self.app_instance
-            self.is_running = True
-            self.thread = threading.Thread(target=self._run, daemon=True)
-            self.thread.start()
-            return True
-        except OSError:
-            # Port already in use or permission denied
-            self.is_running = False
-            return False
+            import subprocess, os
+            my_pid = os.getpid()
+            cmd = f"(Get-NetTCPConnection -LocalPort {self.port} -ErrorAction SilentlyContinue).OwningProcess"
+            res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=3, creationflags=0x08000000)
+            pids = [int(p.strip()) for p in res.stdout.strip().split() if p.strip().isdigit()]
+            for pid in pids:
+                if pid != my_pid and pid > 0:
+                    try:
+                        subprocess.run(["powershell", "-NoProfile", "-Command", f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"], timeout=3, creationflags=0x08000000)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     def _run(self):
         try:

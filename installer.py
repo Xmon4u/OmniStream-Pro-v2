@@ -9,13 +9,23 @@ import os
 import sys
 import shutil
 import subprocess
+import glob
+import json
+try:
+    import webbrowser
+except ImportError:
+    webbrowser = None
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
 
-# Ensure desktop module can be imported
-INSTALLER_DIR = os.path.dirname(os.path.abspath(__file__))
-DESKTOP_DIR   = os.path.join(INSTALLER_DIR, "desktop")
+# Ensure desktop module can be imported properly both during dev and when packaged
+if getattr(sys, 'frozen', False):
+    INSTALLER_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+else:
+    INSTALLER_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DESKTOP_DIR = os.path.join(INSTALLER_DIR, "desktop")
 sys.path.insert(0, DESKTOP_DIR)
 sys.path.insert(0, INSTALLER_DIR)
 
@@ -26,7 +36,8 @@ from extension_manager import (
     is_extension_installed,
     mark_extension_installed,
     open_chrome_extensions,
-    open_extension_folder
+    open_extension_folder,
+    launch_browser_with_extension
 )
 
 ctk.set_appearance_mode("Dark")
@@ -77,6 +88,8 @@ class OmniStreamInstaller(ctk.CTk):
         self.configure(fg_color=BG_ROOT)
 
         icon_path = os.path.join(DESKTOP_DIR, "app_icon.ico")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(INSTALLER_DIR, "app_icon.ico")
         if os.path.exists(icon_path):
             try:
                 self.iconbitmap(icon_path)
@@ -247,10 +260,22 @@ class OmniStreamInstaller(ctk.CTk):
                         shutil.copy2(s, d)
 
             # Copy compiled executable if present
-            dist_exe = os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe")
             target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
-            if os.path.exists(dist_exe):
-                shutil.copy2(dist_exe, target_exe)
+            candidate_exes = [
+                os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe"),
+                os.path.join(DESKTOP_DIR, "OmniStream_Pro.exe"),
+                os.path.join(INSTALLER_DIR, "desktop", "dist", "OmniStream_Pro.exe"),
+                os.path.join(INSTALLER_DIR, "desktop", "OmniStream_Pro.exe"),
+                os.path.join(INSTALLER_DIR, "dist", "OmniStream_Pro.exe"),
+                os.path.join(INSTALLER_DIR, "OmniStream_Pro.exe"),
+            ]
+            for cand in candidate_exes:
+                if os.path.isfile(cand):
+                    try:
+                        shutil.copy2(cand, target_exe)
+                        break
+                    except Exception:
+                        pass
 
             # 2. Deploy Chrome Extension
             self.status_lbl.configure(text="Deploying browser extension...")
@@ -259,7 +284,7 @@ class OmniStreamInstaller(ctk.CTk):
             deployed_ext_dir = deploy_extension_files()
 
             # 3. Create Shortcuts
-            self.status_lbl.configure(text="Creating desktop shortcuts...")
+            self.status_lbl.configure(text="Creating desktop & start menu shortcuts...")
             self.pbar.set(0.8)
             self.update_idletasks()
 
@@ -271,6 +296,17 @@ class OmniStreamInstaller(ctk.CTk):
                 create_windows_shortcut(
                     target_exe=target_run,
                     shortcut_path=os.path.join(desktop_folder, "OmniStream Pro.lnk"),
+                    icon_path=icon_file
+                )
+
+            # Start Menu shortcut
+            appdata_roaming = os.environ.get("APPDATA", "")
+            if appdata_roaming:
+                start_menu_dir = os.path.join(appdata_roaming, "Microsoft", "Windows", "Start Menu", "Programs", "OmniStream Pro")
+                os.makedirs(start_menu_dir, exist_ok=True)
+                create_windows_shortcut(
+                    target_exe=target_run,
+                    shortcut_path=os.path.join(start_menu_dir, "OmniStream Pro.lnk"),
                     icon_path=icon_file
                 )
 
@@ -317,16 +353,23 @@ class OmniStreamInstaller(ctk.CTk):
                 text_color=ACCENT_GLOW
             ).pack(anchor="w", padx=14, pady=(10, 4))
             ctk.CTkLabel(
-                card, text="To enable automatic link capture from Chrome, add the unpacked extension:",
+                card, text="To capture streaming video links directly from Chrome, Edge, or Brave:",
                 font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
             ).pack(anchor="w", padx=14, pady=(0, 6))
+
+            ctk.CTkButton(
+                card, text="🚀  1-Click Launch Chrome with Extension", height=32,
+                fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+                command=launch_browser_with_extension
+            ).pack(fill="x", padx=14, pady=(0, 8))
 
             btn_box = ctk.CTkFrame(card, fg_color="transparent")
             btn_box.pack(fill="x", padx=14, pady=(0, 10))
 
             ctk.CTkButton(
                 btn_box, text="Open chrome://extensions", width=180, height=30,
-                fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
+                fg_color=BG_CARD2, hover_color=BORDER_MAIN, text_color=TEXT_TITLE,
+                border_width=1, border_color=BORDER_SUB, font=ctk.CTkFont(family=FONT_MAIN, size=10),
                 command=open_chrome_extensions
             ).pack(side="left", padx=(0, 6))
 

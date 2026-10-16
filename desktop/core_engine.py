@@ -115,6 +115,12 @@ class OmniStreamEngine:
         if "cookie" in info["headers"]:
             curl_cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
 
+        # Forward all custom headers (Authorization, token, sec-ch-ua, etc.)
+        skip_headers = {"referer", "origin", "user-agent", "cookie", "host", "content-length", "connection", "accept-encoding"}
+        for h_name, h_val in info.get("headers", {}).items():
+            if h_name.lower() not in skip_headers and h_val:
+                curl_cmd.extend(["-H", f"{h_name}: {h_val}"])
+
         res = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=30)
         if res.returncode != 0 or not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
             raise RuntimeError(f"Could not fetch playlist: {url}")
@@ -316,6 +322,12 @@ class OmniStreamEngine:
 
         if "cookie" in info["headers"]:
             cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
+
+        # Forward all custom headers to N_m3u8DL-RE
+        skip_headers = {"referer", "origin", "user-agent", "cookie", "host", "content-length", "connection", "accept-encoding"}
+        for h_name, h_val in info.get("headers", {}).items():
+            if h_name.lower() not in skip_headers and h_val:
+                cmd.extend(["-H", f"{h_name}: {h_val}"])
 
         log("[4/4] Starting concurrent download with 16 parallel threads...")
         log(sep)
