@@ -2467,10 +2467,13 @@ class OmniStreamApp(ctk.CTk):
             except RuntimeError as exc:
                 err = str(exc)
                 is_abort = "abort" in err.lower() or "cancel" in err.lower()
-                label = "Cancelled" if is_abort else "Subtitle Download Failed"
+                is_no_subs = "no subtitle" in err.lower() or "no stream found" in err.lower()
+                label = "Cancelled" if is_abort else ("No Subtitles" if is_no_subs else "Subtitle Download Failed")
                 self._log(f"\n[{label}] {err}")
-                _progress_cb(0.0, "Cancelled" if is_abort else f"Failed: {err[:80]}")
-                if not is_abort:
+                _progress_cb(0.0, "Cancelled" if is_abort else ("No Subtitles in stream" if is_no_subs else f"Failed: {err[:80]}"))
+                if is_no_subs:
+                    self.run_on_main_thread(lambda e=err: messagebox.showinfo("No Subtitles Available", e))
+                elif not is_abort:
                     self.run_on_main_thread(lambda e=err: messagebox.showerror("Subtitle Download Failed", e))
             except Exception as exc:
                 self._log(f"\n[Unexpected Error] {exc}")

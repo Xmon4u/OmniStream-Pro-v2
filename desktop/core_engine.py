@@ -299,6 +299,27 @@ class OmniStreamEngine:
             _log(f"  [Cleanup] Notice: Could not remove {len(errors)} file(s).")
 
     @staticmethod
+    def has_subtitle_tracks(filepath_or_content: str) -> bool:
+        """Check if an M3U8 playlist or MPD manifest contains subtitle tracks."""
+        if not filepath_or_content:
+            return False
+        content = filepath_or_content
+        if os.path.exists(filepath_or_content):
+            try:
+                with open(filepath_or_content, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except Exception:
+                return True
+        elif filepath_or_content.startswith(("http://", "https://")):
+            return True
+        cl = content.lower()
+        if "type=subtitles" in cl or "#ext-x-subtitles" in cl:
+            return True
+        if 'contenttype="text"' in cl or 'mimetype="text/vtt"' in cl or 'application/ttml+xml' in cl or '<subtitle' in cl:
+            return True
+        return False
+
+    @staticmethod
     def parse_input(raw_text: str) -> Dict[str, Any]:
         """Extract stream URL, cookies, custom headers, referer, and origin from cURL or URL string."""
         text = str(raw_text).strip()
@@ -673,14 +694,22 @@ class OmniStreamEngine:
 
         # Embed subtitles into final MKV if requested
         if include_subtitles:
-            cmd.extend([
-                "--sub-format", sub_format.upper(),
-                "--auto-subtitle-fix",
-            ])
-            if sub_lang and sub_lang.lower() != "all":
-                cmd.extend(["-ss", f"lang={sub_lang}"])
+            has_subs = True
+            if playlist_downloaded and os.path.exists(target_source):
+                has_subs = self.has_subtitle_tracks(target_source)
+
+            if has_subs:
+                log("  Subtitles: Embedding subtitle tracks into final MKV container.")
+                cmd.extend([
+                    "--sub-format", sub_format.upper(),
+                    "--auto-subtitle-fix",
+                ])
+                if sub_lang and sub_lang.lower() != "all":
+                    cmd.extend(["-ss", f"lang={sub_lang}"])
+                else:
+                    cmd.extend(["-ss", "all"])
             else:
-                cmd.extend(["-ss", "all"])
+                log("  Notice: No subtitle tracks detected in stream playlist. Proceeding with video and all multi-audio tracks.")
 
         if "cookie" in info["headers"]:
             cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
@@ -999,6 +1028,17 @@ class OmniStreamEngine:
             log(f"  Notice: Direct stream URL mode ({exc}).")
             target_source = info["url"]
 
+        # Pre-check if stream actually contains any subtitle tracks
+        if playlist_downloaded and os.path.exists(target_source):
+            if not self.has_subtitle_tracks(target_source):
+                log("  Notice: No subtitle tracks found in this stream playlist.")
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                raise RuntimeError(
+                    "No subtitle tracks were found in this stream.\n\n"
+                    "This stream provides video and audio, but does not contain any embedded subtitle tracks in its playlist."
+                )
+
         if progress_callback:
             progress_callback(5.0, "Fetching subtitle tracks…  ·  0% done  ·  100% left")
 
@@ -1149,25 +1189,27 @@ class OmniStreamEngine:
         err_reason = ""
         if recent_error_lines:
             combined = " ".join(recent_error_lines).lower()
-            if "403" in combined or "forbidden" in combined:
-                err_reason = "Remote stream token expired (HTTP 403 Forbidden)."
-            elif "no subtitle" in combined or "sub" in combined:
+            if "no stream found" in combined or "no subtitle" in combined:
                 err_reason = "No subtitle tracks found in this stream."
+            elif "403" in combined or "forbidden" in combined:
+                err_reason = "Remote stream token expired (HTTP 403 Forbidden)."
+            elif "first segment" in combined:
+                err_reason = "The stream server rejected the first segment. Try re-capturing a fresh link."
             else:
-                err_reason = recent_error_lines[-1]
+                err_reason = "No subtitle tracks found in this stream."
 
         if rc == 0 and not saved_subs:
             raise RuntimeError(
-                "Subtitle download completed but no subtitle files were found.\n\n"
-                "This stream may not contain embedded subtitle tracks, or they are not "
-                "accessible via the captured URL. Try a different stream or language."
+                "No subtitle tracks found in this stream.\n\n"
+                "Subtitle download completed but no subtitle files were found in the stream."
             )
 
-        reason_str = f" Reason: {err_reason}" if err_reason else ""
-        raise RuntimeError(
-            f"Subtitle download failed (exit code {rc}).{reason_str}\n\n"
-            "If the session or token expired, please re-capture the stream link from Chrome."
-        )
+        if not saved_subs:
+            raise RuntimeError(
+                f"No subtitle tracks were found in this stream.\n\n"
+                f"{err_reason}\n\n"
+                "This stream does not contain embedded subtitles in its playlist."
+            )
 
 
 # Backward-compatibility alias

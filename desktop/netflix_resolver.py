@@ -181,6 +181,8 @@ def resolve_netflix_title(
     episode_tag: str = ""
 
     # ── Source 1: Direct Netflix Title Page via Googlebot Crawl Headers ─────────
+    # NOTE: Episode IDs (e.g. 81948683) redirect to the show page.
+    # The embedded JSON on the show page contains the videoId with full episode metadata.
     try:
         url = f"https://www.netflix.com/title/{nid}"
         req = urllib.request.Request(url, headers={
@@ -188,26 +190,60 @@ def resolve_netflix_title(
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9"
         })
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            final_url = resp.geturl()
-            # If redirected to help center, login, or non-title page, ignore
-            if "help.netflix.com" in final_url or "/help" in final_url or f"/{nid}" not in final_url:
-                raise ValueError("Redirected away from title page.")
-
+        with urllib.request.urlopen(req, timeout=8) as resp:
             try:
                 raw_bytes = resp.read()
             except http.client.IncompleteRead as e:
                 raw_bytes = e.partial
             page = raw_bytes.decode("utf-8", errors="ignore")
 
-            # Look for <h1>Title</h1>
-            h1_m = re.search(r'<h1[^>]*>(.*?)</h1>', page, re.I)
-            if h1_m:
-                cand = _clean_scraped_title(h1_m.group(1))
-                if cand:
-                    title = cand
+        # ── Step A: Get the show/movie title from <h1> ───────────────────────
+        h1_m = re.search(r'<h1[^>]*>(.*?)</h1>', page, re.I)
+        if h1_m:
+            cand = _clean_scraped_title(h1_m.group(1))
+            if cand:
+                title = cand
 
-            # Check page <title> tag for Season / Episode indicators
+        # ── Step B: Detect if the original nid is an episode in embedded JSON ─
+        # Netflix's SSR page embeds JSON like:
+        # "videoId":81948683,"number":1,"runtimeSec":...,"title":"La Dolce Emily"
+        # We look for nid in the page and extract surrounding season/episode data.
+        if nid in page:
+            idx = page.find(nid)
+            forward = page[idx: min(len(page), idx + 800)]
+            back = page[max(0, idx - 2500): idx]
+
+            # Extract episode number from forward JSON
+            ep_num_m = re.search(r'"number":\s*(\d+)', forward)
+            ep_num = int(ep_num_m.group(1)) if ep_num_m else None
+
+            # Extract episode title from forward JSON ("title":"La Dolce Emily")
+            ep_title = ""
+            ep_title_m = re.search(r'"title":\s*"([^"]+)"', forward)
+            if ep_title_m:
+                raw_ep = ep_title_m.group(1)
+                # Decode unicode escapes like \x20 → space
+                try:
+                    raw_ep = raw_ep.encode().decode("unicode-escape")
+                except Exception:
+                    pass
+                raw_ep = raw_ep.replace("\\x20", " ").replace('\\"', '"').strip()
+                if raw_ep and not re.match(r'^Season\s*\d+$', raw_ep, re.I):
+                    ep_title = sanitize_filename(raw_ep)
+
+            # Look backwards for the season number in "Season\\x204" or "Season 4"
+            s_nums = re.findall(r'Season(?:\\x20|\s)+(\d+)', back)
+            season_num = int(s_nums[-1]) if s_nums else None
+
+            if season_num and ep_num:
+                if ep_title:
+                    episode_tag = f"S{season_num:02d}E{ep_num:02d} - {ep_title}"
+                else:
+                    episode_tag = f"S{season_num:02d}E{ep_num:02d}"
+            elif ep_num and ep_title:
+                episode_tag = f"E{ep_num:02d} - {ep_title}"
+        else:
+            # ── Step B fallback: parse <title> tag for Season/Episode ─────────
             title_tag_m = re.search(r'<title>(.*?)</title>', page, re.I)
             if title_tag_m:
                 raw_tag = html.unescape(title_tag_m.group(1))
@@ -221,19 +257,18 @@ def resolve_netflix_title(
                     if s_only:
                         episode_tag = f"Season {s_only.group(1)}"
 
-            # Look for year in metadata list near title
-            if title:
-                idx = page.find(title)
-                if idx != -1:
-                    window = page[idx:idx + 3000]
-                    # Netflix renders year in metadata list items: <li class="...">2024</li>
-                    year_m = re.search(r'<li[^>]*>\s*(19\d{2}|20\d{2})\s*</li>', window, re.I)
-                    if year_m:
-                        year = year_m.group(1)
-                    else:
-                        generic_ym = re.search(r'>\s*(19\d{2}|20\d{2})\s*<', window)
-                        if generic_ym:
-                            year = generic_ym.group(1)
+        # ── Step C: Extract year from metadata list near title ────────────────
+        if title:
+            idx = page.find(title)
+            if idx != -1:
+                window = page[idx:idx + 3000]
+                year_m = re.search(r'<li[^>]*>\s*(19\d{2}|20\d{2})\s*</li>', window, re.I)
+                if year_m:
+                    year = year_m.group(1)
+                else:
+                    generic_ym = re.search(r'>\s*(19\d{2}|20\d{2})\s*<', window)
+                    if generic_ym:
+                        year = generic_ym.group(1)
     except Exception:
         pass
 
