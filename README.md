@@ -1,4 +1,4 @@
-﻿# OmniStream Pro v2.3.0 â€” Universal Stream Downloader & Extension Suite
+﻿# OmniStream Pro v2.3.0  Universal Stream Downloader & Extension Suite
 
 <div align="center">
 
