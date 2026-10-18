@@ -6,25 +6,28 @@ Release notes for the desktop app + Chrome extension suite.
 
 ### ✨ What's new in v2.3.0
 
-#### 📝 Subtitle-Only Download (New Feature)
-- **Download Subtitles Separately** — A brand-new **"Download Subtitles"** button lets you extract subtitle tracks from any HLS/DASH stream without downloading the video or audio.
-- **Subtitle Format Selection** — Choose between **SRT (SubRip)** for universal compatibility or **VTT (WebVTT)** format directly from the Options panel.
-- **12 Language Options** — Subtitle language dropdown supports: All Languages, English, Hindi, Arabic, German, Spanish, French, Portuguese, Russian, Japanese, Korean, and Chinese (Simplified).
-- **Auto Subtitle Fix** — Subtitles are automatically timing-corrected using N_m3u8DL-RE's `--auto-subtitle-fix` flag.
-- **Real-Time Progress** — Subtitle download shows live progress, speed, and ETA just like video downloads.
-- **Abort Support** — The Stop button cancels subtitle downloads instantly, same as video downloads.
-- **Smart File Detection** — After download, all saved subtitle files are listed in the success dialog and the activity log.
+#### 🔀 Dedicated Sub Merge Mode (Video + Multi-Audio + Subtitles in One MKV)
+- **Sub Merge Mode** — A dedicated download mode selectable directly from the Download Mode segmented bar (`Normal` | `Sub Merge` | `Netflix`).
+- **Simultaneous Muxing** — Concurrently captures 1080p video, all multi-audio tracks (English, Hindi, etc.), and all subtitle streams, losslessly muxed together into a single `.mkv` container.
+- **Visual Queue Indicator** — Streams queued in Sub Merge Mode display an eye-catching teal ` SUB MERGE ` badge in the download queue.
+- **Option Panel Control** — Toggle between individual modes or use the "Embed Subtitles into Video (MKV container)" option.
 
-#### 🛠️ Improved Download Error Messages
-- **"Download first segment failed"** errors are now clearly detected and explained with actionable fix instructions.
-- **Unhandled exception** errors from N_m3u8DL-RE are now properly captured and displayed.
-- **HTTP 403 Forbidden** errors show a specific message: *"Your stream token has expired — re-open the video in Chrome and re-capture."*
-- Error tracking buffer increased from 5 to 10 lines for better multi-track error diagnosis.
-- Every error dialog now includes a clear, user-friendly **fix hint** instead of a raw exit code.
+#### 📝 Subtitle-Only Download (Desktop + Chrome Extension)
+- **1-Click Extension Subtitle Capture** — Every detected stream in the Chrome extension now features a dedicated **"Subs"** button to start instant subtitle downloads with a single click.
+- **Standalone Subtitle Extraction** — A brand-new **"Download Subtitles"** desktop button lets you extract subtitle tracks from any HLS/DASH stream without downloading video or audio.
+- **Format & Language Control** — Supports **SRT (SubRip)** and **WebVTT** formats across 12 languages (All, English, Hindi, Arabic, German, Spanish, French, Portuguese, Russian, Japanese, Korean, Chinese).
+- **Auto Timing Correction** — Subtitles are automatically fixed using N_m3u8DL-RE's `--auto-subtitle-fix`.
 
-#### 🧪 Expanded Self-Test Suite
-- **13 test categories** covering: Extension integrity, Python modules, engine methods, progress parsing (video/audio/sub/mux), subtitle engine source, GUI source analysis, binary checks (N_m3u8DL-RE subtitle flags), Netflix resolver, direct download smoke test, JS filter logic, release files, and fullscreen/window risk analysis.
-- Subtitle engine tests verify: `run_subtitle_download()` method, all N_m3u8DL-RE subtitle flags (`--sub-only`, `--sub-format`, `-ss`, `--auto-subtitle-fix`), language mapping, and file scanning.
+#### 📊 Clean 2-Metric Progress Display & Accurate Sync
+- **Clutter-Free Progress Interface** — Replaced cluttered 4-item progress lines with strictly two clean, essential metrics: **Downloaded Size / Total Size** (e.g. `8.63 MB / 149.08 MB`) and **Real-Time Speed** (e.g. `2.5 MB/s`).
+- **Multi-Track Progress Synchronization** — Fixed a bug where small audio tracks completing early caused the progress bar to falsely jump to 99%. Progress is now weighted strictly against the primary video payload.
+
+#### 🛠️ Cross-Domain Multi-Audio HLS Fix & Enhanced Error Handling
+- **Multi-Language Playlist URI Resolution** — Master playlists now pre-resolve relative sub-stream paths to absolute URLs, preventing 404s when audio sub-streams reside on separate CDNs (fixes "Download first segment failed" on multi-audio streams).
+- **Actionable Error Explanations** — Token expiries (HTTP 403), first-segment failures, and unhandled exceptions are mapped to friendly, human-readable troubleshooting hints.
+
+#### 🧪 Expanded Self-Test Suite (150 Tests)
+- Comprehensive test coverage across extension source, python engine, progress parsers, subtitle engine, GUI decluttering, binary flags, and Netflix title resolution.
 
 ---
 
