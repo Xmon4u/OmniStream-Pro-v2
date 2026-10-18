@@ -89,6 +89,7 @@ class RoundedFrame:
         self._restore_geom = None
         self._drag = None
         self._region_key = None
+        self._in_configure = False
 
     def install(self):
         self.window.overrideredirect(True)
@@ -115,65 +116,85 @@ class RoundedFrame:
         self._old_proc = ctypes.c_void_p(old)
 
         def _proc(hwnd, msg, wparam, lparam):
-            if msg == WM_NCHITTEST and not self.maximized:
-                hit = self._edge_hit(lparam)
-                if hit:
-                    return hit
+            try:
+                if msg == WM_NCHITTEST and not self.maximized:
+                    hit = self._edge_hit(lparam)
+                    if hit:
+                        return hit
+            except Exception:
+                pass
             return user32.CallWindowProcW(self._old_proc, hwnd, msg, wparam, lparam)
 
         self._proc_ref = WNDPROC(_proc)
         user32.SetWindowLongPtrW(self.hwnd, GWL_WNDPROC, ctypes.cast(self._proc_ref, ctypes.c_void_p))
 
     def _edge_hit(self, lparam):
-        x = ctypes.c_short(lparam & 0xFFFF).value
-        y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
-        rect = RECT()
-        if not user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
-            return 0
-        width = rect.right - rect.left
-        height = rect.bottom - rect.top
-        local_x = x - rect.left
-        local_y = y - rect.top
-        edge = self.edge
-        left = local_x <= edge
-        right = local_x >= width - edge
-        top = local_y <= edge
-        bottom = local_y >= height - edge
-        if top and left:
-            return HTTOPLEFT
-        if top and right:
-            return HTTOPRIGHT
-        if bottom and left:
-            return HTBOTTOMLEFT
-        if bottom and right:
-            return HTBOTTOMRIGHT
-        if left:
-            return HTLEFT
-        if right:
-            return HTRIGHT
-        if top:
-            return HTTOP
-        if bottom:
-            return HTBOTTOM
+        try:
+            x = ctypes.c_short(lparam & 0xFFFF).value
+            y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+            rect = RECT()
+            if not user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
+                return 0
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
+            local_x = x - rect.left
+            local_y = y - rect.top
+            edge = self.edge
+            left = local_x <= edge
+            right = local_x >= width - edge
+            top = local_y <= edge
+            bottom = local_y >= height - edge
+            if top and left:
+                return HTTOPLEFT
+            if top and right:
+                return HTTOPRIGHT
+            if bottom and left:
+                return HTBOTTOMLEFT
+            if bottom and right:
+                return HTBOTTOMRIGHT
+            if left:
+                return HTLEFT
+            if right:
+                return HTRIGHT
+            if top:
+                return HTTOP
+            if bottom:
+                return HTBOTTOM
+        except Exception:
+            pass
         return 0
 
     def apply_region(self):
         if not self.hwnd:
             return
+        if self.maximized:
+            # When maximized, remove rounded region so window fills screen corners without gaps
+            if self._region_key == "maximized":
+                return
+            self._region_key = "maximized"
+            user32.SetWindowRgn(self.hwnd, 0, True)
+            return
+
         width = max(self.window.winfo_width(), 1)
         height = max(self.window.winfo_height(), 1)
-        radius = 0 if self.maximized else self.radius
-        key = (width, height, radius)
+        key = (width, height, self.radius)
         if key == self._region_key:
             return
         self._region_key = key
-        region = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2)
+        region = gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, self.radius * 2, self.radius * 2)
         if region:
             user32.SetWindowRgn(self.hwnd, region, True)
 
     def _on_configure(self, event):
-        if event.widget is self.window:
+        if event.widget is not self.window:
+            return
+        if getattr(self, "_in_configure", False):
+            return
+        self._in_configure = True
+        try:
             self.apply_region()
+        finally:
+            self._in_configure = False
 
     def bind_drag(self, widget):
         widget.bind("<ButtonPress-1>", self._press, add="+")
@@ -198,18 +219,19 @@ class RoundedFrame:
 
     def toggle_max(self):
         if self.maximized:
+            self.maximized = False
+            self.apply_region()
             if self._restore_geom:
                 self.window.geometry(self._restore_geom)
-            self.maximized = False
         else:
             self._restore_geom = self.window.geometry()
             area = RECT()
             user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(area), 0)
             width = area.right - area.left
             height = area.bottom - area.top
-            self.window.geometry(f"{width}x{height}+{area.left}+{area.top}")
             self.maximized = True
-        self.apply_region()
+            self.apply_region()
+            self.window.geometry(f"{width}x{height}+{area.left}+{area.top}")
 
     def close(self):
         self.window.event_generate("<<WindowClose>>")

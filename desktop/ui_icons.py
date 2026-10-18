@@ -187,6 +187,25 @@ def icon_globe(size=16, color=_STROKE):
     return _down(image, size)
 
 
+def icon_file(size=18, color=_STROKE):
+    image, draw, s, w = _new(size)
+    x1, y1 = int(s * 0.22), int(s * 0.14)
+    x2, y2 = int(s * 0.78), int(s * 0.86)
+    corner = int(s * 0.22)
+    draw.polygon([
+        (x1, y1),
+        (x2 - corner, y1),
+        (x2, y1 + corner),
+        (x2, y2),
+        (x1, y2)
+    ], outline=color, width=w)
+    draw.line([(x2 - corner, y1), (x2 - corner, y1 + corner), (x2, y1 + corner)], fill=color, width=w)
+    draw.line([(int(s * 0.34), int(s * 0.44)), (int(s * 0.66), int(s * 0.44))], fill=color, width=w)
+    draw.line([(int(s * 0.34), int(s * 0.58)), (int(s * 0.66), int(s * 0.58))], fill=color, width=w)
+    draw.line([(int(s * 0.34), int(s * 0.72)), (int(s * 0.52), int(s * 0.72))], fill=color, width=w)
+    return _down(image, size)
+
+
 def _ctk(image, size):
     import customtkinter as ctk
     return ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
@@ -211,6 +230,8 @@ def build_icon_set(base_dir):
         "globe": (icon_globe, 15),
         "edit": (icon_edit, 14),
         "copy": (icon_copy, 14),
+        "file": (icon_file, 18),
+        "file_sm": (icon_file, 14),
     }
     icons = {name: _ctk(fn(size), size) for name, (fn, size) in specs.items()}
 

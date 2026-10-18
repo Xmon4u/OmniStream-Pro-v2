@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.2.0 — Professional Windows Setup Installer
+OmniStream Pro v2.3.0 — Professional Windows Setup Installer
 Installs OmniStream Pro, deploys the Chrome extension, checks extension status,
 creates Desktop and Start Menu shortcuts, and launches the app.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -82,7 +82,7 @@ def create_windows_shortcut(target_exe: str, shortcut_path: str, icon_path: str 
         return False
 
 
-def register_windows_uninstaller(target_dir: str, version: str = "2.1.0") -> bool:
+def register_windows_uninstaller(target_dir: str, version: str = "2.3.0") -> bool:
     """Register OmniStream Pro in Windows Registry so it appears in Control Panel and Settings."""
     try:
         import winreg
@@ -168,7 +168,7 @@ class OmniStreamInstaller(ctk.CTk):
         ctk.CTkLabel(header, text="", image=self.icons["logo_sm"]).place(x=16, y=16)
 
         ctk.CTkLabel(
-            header, text="OmniStream Pro v2.2.0 Setup",
+            header, text="OmniStream Pro v2.3.0 Setup",
             font=ctk.CTkFont(family=FONT_MAIN, size=18, weight="bold"),
             text_color=TEXT_TITLE
         ).place(x=78, y=16)
@@ -299,6 +299,7 @@ class OmniStreamInstaller(ctk.CTk):
                 "main_gui.py",
                 "core_engine.py",
                 "bridge_server.py",
+                "netflix_resolver.py",
                 "setup_dependencies.py",
                 "extension_manager.py",
                 "ui_icons.py",
@@ -400,7 +401,7 @@ class OmniStreamInstaller(ctk.CTk):
             self.status_lbl.configure(text="Registering Windows uninstaller...")
             self.pbar.set(0.9)
             self.update_idletasks()
-            register_windows_uninstaller(target_dir, version="2.1.0")
+            register_windows_uninstaller(target_dir, version="2.3.0")
 
             # 5. Check Extension Status
             self.pbar.set(1.0)

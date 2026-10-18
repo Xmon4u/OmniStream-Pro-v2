@@ -15,12 +15,14 @@ DESKTOP_DIR   = os.path.join(ROOT_DIR, "desktop")
 EXTENSION_DIR = os.path.join(ROOT_DIR, "extension")
 RELEASE_DIR   = os.path.join(ROOT_DIR, "release_output")
 
-VERSION = "v2.2.0"
+VERSION = "v2.3.0"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 
+TEST_RELEASE_DIR = os.path.join(os.path.dirname(ROOT_DIR), "OmniStream_Pro_v2.3.0_Test_Release")
+
 def package_extension(zip_path: str):
-    print(f"\n[1/3] Packaging Chrome Extension into {os.path.basename(zip_path)}...")
+    print(f"\n[1/5] Packaging Chrome Extension into {os.path.basename(zip_path)}...")
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for foldername, _, filenames in os.walk(EXTENSION_DIR):
             for filename in filenames:
@@ -31,7 +33,7 @@ def package_extension(zip_path: str):
     print(f"  [OK] Extension package created: {size_kb:.1f} KB")
 
 def build_executable():
-    print(f"\n[2/3] Compiling {EXE_NAME} via PyInstaller...")
+    print(f"\n[2/5] Compiling {EXE_NAME} via PyInstaller...")
     build_script = os.path.join(DESKTOP_DIR, "build_exe.py")
     res = subprocess.run([sys.executable, build_script], cwd=DESKTOP_DIR)
     if res.returncode != 0:
@@ -65,12 +67,36 @@ def build_installer():
         raise FileNotFoundError(f"Expected compiled installer at {dist_setup}")
     return dist_setup
 
+def clean_dir(d: str):
+    """Safely delete all existing files in directory."""
+    if os.path.exists(d):
+        for fname in os.listdir(d):
+            fpath = os.path.join(d, fname)
+            try:
+                if os.path.isfile(fpath) or os.path.islink(fpath):
+                    os.remove(fpath)
+                elif os.path.isdir(fpath):
+                    shutil.rmtree(fpath, ignore_errors=True)
+            except Exception as e:
+                print(f"  [Notice] Could not remove old file {fname}: {e}")
+    else:
+        os.makedirs(d, exist_ok=True)
+
 def main():
     print("=" * 65)
     print(f"  OmniStream Pro {VERSION} - Automated Release Builder")
     print("=" * 65)
 
-    os.makedirs(RELEASE_DIR, exist_ok=True)
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", EXE_NAME], capture_output=True, creationflags=0x08000000)
+        subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro_Setup.exe"], capture_output=True, creationflags=0x08000000)
+    except Exception:
+        pass
+
+    # Clean old release outputs
+    print("\n[Cleaning] Wiping old build files...")
+    clean_dir(RELEASE_DIR)
+    clean_dir(TEST_RELEASE_DIR)
 
     # 1. Package extension
     ext_zip_path = os.path.join(RELEASE_DIR, ZIP_NAME)
@@ -79,19 +105,7 @@ def main():
     # 2. Compile desktop portable exe
     dist_exe_path = build_executable()
     release_exe_path = os.path.join(RELEASE_DIR, EXE_NAME)
-    try:
-        subprocess.run(["taskkill", "/F", "/IM", EXE_NAME], capture_output=True, creationflags=0x08000000)
-    except Exception:
-        pass
-    import time
-    for _ in range(5):
-        try:
-            shutil.copy2(dist_exe_path, release_exe_path)
-            break
-        except PermissionError:
-            time.sleep(0.5)
-    else:
-        shutil.copy2(dist_exe_path, release_exe_path)
+    shutil.copy2(dist_exe_path, release_exe_path)
     size_mb = os.path.getsize(release_exe_path) / (1024 * 1024)
     print(f"\n[2/5] Copied {EXE_NAME} to release folder ({size_mb:.2f} MB).")
 
@@ -108,13 +122,63 @@ def main():
         shutil.copy2(dl_engine_src, dl_engine_dst)
         print(f"\n[5/5] Copied Downloader engine (N_m3u8DL-RE.exe) to release folder.")
 
+    # Copy all assets to OmniStream_Pro_v2.3.0_Test_Release
+    print(f"\n[Sync] Copying all freshly built assets to {TEST_RELEASE_DIR}...")
+    assets = [
+        ("OmniStream_Pro_Setup.exe", setup_path),
+        (EXE_NAME, release_exe_path),
+        (ZIP_NAME, ext_zip_path),
+        ("N_m3u8DL-RE.exe", dl_engine_dst),
+        ("uninstall.exe", uninst_path),
+    ]
+    for name, src in assets:
+        dst = os.path.join(TEST_RELEASE_DIR, name)
+        shutil.copy2(src, dst)
+        sz = os.path.getsize(dst)
+        sz_str = f"{sz/(1024*1024):.1f} MB" if sz > 1024*1024 else f"{sz/1024:.0f} KB"
+        print(f"  -> {name} ({sz_str})")
+
+    # Generate TESTING_GUIDE.txt
+    guide_content = f"""================================================================================
+  OmniStream Pro {VERSION} — Fresh Pre-Release Test Package
+================================================================================
+
+Files in this folder (All freshly built with recent fixes):
+1. OmniStream_Pro_Setup.exe                   — Full Windows Installer
+2. OmniStream_Pro.exe                         — Standalone Portable Application
+3. {ZIP_NAME}  — Chrome Extension Package
+4. N_m3u8DL-RE.exe                            — Downloader Engine Binary
+5. uninstall.exe                              — Native Uninstaller
+
+Verified Fixes in this Build:
+-----------------------------
+1. Window Maximize & Fullscreen ("Not Responding" Freeze Fixed):
+   - Eliminated infinite configure loop and Win32 WNDPROC deadlock.
+   - Window now cleanly maximizes across the full work area with instant response.
+   - Flattens corners when maximized, cleanly restores rounded borders when unmaximized.
+
+2. Full View Queue Manager & UI Expansion (User Requested):
+   - Added 'Full View ↗' button right next to 'Clear All' in the queue toolbar.
+   - One-click transition to full-screen queue page with massive scrollable area for dozens of downloads.
+   - Prominent '← Back to Dashboard' button (and Escape key) to return immediately to the main screen.
+   - Top dashboard cards compacted, increasing normal view queue height by 2.5x.
+
+3. Complete Thread-Safety & Performance:
+   - All background threads (downloads, auto-setup, heartbeats) now dispatch safely through main thread queue.
+   - Zero Tcl/Tk thread contention or modal blocking.
+
+4. Download Engine & Safety:
+   - Relative tracks correctly resolved via --base-url.
+   - Safe intermediate file cleanup: never touches user Desktop files.
+   - Immediate sub-process termination (taskkill) on Stop/Cancel.
+"""
+    with open(os.path.join(TEST_RELEASE_DIR, "TESTING_GUIDE.txt"), "w", encoding="utf-8") as f:
+        f.write(guide_content)
+
     print("\n" + "=" * 65)
-    print(f"[SUCCESS] All {VERSION} release assets prepared:")
-    print(f"  1. Windows Installer EXE : {setup_path}")
-    print(f"  2. Portable Desktop App  : {release_exe_path}")
-    print(f"  3. Downloader Engine EXE : {dl_engine_dst}")
-    print(f"  4. Native Uninstaller    : {uninst_path}")
-    print(f"  5. Chrome Extension Zip  : {ext_zip_path}")
+    print(f"[SUCCESS] All {VERSION} release assets prepared fresh in:")
+    print(f"  -> {RELEASE_DIR}")
+    print(f"  -> {TEST_RELEASE_DIR}")
     print("=" * 65)
 
 if __name__ == "__main__":

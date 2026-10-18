@@ -1,10 +1,34 @@
-## OmniStream Pro v2.2.0 — Concurrent Downloads & Smooth Progress
+## OmniStream Pro v2.3.0 — Subtitle Download & Enhanced Error Handling
 
 Release notes for the desktop app + Chrome extension suite.
 
 ---
 
-### ✨ What's new in v2.2.0
+### ✨ What's new in v2.3.0
+
+#### 📝 Subtitle-Only Download (New Feature)
+- **Download Subtitles Separately** — A brand-new **"Download Subtitles"** button lets you extract subtitle tracks from any HLS/DASH stream without downloading the video or audio.
+- **Subtitle Format Selection** — Choose between **SRT (SubRip)** for universal compatibility or **VTT (WebVTT)** format directly from the Options panel.
+- **12 Language Options** — Subtitle language dropdown supports: All Languages, English, Hindi, Arabic, German, Spanish, French, Portuguese, Russian, Japanese, Korean, and Chinese (Simplified).
+- **Auto Subtitle Fix** — Subtitles are automatically timing-corrected using N_m3u8DL-RE's `--auto-subtitle-fix` flag.
+- **Real-Time Progress** — Subtitle download shows live progress, speed, and ETA just like video downloads.
+- **Abort Support** — The Stop button cancels subtitle downloads instantly, same as video downloads.
+- **Smart File Detection** — After download, all saved subtitle files are listed in the success dialog and the activity log.
+
+#### 🛠️ Improved Download Error Messages
+- **"Download first segment failed"** errors are now clearly detected and explained with actionable fix instructions.
+- **Unhandled exception** errors from N_m3u8DL-RE are now properly captured and displayed.
+- **HTTP 403 Forbidden** errors show a specific message: *"Your stream token has expired — re-open the video in Chrome and re-capture."*
+- Error tracking buffer increased from 5 to 10 lines for better multi-track error diagnosis.
+- Every error dialog now includes a clear, user-friendly **fix hint** instead of a raw exit code.
+
+#### 🧪 Expanded Self-Test Suite
+- **13 test categories** covering: Extension integrity, Python modules, engine methods, progress parsing (video/audio/sub/mux), subtitle engine source, GUI source analysis, binary checks (N_m3u8DL-RE subtitle flags), Netflix resolver, direct download smoke test, JS filter logic, release files, and fullscreen/window risk analysis.
+- Subtitle engine tests verify: `run_subtitle_download()` method, all N_m3u8DL-RE subtitle flags (`--sub-only`, `--sub-format`, `-ss`, `--auto-subtitle-fix`), language mapping, and file scanning.
+
+---
+
+### Previous: v2.2.0 — Concurrent Downloads & Smooth Progress
 
 #### ⚡ Concurrent Multi-File Downloads
 - **Simultaneous Downloads** — Start multiple downloads at the same time. No more "A download is already in progress" error. Each file downloads independently in its own engine instance.
@@ -49,25 +73,13 @@ Release notes for the desktop app + Chrome extension suite.
 
 ---
 
-### Previous: v2.0.2 Features
-
-- Rounded borderless desktop window with custom caption buttons (Windows).
-- App logo + line icons in the desktop UI (no emoji icons).
-- Chrome extension install into the profile you are using.
-- Minimal extension popup: God Mode scan, player list, Download to desktop.
-- Live download timeline: percent done / left, ETA, speed, and progress-bar animation.
-- Cleaner desktop UI: removed duplicate Chrome/queue buttons; Clear Logs kept on the Terminal tab.
-- Stronger stream capture (`webRequest.onBeforeRequest` + God Mode deep scan).
-
----
-
 ### Release assets (build locally)
 
 1. `OmniStream_Pro_Setup.exe` — Windows setup installer (with Control Panel registration & uninstaller)
 2. `OmniStream_Pro.exe` — Standalone portable desktop application
 3. `N_m3u8DL-RE.exe` — Native high-speed stream downloader CLI binary
 4. `uninstall.exe` — Dedicated native uninstaller
-5. `OmniStream-Pro-Chrome-Extension-v2.2.0.zip` — Chrome/Edge browser extension package
+5. `OmniStream-Pro-Chrome-Extension-v2.3.0.zip` — Chrome/Edge browser extension package
 
 Build:
 

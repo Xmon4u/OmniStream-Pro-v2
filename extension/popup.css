@@ -71,6 +71,48 @@ body {
 .bridge.connected { border-color: rgba(52, 211, 153, 0.45); }
 .bridge.connected .dot { background: var(--green); }
 
+.mode-row {
+  padding: 10px 14px 0;
+}
+
+.mode-segmented {
+  display: flex;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.mode-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.mode-tab:hover {
+  color: var(--text);
+}
+
+.mode-tab.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+.mode-tab.active[data-mode="netflix_rename"] {
+  background: #e50914;
+}
+
 .scan-row {
   display: flex;
   align-items: center;

@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0 - High Performance Multi-Stream Engine
+OmniStream Pro v2.3.0 - High Performance Multi-Stream Engine
 Captures HLS (.m3u8), DASH (.mpd), and direct video/audio media streams.
 Concurrent multi-audio track preservation and lossless MKV multiplexing via N_m3u8DL-RE and FFmpeg.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -46,90 +46,113 @@ def _strip_ansi(text: str) -> str:
 
 
 def _format_speed(speed_bps: Optional[float]) -> str:
-    """Format speed in B/s to human-readable KB/s or MB/s string."""
+    """Format speed in B/s to human-readable GB/s, MB/s, KB/s, or B/s string."""
     if speed_bps is None or speed_bps <= 0:
-        return ""
-    if speed_bps >= 1024 * 1024:
-        return f"{speed_bps / (1024*1024):.1f} MB/s"
+        return "0.0 MB/s"
+    if speed_bps >= 1024 * 1024 * 1024:
+        return f"{speed_bps / (1024 * 1024 * 1024):.2f} GB/s"
+    elif speed_bps >= 1024 * 1024:
+        return f"{speed_bps / (1024 * 1024):.1f} MB/s"
     elif speed_bps >= 1024:
         return f"{speed_bps / 1024:.0f} KB/s"
     return f"{speed_bps:.0f} B/s"
 
 
 def _parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
-    """Extract percent / speed / ETA from N_m3u8DL-RE or similar console output.
+    """Extract percent / speed / ETA / size from N_m3u8DL-RE, yt-dlp, or console stream output."""
+    clean = _strip_ansi(line).strip()
+    if not clean:
+        return None
 
-    N_m3u8DL-RE progress line examples:
-      Vid  [============>   ] 58.2%  12.4 MB/s  ETA: 0:01:23
-      Aud  [====>           ] 23.0%  8.1 MB/s  ETA: 0:02:41
-      [Progress] 45%  |  10.5 MB/s  |  00:01:30
-      Downloading: 67.3%  Speed: 15.2 MB/s  ETA: 0:00:45
-    """
-    # Strip ANSI escape codes first
-    clean = _strip_ansi(line)
+    # Handle explicit muxing/merging stages
+    cl_low = clean.lower()
+    if any(k in cl_low for k in ("ffmpeg merging", "merging", "muxing")):
+        return {
+            "pct": 99.0,
+            "status": "Muxing & finalizing...",
+            "speed_bps": None,
+            "speed": None,
+            "eta_sec": 0,
+            "size": None,
+            "track": "main",
+            "raw": clean,
+        }
 
-    # Must contain a percentage
     pct_match = re.search(r'(\d+(?:\.\d+)?)\s*%', clean)
     if not pct_match:
         return None
 
     pct = max(0.0, min(100.0, float(pct_match.group(1))))
 
-    # ── Speed parsing (handles KB/s, MB/s, GB/s, KiB/s, MiB/s) ──────────────
+    # Segment count: e.g. 1/3 or 120/500
+    seg_match = re.search(r'(\d+)\s*/\s*(\d+)', clean)
+    seg_str = f"{seg_match.group(1)} / {seg_match.group(2)} segs" if seg_match else None
+
+    # Size: e.g. 7.58MB/22.74MB or 1.25GB/5.20GB or of 150MiB
+    size_str: Optional[str] = None
+    # 1. Dual size pair: downloaded / total (strictly [KMGT]i?B, case-insensitive)
+    sz_pair = re.search(r'(\d+(?:\.\d+)?\s*[KMGT]i?B)\s*/\s*(\d+(?:\.\d+)?\s*[KMGT]i?B)', clean, re.IGNORECASE)
+    if sz_pair:
+        size_str = f"{sz_pair.group(1).strip()} / {sz_pair.group(2).strip()}"
+    else:
+        # 2. yt-dlp style: of 150.00MiB
+        sz_of = re.search(r'of\s+~?(\d+(?:\.\d+)?\s*[KMGT]i?B)', clean, re.IGNORECASE)
+        if sz_of:
+            size_str = sz_of.group(1).strip()
+        else:
+            # 3. Single size (e.g. 23.85MB near 100%)
+            post_pct_text = clean[pct_match.end():]
+            sz_single = re.search(r'(\d+(?:\.\d+)?\s*[KMGT]i?B)(?:\s*[-–]|\s*$)', post_pct_text, re.IGNORECASE)
+            if sz_single and pct >= 95.0:
+                size_str = sz_single.group(1).strip()
+
+    if not size_str:
+        size_str = seg_str
+
+    # Speed: look AFTER percentage to avoid playlist bitrates (e.g. "6221 Kbps")
     speed_bps: Optional[float] = None
-    # Pattern: number + optional space + unit
-    speed_match = re.search(
-        r'(\d+(?:\.\d+)?)\s*([KMGT]i?B)(?:/s|ps|\s+/\s*s)',
-        clean, re.IGNORECASE
-    )
+    post_pct = clean[pct_match.end():]
+    speed_match = re.search(r'(?:[-~]?\s*)(\d+(?:\.\d+)?)\s*([KMGT]i?B(?:ps|/s)|Bps|B/s)', post_pct, re.IGNORECASE)
+    if not speed_match:
+        # Fallback: look for explicit "Speed: X" or "at X MB/s" anywhere in line
+        speed_match = re.search(r'(?:speed:?\s*|at\s+)(\d+(?:\.\d+)?)\s*([KMGT]i?B(?:ps|/s)|Bps|B/s)', clean, re.IGNORECASE)
+
     if speed_match:
         val = float(speed_match.group(1))
-        unit = speed_match.group(2).upper().replace('IB', 'B')  # KiB -> KB
-        multipliers = {'KB': 1024, 'MB': 1024**2, 'GB': 1024**3, 'TB': 1024**4}
-        speed_bps = val * multipliers.get(unit, 1024**2)
-    else:
-        # Fallback: bare number + B/s / KB/s / MB/s without slash
-        speed_match2 = re.search(
-            r'(\d+(?:\.\d+)?)\s*(K|M|G)?B/?s',
-            clean, re.IGNORECASE
-        )
-        if speed_match2:
-            val = float(speed_match2.group(1))
-            unit = (speed_match2.group(2) or '').upper()
-            mult = {'K': 1024, 'M': 1024**2, 'G': 1024**3}.get(unit, 1)
-            speed_bps = val * mult
+        raw_unit = speed_match.group(2).upper().replace('IB', 'B').replace('PS', '/S')
+        mult = {'B/S': 1, 'KB/S': 1024, 'MB/S': 1024**2, 'GB/S': 1024**3, 'TB/S': 1024**4}.get(raw_unit, 1024**2)
+        speed_bps = val * mult
 
-    # ── ETA parsing ───────────────────────────────────────────────────────────
+    # ETA: look in post_pct for HH:MM:SS, MM:SS, or ETA keywords
     eta_sec: Optional[float] = None
-
-    # Format: ETA: H:MM:SS or ETA: MM:SS or ETA: 0:MM:SS
-    eta_match = re.search(
-        r'(?:ETA|Left|Remain(?:ing)?|Time(?:left|\s+left)?)'  # keyword
-        r'\s*[:\-]?\s*'                                        # separator
-        r'(\d{1,2}):(\d{2})(?::(\d{2}))?',                   # H:MM:SS or MM:SS
-        clean, re.IGNORECASE
-    )
-    if eta_match:
+    eta_match = re.search(r'(?:ETA:?\s*|left\s*[:\-]?\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?', post_pct, re.IGNORECASE)
+    if eta_match and pct < 99.5:
         g = [int(x) for x in eta_match.groups() if x is not None]
         if len(g) == 3:
             eta_sec = g[0] * 3600 + g[1] * 60 + g[2]
         elif len(g) == 2:
             eta_sec = g[0] * 60 + g[1]
-    else:
-        # Bare time near end of line (N_m3u8DL-RE style: "| 00:01:23 |")
-        time_match = re.search(
-            r'(?:[|\s])\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:[|\s]|$)',
-            clean
-        )
-        if time_match and pct < 99.5:
-            g = [int(x) for x in time_match.groups() if x is not None]
-            if len(g) == 3:
-                eta_sec = g[0] * 3600 + g[1] * 60 + g[2]
-            elif len(g) == 2:
-                eta_sec = g[0] * 60 + g[1]
+
+    # Track classification
+    track = "main"
+    cl = clean.lower()
+    if cl.startswith("vid") or "video" in cl[:14]:
+        track = "vid"
+    elif cl.startswith("aud") or "audio" in cl[:14]:
+        track = "aud"
+    elif cl.startswith("sub"):
+        track = "sub"
 
     speed_mb = (speed_bps / (1024 * 1024)) if speed_bps is not None else None
-    return {"pct": pct, "speed_bps": speed_bps, "speed": speed_mb, "eta_sec": eta_sec, "raw": clean}
+    return {
+        "pct": pct,
+        "speed_bps": speed_bps,
+        "speed": speed_mb,
+        "eta_sec": eta_sec,
+        "size": size_str,
+        "track": track,
+        "raw": clean,
+    }
 
 
 def _build_progress_message(
@@ -139,6 +162,7 @@ def _build_progress_message(
     fallback: str = "",
     # Legacy compat: accept 'speed' as MB/s float
     speed: Optional[float] = None,
+    size: Optional[str] = None,
 ) -> str:
     """Build a human-readable progress status string."""
     pct = max(0.0, min(100.0, pct))
@@ -146,22 +170,22 @@ def _build_progress_message(
 
     # Normalise speed to BPS
     if speed_bps is None and speed is not None:
-        speed_bps = speed * 1024 * 1024  # legacy: was in MB/s
+        speed_bps = speed * 1024 * 1024
 
     parts = [f"{pct:.1f}% done", f"{left:.1f}% left"]
 
-    if eta_sec is not None and eta_sec >= 0:
-        parts.append(f"ETA {_format_eta(eta_sec)}")
-
     if speed_bps is not None and speed_bps > 0:
         parts.append(_format_speed(speed_bps))
-    elif fallback:
-        snippet = fallback.strip()
-        if len(snippet) > 60:
-            snippet = snippet[:57] + "…"
-        # Only append if it adds useful info
-        if snippet and "%" not in snippet and ":" not in snippet:
-            parts.append(snippet)
+    elif pct < 100.0:
+        parts.append("0.0 MB/s")
+
+    if eta_sec is not None and eta_sec >= 0:
+        parts.append(f"ETA {_format_eta(eta_sec)}")
+    elif fallback and any(k in fallback.lower() for k in ("mux", "merg")):
+        parts.append(fallback)
+
+    if size:
+        parts.append(size)
 
     return "  ·  ".join(parts)
 
@@ -176,8 +200,13 @@ class OmniStreamEngine:
         self._is_aborted = True
         if self.current_process and self.current_process.poll() is None:
             try:
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self.current_process.pid)],
+                        capture_output=True, creationflags=0x08000000
+                    )
                 self.current_process.terminate()
-                time.sleep(0.4)
+                time.sleep(0.3)
                 if self.current_process.poll() is None:
                     self.current_process.kill()
             except Exception:
@@ -192,8 +221,8 @@ class OmniStreamEngine:
             <save_name>.mkv_video.mp4
             <save_name>_hin.m4a  /  <save_name>_eng.m4a
             <save_name>_audio_*.mp4  etc.
-        We keep ONLY the final merged MKV and remove everything else that
-        matches the save_name prefix and is NOT the final_file.
+        We keep ONLY the final merged MKV and remove only known intermediate tracks
+        belonging specifically to this download, never touching unrelated user files.
         """
         def _log(msg):
             if log_callback:
@@ -206,15 +235,27 @@ class OmniStreamEngine:
         removed = []
         errors = []
 
-        # Patterns produced by N_m3u8DL-RE for intermediate tracks
-        intermediate_patterns = [
-            # video-only tracks before mux
-            f"{save_name}.video.mp4",
-            f"{save_name}.video.mkv",
-            f"{save_name}_video.mp4",
-            f"{save_name}_video.mkv",
-            f"{save_name}.mp4",        # raw video stream (non-muxed)
-        ]
+        stem = save_name.lower()
+
+        # Specific intermediate filename patterns produced by N_m3u8DL-RE / ffmpeg
+        known_intermediate_names = {
+            f"{save_name}.video.mp4".lower(),
+            f"{save_name}.video.mkv".lower(),
+            f"{save_name}_video.mp4".lower(),
+            f"{save_name}_video.mkv".lower(),
+            f"{save_name}.mkv_video.mp4".lower(),
+            f"{save_name}.mkv_video.mkv".lower(),
+        }
+        # If final output is MKV, a standalone raw video track with the exact stem may also exist
+        if final_abs.lower().endswith(".mkv"):
+            known_intermediate_names.add(f"{save_name}.mp4".lower())
+
+        # Exact N_m3u8DL-RE audio & video track suffixes:
+        # e.g. <save_name>_hin.m4a, <save_name>_eng.m4a, <save_name>_audio_0.m4a, <save_name>.mkv_audio_0.m4a
+        track_suffix_re = re.compile(
+            r"^" + re.escape(stem) + r"(?:\.mkv)?(?:_|\.)(?:[a-z]{2,4}|audio[_\d]*|video[_\d]*)\.(?:m4a|aac|ts|mp4|mkv)$",
+            re.IGNORECASE
+        )
 
         try:
             for fname in os.listdir(save_dir):
@@ -223,30 +264,11 @@ class OmniStreamEngine:
                     continue  # Never delete the final output
 
                 base = fname.lower()
-                stem = save_name.lower()
 
-                # Skip if name doesn't start with our save_name
-                if not base.startswith(stem):
-                    continue
-
-                # Remove intermediate audio/video segment files
+                # Strictly match only known N_m3u8DL-RE intermediate patterns
                 is_intermediate = (
-                    base in [p.lower() for p in intermediate_patterns] or
-                    # Audio track files: name_lang.m4a / name_lang.aac / name_audio_N.*
-                    any(base.endswith(ext) for ext in (".m4a", ".aac", ".ts", ".mp4"))
-                    and ("audio" in base or "_hin" in base or "_eng" in base
-                         or "_jpn" in base or "_spa" in base or "_por" in base
-                         or "_ara" in base or "_tel" in base or "_tam" in base
-                         or "_kan" in base or "_mal" in base or "_ben" in base
-                         or base.endswith(".ts")
-                    ) or
-                    # Catch-all: any .mp4 / .m4a / .ts / .aac with our prefix
-                    # but NOT our final mkv
-                    (
-                        base.startswith(stem) and
-                        base != os.path.basename(final_abs).lower() and
-                        any(base.endswith(ext) for ext in (".mp4", ".m4a", ".aac", ".ts"))
-                    )
+                    base in known_intermediate_names or
+                    bool(track_suffix_re.match(base))
                 )
 
                 if is_intermediate:
@@ -259,7 +281,7 @@ class OmniStreamEngine:
             _log(f"  [Cleanup] Directory scan error: {e}")
             return
 
-        # Also remove the .omnistream_tmp_* temp folder if present
+        # Remove the dedicated temp folder if present
         try:
             for entry in os.listdir(save_dir):
                 if entry.startswith(".omnistream_tmp_"):
@@ -271,9 +293,9 @@ class OmniStreamEngine:
             pass
 
         if removed:
-            _log(f"  [Cleanup] Removed {len(removed)} intermediate file(s): {', '.join(removed[:5])}{'...' if len(removed) > 5 else ''}")
+            _log(f"  [Cleanup] Cleaned {len(removed)} intermediate track file(s).")
         if errors:
-            _log(f"  [Cleanup] Could not delete: {', '.join(errors[:3])}")
+            _log(f"  [Cleanup] Notice: Could not remove {len(errors)} file(s).")
 
     @staticmethod
     def parse_input(raw_text: str) -> Dict[str, Any]:
@@ -357,8 +379,41 @@ class OmniStreamEngine:
             if h_name.lower() not in skip_headers and h_val:
                 curl_cmd.extend(["-H", f"{h_name}: {h_val}"])
 
-        res = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=30)
-        if res.returncode != 0 or not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+        if self._is_aborted:
+            raise RuntimeError("Operation aborted by user.")
+
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = 0x08000000  # CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
+        curl_proc = subprocess.Popen(
+            curl_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
+        )
+        self.current_process = curl_proc
+        try:
+            stdout, stderr = curl_proc.communicate(timeout=25)
+        except subprocess.TimeoutExpired:
+            try:
+                curl_proc.kill()
+            except Exception:
+                pass
+            raise RuntimeError(f"Connection timed out while fetching playlist: {url}")
+        finally:
+            self.current_process = None
+
+        if self._is_aborted:
+            raise RuntimeError("Operation aborted by user.")
+
+        if curl_proc.returncode != 0 or not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
             raise RuntimeError(f"Could not fetch playlist: {url}")
 
         with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -403,21 +458,25 @@ class OmniStreamEngine:
                 downloaded += len(chunk)
 
                 now = time.time()
-                if progress_callback and (now - last_progress_time > 0.2):
+                if progress_callback and (now - last_progress_time > 0.15):
                     elapsed = max(0.001, now - start_time)
                     speed_bps = downloaded / elapsed
                     if total_size > 0:
                         pct = downloaded / total_size * 100.0
                         remaining = max(0, total_size - downloaded)
                         eta_sec = (remaining / max(1, downloaded)) * elapsed
-                        msg = _build_progress_message(pct, speed_bps=speed_bps, eta_sec=eta_sec)
-                        msg += f"  ·  {downloaded / (1024 * 1024):.1f}/{total_size / (1024 * 1024):.1f} MB"
+                        if total_size >= 1024 * 1024 * 1024:
+                            size_str = f"{downloaded / (1024**3):.2f} GB / {total_size / (1024**3):.2f} GB"
+                        else:
+                            size_str = f"{downloaded / (1024**2):.1f} MB / {total_size / (1024**2):.1f} MB"
+                        msg = _build_progress_message(pct, speed_bps=speed_bps, eta_sec=eta_sec, size=size_str)
                     else:
                         pct = min(95.0, 5.0 + (downloaded / (1024 * 1024)) * 2.0)
-                        msg = (
-                            f"Downloading…  {downloaded / (1024 * 1024):.1f} MB  ·  "
-                            f"{_format_speed(speed_bps)}  ·  size unknown"
-                        )
+                        if downloaded >= 1024 * 1024 * 1024:
+                            size_str = f"{downloaded / (1024**3):.2f} GB downloaded"
+                        else:
+                            size_str = f"{downloaded / (1024**2):.1f} MB downloaded"
+                        msg = _build_progress_message(pct, speed_bps=speed_bps, size=size_str)
                     progress_callback(pct, msg)
                     last_progress_time = now
 
@@ -439,7 +498,8 @@ class OmniStreamEngine:
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> str:
         """Execute high-speed concurrent multi-audio stream capture and MKV muxing."""
-        self._is_aborted = False
+        if self._is_aborted:
+            raise RuntimeError("Operation aborted by user.")
 
         def log(msg: str):
             if log_callback:
@@ -449,7 +509,7 @@ class OmniStreamEngine:
 
         sep = "━" * 60
         log(sep)
-        log("  OmniStream Pro v2.0.0  •  High-Speed Multi-Audio Engine")
+        log("  OmniStream Pro v2.3.0  •  High-Speed Multi-Audio Engine")
         log(sep)
 
         # Step 1: Verify binaries
@@ -485,8 +545,9 @@ class OmniStreamEngine:
             else:
                 save_name = f"OmniStream_{int(time.time())}"
 
-        # Clean filename
-        save_name = re.sub(r'[\\/*?:"<>|]', "", save_name).strip().replace(" ", "_")
+        # Clean filename and strip trailing stream extensions to prevent double extensions (e.g. .m3u8.mkv)
+        save_name = re.sub(r'\.(m3u8|mpd|mp4|webm|mkv|m4v|ts)$', '', save_name, flags=re.IGNORECASE)
+        save_name = re.sub(r'[\\/*?:"<>|]', "", save_name).strip()
         if not save_name:
             save_name = f"OmniStream_{int(time.time())}"
 
@@ -517,10 +578,14 @@ class OmniStreamEngine:
         # Step 3: Fetch playlist (for HLS/DASH)
         log("[3/4] Fetching stream playlist...")
         temp_dir = os.path.join(save_dir, f".omnistream_tmp_{os.getpid()}_{int(time.time())}")
+        playlist_downloaded = False
         try:
             target_source = self.fetch_master_playlist(info, temp_dir)
             log(f"  Playlist cached ({os.path.getsize(target_source):,} bytes).")
+            playlist_downloaded = True
         except Exception as exc:
+            if "aborted" in str(exc).lower():
+                raise
             log(f"  Notice: Direct stream URL mode ({exc}).")
             target_source = info["url"]
 
@@ -543,6 +608,10 @@ class OmniStreamEngine:
         }
         audio_sel = audio_sel_map.get(audio_choice, "all")
 
+        # Determine base URL for N_m3u8DL-RE so relative playlists/segments resolve against remote CDN
+        raw_url = info["url"].split("?")[0].split("#")[0]
+        base_url = (raw_url.rsplit("/", 1)[0] + "/") if "/" in raw_url else ""
+
         # Build command for N_m3u8DL-RE
         cmd = [
             n_m3u8_path,
@@ -564,6 +633,9 @@ class OmniStreamEngine:
             "--no-ansi-color",
         ]
 
+        if playlist_downloaded and base_url and target_source != info["url"] and base_url.startswith("http"):
+            cmd.extend(["--base-url", base_url])
+
         if "cookie" in info["headers"]:
             cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
 
@@ -576,12 +648,23 @@ class OmniStreamEngine:
         log("[4/4] Starting concurrent download with 16 parallel threads...")
         log(sep)
 
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = 0x08000000  # CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
         # Binary + split on \r/\n: N_m3u8DL-RE refreshes progress with CR, not NL.
+        # Run 100% silently in background without console window popup.
         self.current_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
         )
 
         final_mkv = os.path.join(save_dir, f"{save_name}.mkv")
@@ -591,67 +674,74 @@ class OmniStreamEngine:
         last_speed_bps: Optional[float] = None    # EMA-smoothed speed (B/s)
         last_eta_sec:   Optional[float] = None    # last known ETA
         track_progress: Dict[str, float] = {}     # per-track % for weighted avg
+        recent_error_lines = []
         _keywords = (
             "Vid ", "Aud ", "INFO", "WARN", "ERROR", "Exception",
             "Mux", "Merging", "Done", "Fail", "success", "stream",
+            "403", "401", "Forbidden", "Unauthorized",
         )
 
         if progress_callback:
             progress_callback(0.0, "Starting download…  ·  0.0% done  ·  100.0% left")
 
+        # Regex to split on \r, \n, OR lookahead to new record boundary in continuous redirected output
+        split_pat = re.compile(
+            rb'[\r\n]+|(?<=[^\r\n])(?=(?:Vid |Aud |Sub |\[Progress\]|\[download\]|\d{2}:\d{2}:\d{2}\.\d{3}\s+(?:INFO|WARN|ERROR)))'
+        )
+
+        last_known_size: Optional[str] = None
         buf = b""
         while True:
             if self._is_aborted:
                 log("[Aborted] Download cancelled by user.")
                 break
 
-            chunk = self.current_process.stdout.read(256)
+            chunk = self.current_process.stdout.read(128)
             if not chunk:
                 break
             buf += chunk
 
-            while True:
-                i_n = buf.find(b"\n")
-                i_r = buf.find(b"\r")
-                if i_n < 0 and i_r < 0:
-                    break
-                if i_n < 0:
-                    idx = i_r
-                elif i_r < 0:
-                    idx = i_n
-                else:
-                    idx = min(i_n, i_r)
+            parts = split_pat.split(buf)
+            if len(parts) > 1:
+                completed_lines = parts[:-1]
+                buf = parts[-1]
+            else:
+                completed_lines = []
 
-                raw_line = buf[:idx]
-                buf = buf[idx + 1:]
-                # Swallow LF that follows CR (CRLF)
-                if raw_line.endswith(b"\r"):
-                    raw_line = raw_line[:-1]
-                if buf.startswith(b"\n"):
-                    buf = buf[1:]
-
-                line = raw_line.decode("utf-8", errors="replace").strip()
+            for raw_chunk in completed_lines:
+                line = raw_chunk.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
 
-                # Strip ANSI for logging / keyword matching
                 clean_line = _strip_ansi(line)
+
+                cl_low = clean_line.lower()
+                if any(w in cl_low for w in (
+                    "error", "fail", "403", "401", "exception",
+                    "forbidden", "unauthorized", "unhandled", "segment",
+                )):
+                    recent_error_lines.append(clean_line)
+                    if len(recent_error_lines) > 10:
+                        recent_error_lines.pop(0)
 
                 parsed = _parse_progress_line(line)
                 now = time.time()
-                if parsed and progress_callback and (now - last_progress_update > 0.12):
+                if parsed:
                     raw_pct   = parsed["pct"]
                     speed_bps = parsed.get("speed_bps")
                     eta_sec   = parsed.get("eta_sec")
+                    track     = parsed.get("track", "main")
 
-                    # ── Multi-track weighted average ───────────────────────────
-                    cl = clean_line.lower()
-                    if cl.startswith("vid") or "video" in cl[:14]:
+                    if parsed.get("size"):
+                        # Keep best size (prefer MB/GB size over segs)
+                        if "segs" not in parsed["size"] or not last_known_size or "segs" in last_known_size:
+                            last_known_size = parsed["size"]
+
+                    # Multi-track progress tracking
+                    if track == "vid":
                         track_progress["vid"] = raw_pct
-                    elif cl.startswith("aud") or "audio" in cl[:14]:
-                        # Find closest existing aud bucket or create new one
-                        existing = {k: v for k, v in track_progress.items()
-                                    if k.startswith("aud")}
+                    elif track == "aud":
+                        existing = {k: v for k, v in track_progress.items() if k.startswith("aud")}
                         if existing:
                             closest = min(existing, key=lambda k: abs(existing[k] - raw_pct))
                             track_progress[closest] = raw_pct
@@ -662,8 +752,7 @@ class OmniStreamEngine:
 
                     if len(track_progress) >= 2:
                         vid_pct  = track_progress.get("vid", 0.0)
-                        aud_vals = [v for k, v in track_progress.items()
-                                    if k.startswith("aud")]
+                        aud_vals = [v for k, v in track_progress.items() if k.startswith("aud")]
                         aud_avg  = sum(aud_vals) / len(aud_vals) if aud_vals else 0.0
                         avg_pct  = vid_pct * 0.60 + aud_avg * 0.40
                     else:
@@ -671,37 +760,47 @@ class OmniStreamEngine:
 
                     last_pct = max(last_pct, avg_pct)
 
-                    # ── EMA speed smoothing (alpha=0.25) ──────────────────────
                     if speed_bps and speed_bps > 0:
                         last_speed_bps = (
                             speed_bps if last_speed_bps is None
-                            else 0.25 * speed_bps + 0.75 * last_speed_bps
+                            else 0.3 * speed_bps + 0.7 * last_speed_bps
                         )
 
-                    # ── ETA: use reported value or calculate from elapsed ──────
                     if eta_sec is not None:
                         last_eta_sec = eta_sec
-                    elif last_pct > 1.0:
+                    elif last_pct > 0.5:
                         elapsed = max(0.001, now - progress_started)
                         last_eta_sec = (elapsed / last_pct) * (100.0 - last_pct)
 
-                    msg = _build_progress_message(
-                        last_pct,
-                        speed_bps=last_speed_bps,
-                        eta_sec=last_eta_sec,
-                    )
-                    progress_callback(last_pct, msg)
-                    last_progress_update = now
+                    if progress_callback and (now - last_progress_update >= 0.10):
+                        msg = _build_progress_message(
+                            last_pct,
+                            speed_bps=last_speed_bps,
+                            eta_sec=last_eta_sec,
+                            size=last_known_size,
+                            fallback=parsed.get("status", "")
+                        )
+                        progress_callback(last_pct, msg)
+                        last_progress_update = now
 
                 if any(k in clean_line for k in _keywords):
-                    # Avoid flooding the log with CR progress spam
                     if not parsed or any(k in clean_line for k in
-                                        ("INFO", "WARN", "ERROR", "Mux", "Merging", "Done")):
+                                        ("INFO", "WARN", "ERROR", "Mux", "Merging", "Done", "403", "401", "Fail")):
                         log(f"  {clean_line}")
 
         if buf.strip():
             leftover = buf.decode("utf-8", errors="replace").strip()
-            if leftover and any(k in leftover for k in _keywords):
+            parsed_leftover = _parse_progress_line(leftover)
+            if parsed_leftover and progress_callback:
+                msg = _build_progress_message(
+                    max(last_pct, parsed_leftover["pct"]),
+                    speed_bps=last_speed_bps,
+                    eta_sec=0,
+                    size=last_known_size,
+                    fallback=parsed_leftover.get("status", "")
+                )
+                progress_callback(max(last_pct, parsed_leftover["pct"]), msg)
+            elif leftover and any(k in leftover for k in _keywords):
                 log(f"  {leftover}")
 
         self.current_process.stdout.close()
@@ -738,11 +837,293 @@ class OmniStreamEngine:
                 progress_callback(100.0, "Download and mux complete!")
             return final_mkv
         else:
+            err_reason = ""
+            fix_hint = "If the session or token expired, please open the video again in Chrome and capture a fresh link via the OmniStream extension."
+            if recent_error_lines:
+                combined = " ".join(recent_error_lines).lower()
+                if "403" in combined or "forbidden" in combined or "unauthorized" in combined:
+                    err_reason = "Remote stream token expired (HTTP 403 Forbidden)."
+                    fix_hint = "Your stream token has expired. Please re-open the video in Chrome, wait for it to start playing, then capture the link again via the OmniStream extension."
+                elif "first segment" in combined or "download first" in combined:
+                    # N_m3u8DL-RE: 'Download first segment failed'
+                    err_reason = recent_error_lines[-1]
+                    fix_hint = (
+                        "The stream server rejected the first segment download. This usually means:\n"
+                        "  • The stream URL or DRM tokens have expired — re-open the video in Chrome and re-capture.\n"
+                        "  • Or the stream uses per-session authentication that has timed out."
+                    )
+                elif "unhandled exception" in combined:
+                    err_reason = recent_error_lines[-1]
+                    fix_hint = "An internal downloader error occurred. Try re-capturing the stream link from Chrome."
+                else:
+                    err_reason = recent_error_lines[-1]
+
+            reason_str = f" Reason: {err_reason}" if err_reason else ""
             raise RuntimeError(
-                f"Download failed (exit code {rc}). "
-                "Check the terminal log above for details. "
-                "If the session expired, copy and paste a fresh stream URL or cURL command."
+                f"Download failed (exit code {rc}).{reason_str}\n\n{fix_hint}"
             )
+
+    def run_subtitle_download(
+        self,
+        input_text: str,
+        save_name: str = "",
+        save_dir: str = DEFAULT_SAVE_DIR,
+        sub_format: str = "SRT",
+        sub_lang: str = "all",
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> list:
+        """Download only subtitle tracks from an HLS/DASH stream using N_m3u8DL-RE --sub-only.
+
+        Args:
+            input_text: cURL command or direct M3U8/MPD URL.
+            save_name:  Base filename (without extension). Auto-detected if empty.
+            save_dir:   Destination folder for subtitle files.
+            sub_format: 'SRT' or 'VTT' (default SRT).
+            sub_lang:   'all' to grab every language, or a BCP-47 lang code e.g. 'eng', 'hin'.
+            log_callback: Optional function called with log lines.
+            progress_callback: Optional function called with (pct, message).
+
+        Returns:
+            List of absolute paths of saved subtitle files.
+        """
+        if self._is_aborted:
+            raise RuntimeError("Operation aborted by user.")
+
+        def log(msg: str):
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg, flush=True)
+
+        sep = "━" * 60
+        log(sep)
+        log("  OmniStream Pro  •  Subtitle-Only Download Engine")
+        log(sep)
+
+        # Step 1: Verify binaries
+        log("[1/4] Checking required streaming binaries (N_m3u8DL-RE & FFmpeg)...")
+        n_m3u8_path, ffmpeg_path = ensure_dependencies(
+            status_callback=log,
+            progress_callback=progress_callback,
+        )
+
+        # Step 2: Parse source
+        log("[2/4] Parsing stream metadata...")
+        info = self.parse_input(input_text)
+        if not info["url"]:
+            raise ValueError("No valid stream URL detected. Paste a cURL command or direct M3U8 link.")
+
+        url_display = info["url"][:80] + ("..." if len(info["url"]) > 80 else "")
+        log(f"  Source   : {url_display}")
+        log(f"  Format   : {sub_format.upper()}")
+        log(f"  Language : {sub_lang if sub_lang != 'all' else 'All Available'}")
+
+        # Auto-detect title if empty
+        if not save_name:
+            id_match = re.search(r"(\d{6,10})", info["url"])
+            save_name = f"OmniStream_{id_match.group(1)}" if id_match else f"OmniStream_{int(time.time())}"
+
+        save_name = re.sub(r"\.(m3u8|mpd|mp4|webm|mkv|m4v|ts)$", "", save_name, flags=re.IGNORECASE)
+        save_name = re.sub(r'[\\/*?:"<>|]', "", save_name).strip()
+        if not save_name:
+            save_name = f"OmniStream_{int(time.time())}"
+
+        log(f"  Filename : {save_name}")
+        log(f"  Location : {save_dir}")
+
+        # Step 3: Fetch playlist
+        log("[3/4] Fetching stream playlist to locate subtitle tracks...")
+        temp_dir = os.path.join(save_dir, f".omnistream_tmp_{os.getpid()}_{int(time.time())}")
+        playlist_downloaded = False
+        try:
+            target_source = self.fetch_master_playlist(info, temp_dir)
+            log(f"  Playlist cached ({os.path.getsize(target_source):,} bytes).")
+            playlist_downloaded = True
+        except Exception as exc:
+            if "aborted" in str(exc).lower():
+                raise
+            log(f"  Notice: Direct stream URL mode ({exc}).")
+            target_source = info["url"]
+
+        # Build base URL for relative segment resolution
+        raw_url = info["url"].split("?")[0].split("#")[0]
+        base_url = (raw_url.rsplit("/", 1)[0] + "/") if "/" in raw_url else ""
+
+        if progress_callback:
+            progress_callback(5.0, "Fetching subtitle tracks…  ·  0% done  ·  100% left")
+
+        # Step 4: Build N_m3u8DL-RE command — subtitle only
+        cmd = [
+            n_m3u8_path,
+            target_source,
+            "--sub-only",                           # Download only subtitle tracks
+            "--sub-format", sub_format.upper(),     # SRT or VTT
+            "--auto-subtitle-fix",                  # Auto-fix subtitle timing issues
+            "--save-dir", save_dir,
+            "--save-name", save_name,
+            "--thread-count", "8",
+            "--download-retry-count", "5",
+            "-H", f"Referer: {info['referer']}",
+            "-H", f"Origin: {info['origin']}",
+            "-H", f"User-Agent: {info['user_agent']}",
+            "--no-ansi-color",
+        ]
+
+        # Language filter: if not 'all', use -ss lang=<code>
+        if sub_lang and sub_lang.lower() != "all":
+            cmd.extend(["-ss", f"lang={sub_lang}"])
+        else:
+            cmd.extend(["-ss", "all"])
+
+        if playlist_downloaded and base_url and target_source != info["url"] and base_url.startswith("http"):
+            cmd.extend(["--base-url", base_url])
+
+        if "cookie" in info["headers"]:
+            cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
+
+        skip_headers = {"referer", "origin", "user-agent", "cookie", "host", "content-length", "connection", "accept-encoding"}
+        for h_name, h_val in info.get("headers", {}).items():
+            if h_name.lower() not in skip_headers and h_val:
+                cmd.extend(["-H", f"{h_name}: {h_val}"])
+
+        log("[4/4] Downloading subtitle tracks (no video/audio)...")
+        log(sep)
+
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = 0x08000000  # CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+
+        self.current_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
+        )
+
+        split_pat = re.compile(
+            rb'[\r\n]+|(?<=[^\r\n])(?=(?:Sub |Vid |Aud |\[Progress\]|\[download\]|\d{2}:\d{2}:\d{2}\.\d{3}\s+(?:INFO|WARN|ERROR)))'
+        )
+
+        recent_error_lines = []
+        last_pct = 0.0
+        last_progress_update = 0.0
+        buf = b""
+
+        while True:
+            if self._is_aborted:
+                log("[Aborted] Subtitle download cancelled by user.")
+                break
+
+            chunk = self.current_process.stdout.read(128)
+            if not chunk:
+                break
+            buf += chunk
+
+            parts = split_pat.split(buf)
+            if len(parts) > 1:
+                completed_lines, buf = parts[:-1], parts[-1]
+            else:
+                completed_lines = []
+
+            for raw_chunk in completed_lines:
+                line = raw_chunk.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                clean_line = _strip_ansi(line)
+                cl_low = clean_line.lower()
+
+                if any(w in cl_low for w in ("error", "fail", "403", "401", "exception", "forbidden", "unhandled", "segment")):
+                    recent_error_lines.append(clean_line)
+                    if len(recent_error_lines) > 10:
+                        recent_error_lines.pop(0)
+
+                parsed = _parse_progress_line(line)
+                now = time.time()
+                if parsed:
+                    raw_pct = parsed["pct"]
+                    last_pct = max(last_pct, raw_pct)
+                    if progress_callback and (now - last_progress_update >= 0.15):
+                        msg = _build_progress_message(
+                            last_pct,
+                            speed_bps=parsed.get("speed_bps"),
+                            eta_sec=parsed.get("eta_sec"),
+                            size=parsed.get("size"),
+                            fallback=parsed.get("status", ""),
+                        )
+                        progress_callback(last_pct, msg)
+                        last_progress_update = now
+
+                if any(k in clean_line for k in ("Sub ", "INFO", "WARN", "ERROR", "Done", "Fail", "success")):
+                    log(f"  {clean_line}")
+
+        self.current_process.stdout.close()
+        self.current_process.wait()
+
+        # Clean temp dir
+        if os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+        if self._is_aborted:
+            raise RuntimeError("Operation aborted by user.")
+
+        rc = self.current_process.returncode
+
+        # Collect subtitle files saved by N_m3u8DL-RE
+        ext = f".{sub_format.lower()}"
+        saved_subs = []
+        try:
+            stem_lower = save_name.lower()
+            for fname in os.listdir(save_dir):
+                if fname.lower().endswith(ext) and stem_lower in fname.lower():
+                    saved_subs.append(os.path.join(save_dir, fname))
+        except Exception:
+            pass
+
+        if saved_subs:
+            log(sep)
+            log(f"  [SUCCESS] {len(saved_subs)} subtitle file(s) saved!")
+            for sp in saved_subs:
+                log(f"    {os.path.basename(sp)}")
+            log(sep)
+            if progress_callback:
+                progress_callback(100.0, f"Subtitles saved: {len(saved_subs)} file(s)")
+            return saved_subs
+
+        # If no files found, check for error
+        err_reason = ""
+        if recent_error_lines:
+            combined = " ".join(recent_error_lines).lower()
+            if "403" in combined or "forbidden" in combined:
+                err_reason = "Remote stream token expired (HTTP 403 Forbidden)."
+            elif "no subtitle" in combined or "sub" in combined:
+                err_reason = "No subtitle tracks found in this stream."
+            else:
+                err_reason = recent_error_lines[-1]
+
+        if rc == 0 and not saved_subs:
+            raise RuntimeError(
+                "Subtitle download completed but no subtitle files were found.\n\n"
+                "This stream may not contain embedded subtitle tracks, or they are not "
+                "accessible via the captured URL. Try a different stream or language."
+            )
+
+        reason_str = f" Reason: {err_reason}" if err_reason else ""
+        raise RuntimeError(
+            f"Subtitle download failed (exit code {rc}).{reason_str}\n\n"
+            "If the session or token expired, please re-capture the stream link from Chrome."
+        )
+
 
 # Backward-compatibility alias
 DownloadEngine = OmniStreamEngine
+

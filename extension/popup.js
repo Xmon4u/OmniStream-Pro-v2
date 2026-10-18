@@ -10,6 +10,9 @@ const detectedListEl = $('detectedList');
 const godScanBtn = $('godScanBtn');
 const godScanLabel = $('godScanLabel');
 const toastEl = $('toast');
+const modeNormalBtn = $('modeNormalBtn');
+const modeNetflixBtn = $('modeNetflixBtn');
+let currentDownloadMode = 'normal';
 
 const downloadIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -35,7 +38,9 @@ function escapeHtml(str) {
 function fileLabel(url) {
   try {
     const parts = new URL(url).pathname.split('/').filter(Boolean);
-    return decodeURIComponent(parts[parts.length - 1] || 'player');
+    let label = decodeURIComponent(parts[parts.length - 1] || 'player');
+    label = label.replace(/\.(m3u8|mpd|mp4|webm|mkv|m4s)(\?.*)?$/i, '');
+    return label || 'player';
   } catch (e) {
     return 'player';
   }
@@ -56,6 +61,32 @@ function audioLabel(item) {
   return item.isGodMode ? 'god scan' : 'player';
 }
 
+function setMode(mode, save = true) {
+  currentDownloadMode = (mode === 'netflix_rename') ? 'netflix_rename' : 'normal';
+  if (modeNormalBtn) modeNormalBtn.classList.toggle('active', currentDownloadMode === 'normal');
+  if (modeNetflixBtn) modeNetflixBtn.classList.toggle('active', currentDownloadMode === 'netflix_rename');
+  if (save) {
+    chrome.storage.local.set({ omni_download_mode: currentDownloadMode });
+    showToast(currentDownloadMode === 'netflix_rename' ? 'Netflix Rename Mode' : 'Normal Mode');
+    chrome.runtime.sendMessage({
+      action: 'SET_DESKTOP_MODE',
+      mode: currentDownloadMode
+    }, () => { void chrome.runtime.lastError; });
+    renderDetected();
+  }
+}
+
+function extractNetflixId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i);
+  if (m) return m[1];
+  const m2 = url.match(/(?:movieid|titleid|netflix_id)[=:_\-](\d{6,10})/i);
+  if (m2) return m2[1];
+  const m3 = url.match(/\b(\d{7,9})\b/);
+  if (m3) return m3[1];
+  return null;
+}
+
 async function init() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
@@ -66,6 +97,16 @@ async function init() {
   } catch (e) {
     currentDomainEl.textContent = 'This tab';
   }
+
+  chrome.storage.local.get(['omni_download_mode'], (res) => {
+    if (res && res.omni_download_mode) {
+      setMode(res.omni_download_mode, false);
+    }
+  });
+
+  if (modeNormalBtn) modeNormalBtn.onclick = () => setMode('normal', true);
+  if (modeNetflixBtn) modeNetflixBtn.onclick = () => setMode('netflix_rename', true);
+
   runGodScan(false);
   checkBridge();
 }
@@ -111,7 +152,11 @@ function loadDetectedStreams() {
 
 function checkBridge() {
   chrome.runtime.sendMessage({ action: 'CHECK_OMNISTREAM_BRIDGE' }, (res) => {
-    bridgeStatusEl.classList.toggle('connected', !!(res && res.connected));
+    const connected = !!(res && res.connected);
+    bridgeStatusEl.classList.toggle('connected', connected);
+    if (connected && res.data && res.data.mode && res.data.mode !== currentDownloadMode) {
+      setMode(res.data.mode, false);
+    }
   });
 }
 
@@ -131,10 +176,15 @@ function renderDetected() {
     const langLine = langs
       ? `<div class="url" title="${escapeHtml(langs)}">${escapeHtml(langs)}</div>`
       : '';
+    const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
+    const netflixPill = (currentDownloadMode === 'netflix_rename' && nid)
+      ? `<span class="kind" style="background:#e50914;color:#fff;border-color:#b91c1c;font-weight:700;">Netflix ID: ${escapeHtml(nid)}</span>`
+      : '';
     card.innerHTML = `
       <div class="card-top">
         ${playIcon}
         <div class="title" title="${url}">${label}</div>
+        ${netflixPill}
         <span class="kind">${kindLabel(item)} · ${audioLabel(item)}</span>
       </div>
       ${langLine}
@@ -167,6 +217,7 @@ function copyLink(url) {
 }
 
 function sendToDesktop(item, btn) {
+  const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
   const payload = {
     url: item.url,
     title: fileLabel(item.url),
@@ -176,7 +227,9 @@ function sendToDesktop(item, btn) {
     userAgent: item.userAgent || navigator.userAgent,
     headers: item.headers || {},
     size: item.size || 0,
-    type: item.type || 'Stream'
+    type: item.type || 'Stream',
+    mode: currentDownloadMode,
+    netflixId: nid || undefined
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (res && res.success) {

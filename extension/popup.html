@@ -11,13 +11,20 @@
   <header class="header">
     <img src="icons/icon32.png" alt="" class="logo">
     <div class="brand">
-      <div class="name">OmniStream <span style="opacity:.55;font-weight:600;font-size:10px">v2.2.0</span></div>
+      <div class="name">OmniStream <span style="opacity:.55;font-weight:600;font-size:10px">v2.3.0</span></div>
       <div class="domain" id="currentDomain">This tab</div>
     </div>
     <div id="bridgeStatus" class="bridge" title="Desktop app">
       <span class="dot"></span>
     </div>
   </header>
+
+  <div class="mode-row">
+    <div class="mode-segmented">
+      <button id="modeNormalBtn" type="button" class="mode-tab active" data-mode="normal" title="Normal Mode: Keeps original filename">Normal Mode</button>
+      <button id="modeNetflixBtn" type="button" class="mode-tab" data-mode="netflix_rename" title="Netflix Mode: Auto-identifies ID and renames to official title">Netflix Rename</button>
+    </div>
+  </div>
 
   <div class="scan-row">
     <button id="godScanBtn" type="button" class="scan-btn" title="Unlock F12 and scan protected players">

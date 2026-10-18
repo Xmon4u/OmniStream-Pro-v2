@@ -54,11 +54,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             response = {
                 "status": "ok",
                 "app": "OmniStream Pro",
-                "version": "2.2.0",
+                "version": "2.3.0",
                 "bridge": "active",
                 "port": BRIDGE_PORT,
                 "queue_count": queue_len,
-                "is_downloading": is_dl
+                "is_downloading": is_dl,
+                "mode": getattr(app, "download_mode", "normal")
             }
             self.wfile.write(json.dumps(response).encode("utf-8"))
 
@@ -170,6 +171,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": True, "message": "Window focused"}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode("utf-8"))
+
+        elif self.path in ("/mode", "/set_mode"):
+            try:
+                new_mode = data.get("mode", "normal")
+                if app and hasattr(app, "set_download_mode"):
+                    app.set_download_mode(new_mode)
+                elif app and hasattr(app, "log_queue"):
+                    app.log_queue.put(("set_mode_requested", {"mode": new_mode}))
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                curr = getattr(app, "download_mode", new_mode)
+                self.wfile.write(json.dumps({"success": True, "mode": curr}).encode("utf-8"))
             except Exception as e:
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")

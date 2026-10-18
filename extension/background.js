@@ -274,6 +274,10 @@ function captureFromRequest(details, extra) {
     if (chrome.runtime.lastError || !tab) return;
     mediaItem.title = tab.title || mediaItem.title;
     try { mediaItem.domain = new URL(tab.url || url).hostname; } catch (e) {}
+    if (tab.url) {
+      const nMatch = tab.url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i);
+      if (nMatch) mediaItem.netflixId = nMatch[1];
+    }
     persistTab(details.tabId, mediaList);
   });
 }
@@ -470,6 +474,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Trigger Download All remotely
   if (message.action === 'START_DESKTOP_QUEUE') {
     fetch(`${BRIDGE_URL}/start_queue`, { method: 'POST' })
+      .then(res => res.json())
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: String(err) }));
+    return true;
+  }
+
+  // Set Desktop Mode remotely
+  if (message.action === 'SET_DESKTOP_MODE') {
+    fetch(`${BRIDGE_URL}/set_mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: message.mode })
+    })
       .then(res => res.json())
       .then(data => sendResponse({ success: true, data }))
       .catch(err => sendResponse({ success: false, error: String(err) }));
