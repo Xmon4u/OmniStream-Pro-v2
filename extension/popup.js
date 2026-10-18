@@ -11,6 +11,7 @@ const godScanBtn = $('godScanBtn');
 const godScanLabel = $('godScanLabel');
 const toastEl = $('toast');
 const modeNormalBtn = $('modeNormalBtn');
+const modeSubMergeBtn = $('modeSubMergeBtn');
 const modeNetflixBtn = $('modeNetflixBtn');
 let currentDownloadMode = 'normal';
 
@@ -63,12 +64,22 @@ function audioLabel(item) {
 }
 
 function setMode(mode, save = true) {
-  currentDownloadMode = (mode === 'netflix_rename') ? 'netflix_rename' : 'normal';
+  if (mode === 'netflix_rename') {
+    currentDownloadMode = 'netflix_rename';
+  } else if (mode === 'sub_merge') {
+    currentDownloadMode = 'sub_merge';
+  } else {
+    currentDownloadMode = 'normal';
+  }
   if (modeNormalBtn) modeNormalBtn.classList.toggle('active', currentDownloadMode === 'normal');
+  if (modeSubMergeBtn) modeSubMergeBtn.classList.toggle('active', currentDownloadMode === 'sub_merge');
   if (modeNetflixBtn) modeNetflixBtn.classList.toggle('active', currentDownloadMode === 'netflix_rename');
   if (save) {
     chrome.storage.local.set({ omni_download_mode: currentDownloadMode });
-    showToast(currentDownloadMode === 'netflix_rename' ? 'Netflix Rename Mode' : 'Normal Mode');
+    let label = 'Normal Mode';
+    if (currentDownloadMode === 'sub_merge') label = 'Sub Merge Mode (Video + Audio + Subs)';
+    else if (currentDownloadMode === 'netflix_rename') label = 'Netflix Rename Mode';
+    showToast(label);
     chrome.runtime.sendMessage({
       action: 'SET_DESKTOP_MODE',
       mode: currentDownloadMode
@@ -106,6 +117,7 @@ async function init() {
   });
 
   if (modeNormalBtn) modeNormalBtn.onclick = () => setMode('normal', true);
+  if (modeSubMergeBtn) modeSubMergeBtn.onclick = () => setMode('sub_merge', true);
   if (modeNetflixBtn) modeNetflixBtn.onclick = () => setMode('netflix_rename', true);
 
   runGodScan(false);

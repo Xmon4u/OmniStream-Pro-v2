@@ -109,6 +109,10 @@ body {
   box-shadow: 0 1px 4px rgba(0,0,0,0.3);
 }
 
+.mode-tab.active[data-mode="sub_merge"] {
+  background: #0f766e;
+}
+
 .mode-tab.active[data-mode="netflix_rename"] {
   background: #e50914;
 }

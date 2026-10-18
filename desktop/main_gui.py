@@ -794,7 +794,7 @@ class OmniStreamApp(ctk.CTk):
 
         self.mode_menu = ctk.CTkSegmentedButton(
             mode_box,
-            values=["Normal Mode", "Netflix Rename Mode"],
+            values=["Normal Mode", "Sub Merge Mode", "Netflix Rename Mode"],
             command=self._on_mode_changed,
             height=30,
             font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
@@ -872,24 +872,40 @@ class OmniStreamApp(ctk.CTk):
         self.embed_subs_cb.pack(side="left")
 
     def _on_mode_changed(self, value: str):
-        is_netflix = "netflix" in value.lower()
-        self.download_mode = "netflix_rename" if is_netflix else "normal"
-        if is_netflix:
+        val_low = value.lower()
+        if "sub" in val_low or "merge" in val_low:
+            self.download_mode = "sub_merge"
+            self.embed_subs_var.set(True)
             self.mode_hint_lbl.configure(
-                text="Netflix Mode: Auto-identifies ID & renames to official movie/series title.",
+                text="Sub Merge Mode: Video + all multi-audio tracks + all subtitles merged together into MKV.",
+                text_color=ACCENT_CYAN
+            )
+            self._log("[Mode] Switched to Sub Merge Mode — video, all multi-audio tracks, and subtitles will be merged together into MKV.")
+        elif "netflix" in val_low:
+            self.download_mode = "netflix_rename"
+            self.embed_subs_var.set(True)
+            self.mode_hint_lbl.configure(
+                text="Netflix Mode: Auto-identifies ID & renames to official movie/series title with video, multi-audio & subtitles.",
                 text_color=ACCENT_CYAN
             )
             self._log("[Mode] Switched to Netflix Rename Mode — will detect Netflix ID & auto-rename upon download completion.")
         else:
+            self.download_mode = "normal"
+            self.embed_subs_var.set(False)
             self.mode_hint_lbl.configure(
-                text="Normal Mode: Downloads with original stream title/filename.",
+                text="Normal Mode: Downloads with original stream title/filename and audio tracks.",
                 text_color=TEXT_MUTED
             )
             self._log("[Mode] Switched to Normal Mode.")
 
     def set_download_mode(self, mode: str):
-        mode_clean = "netflix_rename" if "netflix" in str(mode).lower() else "normal"
-        display_name = "Netflix Rename Mode" if mode_clean == "netflix_rename" else "Normal Mode"
+        m = str(mode).lower()
+        if "netflix" in m:
+            display_name = "Netflix Rename Mode"
+        elif "sub" in m or "merge" in m:
+            display_name = "Sub Merge Mode"
+        else:
+            display_name = "Normal Mode"
         def _apply():
             if hasattr(self, "mode_menu"):
                 self.mode_menu.set(display_name)
@@ -1738,7 +1754,8 @@ class OmniStreamApp(ctk.CTk):
             display_title = f"OmniStream_{len(self.queue_items) + 1}"
 
         embed_subs = getattr(self, "embed_subs_var", None)
-        include_subs = embed_subs.get() if embed_subs is not None else True
+        is_sub_mode = item_mode in ("sub_merge", "netflix_rename")
+        include_subs = is_sub_mode or (embed_subs.get() if embed_subs is not None else False)
 
         fmt_raw = self.sub_format_menu.get().upper()
         sub_format = "VTT" if "VTT" in fmt_raw else "SRT"
@@ -1846,6 +1863,12 @@ class OmniStreamApp(ctk.CTk):
                     title_row, text=" NETFLIX ",
                     font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
                     fg_color="#881337", text_color="#fecdd3", corner_radius=4, padx=5, pady=1
+                ).pack(side="left", padx=(0, 6))
+            elif item.get("mode") == "sub_merge" or item.get("include_subtitles"):
+                ctk.CTkLabel(
+                    title_row, text=" SUB MERGE ",
+                    font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
+                    fg_color="#0f766e", text_color="#ccfbf1", corner_radius=4, padx=5, pady=1
                 ).pack(side="left", padx=(0, 6))
 
             raw_title = str(item.get("title", ""))
