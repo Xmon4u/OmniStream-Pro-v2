@@ -26,6 +26,18 @@ Release notes for the desktop app + Chrome extension suite.
 - **Multi-Language Playlist URI Resolution** — Master playlists now pre-resolve relative sub-stream paths to absolute URLs, preventing 404s when audio sub-streams reside on separate CDNs (fixes "Download first segment failed" on multi-audio streams).
 - **Actionable Error Explanations** — Token expiries (HTTP 403), first-segment failures, and unhandled exceptions are mapped to friendly, human-readable troubleshooting hints.
 
+#### 🎬 Netflix Episode ID Resolution (Hotfix)
+- **TV Episode Support** — Netflix Rename Mode now correctly resolves **episode-level IDs** (e.g. `81948683`) in addition to movie/show IDs. Previously, episode IDs would fail with "Could not identify title."
+- **Full Episode Metadata** — Extracted from Netflix's embedded JSON: show name, season number, episode number, and episode title are all combined into the final filename.
+  - Example: `81948683` → **`Emily in Paris S04E01 - La Dolce Emily (2020).mkv`**
+  - Example: `81902147` → **`Sonic the Hedgehog 3 (2024).mkv`**
+- **Redirect Handling Fixed** — Netflix episode IDs redirect to the show's page; the resolver now correctly follows the redirect and parses episode metadata from the embedded SSR JSON.
+
+#### 🔕 Graceful No-Subtitle Stream Handling (Hotfix)
+- **Smart Pre-Check** — Before launching `--sub-only`, the engine now scans the downloaded playlist for subtitle track markers (`TYPE=SUBTITLES`, `contentType="text"`, etc.).
+- **Friendly Info Dialog** — Streams with no embedded subtitle tracks now show a clear **"No Subtitles Available"** info box instead of crashing with an ugly `exit code 1` exception.
+- **Sub Merge Mode Safe** — In Sub Merge Mode, if a stream has no subtitle tracks, the download continues cleanly with video + multi-audio — no failure, no hang.
+
 #### 🧪 Expanded Self-Test Suite (150 Tests)
 - Comprehensive test coverage across extension source, python engine, progress parsers, subtitle engine, GUI decluttering, binary flags, and Netflix title resolution.
 
