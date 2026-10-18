@@ -55,6 +55,7 @@ def load_bg_helpers():
     ok("no multi-language-only toast",     "No multi-language" not in popup_js)
     ok("popup has God Mode button",        "godScanBtn"         in popup_html)
     ok("popup has Download wiring",        "SEND_TO_OMNISTREAM" in popup_js or "Download" in popup_js)
+    ok("popup has Subtitles 1-click button", "sendSubtitlesToDesktop" in popup_js)
     ok("popup has no Clear button",        "clearDetectedBtn"  not in popup_html)
     man = json.load(open(os.path.join(EXT, "manifest.json"), encoding="utf-8"))
     ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0"))
@@ -248,6 +249,9 @@ def test_gui_declutter():
     ok("GUI: Hindi lang mapped",                '"hindi": "hin"'          in gui)
     ok("GUI: Arabic lang mapped",               '"arabic": "ara"'         in gui)
     ok("GUI: Japanese lang mapped",             '"japanese": "jpn"'       in gui)
+    ok("GUI: embed_subs_cb widget",             "embed_subs_cb"           in gui)
+    ok("GUI: embed_subs_var boolean",           "embed_subs_var"          in gui)
+    ok("GUI: 1-click bridge subtitle job",      "isSubtitleJob"           in gui)
 
     # --- Existing features ---
     ok("GUI: no duplicate header Chrome btns",  "btn_header_chrome" not in gui and "btn_header_ext" not in gui)

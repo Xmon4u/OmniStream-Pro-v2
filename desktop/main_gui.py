@@ -853,6 +853,24 @@ class OmniStreamApp(ctk.CTk):
         self.sub_lang_menu.set("All Languages")
         self.sub_lang_menu.grid(row=3, column=3, sticky="ew", padx=(0, 16), pady=3)
 
+        # Row 4: Embed Subtitles into Video (MKV) Checkbox
+        lbl(4, 0, "Subtitles")
+        sub_opts_frame = ctk.CTkFrame(card, fg_color="transparent")
+        sub_opts_frame.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 16), pady=(4, 6))
+
+        self.embed_subs_var = ctk.BooleanVar(value=True)
+        self.embed_subs_cb = ctk.CTkCheckBox(
+            sub_opts_frame,
+            text="Embed Subtitles into Video (MKV container)",
+            variable=self.embed_subs_var,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            fg_color=ACCENT_PRIMARY,
+            hover_color=ACCENT_HOVER,
+            text_color=TEXT_TITLE,
+            corner_radius=6
+        )
+        self.embed_subs_cb.pack(side="left")
+
     def _on_mode_changed(self, value: str):
         is_netflix = "netflix" in value.lower()
         self.download_mode = "netflix_rename" if is_netflix else "normal"
@@ -982,41 +1000,29 @@ class OmniStreamApp(ctk.CTk):
         self.progress_bar.pack(fill="x", padx=14, pady=(5, 6))
         self.progress_bar.set(0)
 
-        # Details Section: Two Rows matching the demo
+        # Details Section: Exactly 2 indicators — Size (left) & Speed (right)
         details = ctk.CTkFrame(self.progress_card, fg_color="transparent")
         details.pack(fill="x", padx=14, pady=(0, 10))
         details.grid_columnconfigure(0, weight=1)
         details.grid_columnconfigure(1, weight=1)
 
-        # Detail Row 1: Size & Time
         self.prog_size_lbl = ctk.CTkLabel(
             details, text="-- / --",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11),
-            text_color=TEXT_BODY, anchor="w"
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color=TEXT_TITLE, anchor="w"
         )
-        self.prog_size_lbl.grid(row=0, column=0, sticky="w", pady=(0, 2))
+        self.prog_size_lbl.grid(row=0, column=0, sticky="w")
 
-        self.prog_time_lbl = ctk.CTkLabel(
-            details, text="Time left: --",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11),
-            text_color=TEXT_MUTED, anchor="e"
-        )
-        self.prog_time_lbl.grid(row=0, column=1, sticky="e", pady=(0, 2))
-
-        # Detail Row 2: Speed & Remaining
         self.prog_speed_lbl = ctk.CTkLabel(
             details, text="0.0 MB/s",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11),
-            text_color=TEXT_MUTED, anchor="w"
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color=ACCENT_CYAN, anchor="e"
         )
-        self.prog_speed_lbl.grid(row=1, column=0, sticky="w")
+        self.prog_speed_lbl.grid(row=0, column=1, sticky="e")
 
-        self.prog_left_lbl = ctk.CTkLabel(
-            details, text="100% remaining",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11),
-            text_color=TEXT_MUTED, anchor="e"
-        )
-        self.prog_left_lbl.grid(row=1, column=1, sticky="e")
+        # Dummy labels retained for compatibility
+        self.prog_time_lbl = ctk.CTkLabel(details, text="")
+        self.prog_left_lbl = ctk.CTkLabel(details, text="")
 
     # ── Container & Queue View (IDM Experience) ───────────────────────────────
     def _build_container_and_queue(self):
@@ -1413,11 +1419,12 @@ class OmniStreamApp(ctk.CTk):
                             text_color=ACCENT_CYAN if pct < 100 else ACCENT_EMERALD
                         )
                     if "sub_lbl" in w:
-                        left_detail = f"{metrics['size']}  ·  {metrics['speed']}" if pct < 100 else metrics["size"]
-                        w["sub_lbl"].configure(text=left_detail)
+                        w["sub_lbl"].configure(text=metrics["size"])
                     if "sub2_lbl" in w:
-                        right_detail = f"{metrics['time']}  ·  {metrics['left']}" if pct < 100 else metrics["time"]
-                        w["sub2_lbl"].configure(text=right_detail)
+                        w["sub2_lbl"].configure(
+                            text=metrics["speed"] if pct < 100 else "Completed",
+                            text_color=ACCENT_CYAN if pct < 100 else ACCENT_EMERALD
+                        )
                 except Exception:
                     pass
 
@@ -1629,6 +1636,21 @@ class OmniStreamApp(ctk.CTk):
         mode = data.get("mode", "")
         netflix_id = data.get("netflixId", "")
 
+        # Check if this is a 1-click subtitle download job from the Chrome extension
+        is_sub_job = bool(data.get("isSubtitleJob") or str(data.get("type", "")).lower() == "subtitles")
+        if is_sub_job:
+            self._log(f"\n[Extension Bridge] Received 1-click Subtitle download request: {title or 'Stream Subtitles'}")
+            try:
+                self.input_box.delete("1.0", "end")
+                self.input_box.insert("1.0", curl_or_url)
+                if title and title.lower() not in ("player", "video"):
+                    self.filename_entry.delete(0, "end")
+                    self.filename_entry.insert(0, title)
+            except Exception:
+                pass
+            self._start_subtitle_download(raw_input=curl_or_url, title=title)
+            return
+
         item = self._add_to_queue(
             raw_input=curl_or_url,
             custom_title=title,
@@ -1715,6 +1737,25 @@ class OmniStreamApp(ctk.CTk):
         else:
             display_title = f"OmniStream_{len(self.queue_items) + 1}"
 
+        embed_subs = getattr(self, "embed_subs_var", None)
+        include_subs = embed_subs.get() if embed_subs is not None else True
+
+        fmt_raw = self.sub_format_menu.get().upper()
+        sub_format = "VTT" if "VTT" in fmt_raw else "SRT"
+
+        lang_raw = self.sub_lang_menu.get().lower()
+        lang_map = {
+            "english": "eng", "hindi": "hin", "arabic": "ara",
+            "german": "deu", "spanish": "spa", "french": "fra",
+            "portuguese": "por", "russian": "rus", "japanese": "jpn",
+            "korean": "kor", "chinese": "zho",
+        }
+        sub_lang = "all"
+        for key, code in lang_map.items():
+            if key in lang_raw:
+                sub_lang = code
+                break
+
         item = {
             "id": f"q_{int(time.time()*1000)}_{len(self.queue_items)}",
             "title": display_title,
@@ -1723,6 +1764,9 @@ class OmniStreamApp(ctk.CTk):
             "save_dir": save_dir,
             "resolution": resolution,
             "audio": audio_choice,
+            "include_subtitles": include_subs,
+            "sub_format": sub_format,
+            "sub_lang": sub_lang,
             "status": "Waiting",
             "saved_file": None,
             "progress_pct": 0.0,
@@ -1891,20 +1935,22 @@ class OmniStreamApp(ctk.CTk):
             sub_row.grid_columnconfigure(0, weight=1)
             sub_row.grid_columnconfigure(1, weight=1)
 
-            left_detail = f"{metrics['size']}  ·  {metrics['speed']}" if item["status"] == "Downloading" else metrics["size"]
-            right_detail = f"{metrics['time']}  ·  {metrics['left']}" if item["status"] == "Downloading" else metrics["time"]
+            # Exactly 2 indicators: Size (left) & Speed (right)
+            left_detail = metrics["size"]
+            right_detail = metrics["speed"] if item["status"] == "Downloading" else ("Completed" if item["status"] == "Completed" else "")
 
             item_sub_lbl = ctk.CTkLabel(
                 sub_row, text=left_detail,
-                font=ctk.CTkFont(family=FONT_MAIN, size=9),
-                text_color=TEXT_MUTED, anchor="w"
+                font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
+                text_color=TEXT_TITLE if item["status"] == "Downloading" else TEXT_MUTED, anchor="w"
             )
             item_sub_lbl.grid(row=0, column=0, sticky="w")
 
             item_sub2_lbl = ctk.CTkLabel(
                 sub_row, text=right_detail,
-                font=ctk.CTkFont(family=FONT_MAIN, size=9),
-                text_color=TEXT_MUTED, anchor="e"
+                font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
+                text_color=ACCENT_CYAN if item["status"] == "Downloading" else (ACCENT_EMERALD if item["status"] == "Completed" else TEXT_MUTED),
+                anchor="e"
             )
             item_sub2_lbl.grid(row=0, column=1, sticky="e")
 
@@ -2318,9 +2364,10 @@ class OmniStreamApp(ctk.CTk):
         self._start_download_item(item, is_queue_batch=False)
 
     # ── Subtitle-Only Download ─────────────────────────────────────────────────
-    def _start_subtitle_download(self):
+    def _start_subtitle_download(self, raw_input: Optional[str] = None, title: Optional[str] = None):
         """Download Subtitles button handler — downloads only subtitle tracks (no video/audio)."""
-        raw_input = self.input_box.get("1.0", "end").strip()
+        if not raw_input:
+            raw_input = self.input_box.get("1.0", "end").strip()
         if not raw_input:
             messagebox.showwarning(
                 "Missing Input",
@@ -2346,7 +2393,7 @@ class OmniStreamApp(ctk.CTk):
                 sub_lang = code
                 break
 
-        save_name = self.filename_entry.get().strip()
+        save_name = title or self.filename_entry.get().strip()
         save_dir  = self.folder_entry.get().strip() or DEFAULT_SAVE_DIR
 
         self._log(f"\n[Subtitle Download] Starting subtitle-only extraction...")
@@ -2508,6 +2555,9 @@ class OmniStreamApp(ctk.CTk):
                     save_dir=item["save_dir"],
                     resolution=item["resolution"],
                     audio_choice=item["audio"],
+                    include_subtitles=item.get("include_subtitles", True),
+                    sub_format=item.get("sub_format", "SRT"),
+                    sub_lang=item.get("sub_lang", "all"),
                     log_callback=self._log,
                     progress_callback=_progress_cb,
                 )

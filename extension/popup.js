@@ -15,6 +15,7 @@ const modeNetflixBtn = $('modeNetflixBtn');
 let currentDownloadMode = 'normal';
 
 const downloadIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
+const subIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 10h4"/><path d="M6 14h8"/><path d="M14 10h4"/></svg>';
 const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
 const playIcon = '<svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M9 7.5v9l8-4.5-8-4.5z"/></svg>';
@@ -191,10 +192,12 @@ function renderDetected() {
       <div class="url" title="${url}">${url}</div>
       <div class="btn-row">
         <button class="download" type="button">${downloadIcon}<span>Download</span></button>
+        <button class="sub-btn" type="button" title="Download Subtitles 1-Click">${subIcon}<span>Subs</span></button>
         <button class="copy-btn" type="button" title="Copy link">${copyIcon}<span>Copy</span></button>
       </div>
     `;
     card.querySelector('.download').onclick = (e) => sendToDesktop(item, e.currentTarget);
+    card.querySelector('.sub-btn').onclick = (e) => sendSubtitlesToDesktop(item, e.currentTarget);
     card.querySelector('.copy-btn').onclick = () => copyLink(item.url);
     detectedListEl.appendChild(card);
   });
@@ -240,6 +243,40 @@ function sendToDesktop(item, btn) {
         setTimeout(() => {
           btn.classList.remove('sent');
           btn.innerHTML = `${downloadIcon}<span>Download</span>`;
+        }, 2500);
+      }
+      checkBridge();
+    } else {
+      showToast('Open the OmniStream app first');
+    }
+  });
+}
+
+function sendSubtitlesToDesktop(item, btn) {
+  const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
+  const payload = {
+    url: item.url,
+    title: fileLabel(item.url),
+    curl: item.curl || `curl "${item.url}"`,
+    referer: item.referer || currentTabUrl,
+    origin: item.origin || '',
+    userAgent: item.userAgent || navigator.userAgent,
+    headers: item.headers || {},
+    isSubtitleJob: true,
+    type: 'subtitles',
+    autoStart: true,
+    mode: currentDownloadMode,
+    netflixId: nid || undefined
+  };
+  chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
+    if (res && res.success) {
+      showToast('Subtitles sent to OmniStream');
+      if (btn) {
+        btn.classList.add('sent');
+        btn.innerHTML = `${checkIcon}<span>Started</span>`;
+        setTimeout(() => {
+          btn.classList.remove('sent');
+          btn.innerHTML = `${subIcon}<span>Subs</span>`;
         }, 2500);
       }
       checkBridge();

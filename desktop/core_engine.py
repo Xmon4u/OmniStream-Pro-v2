@@ -254,7 +254,7 @@ class OmniStreamEngine:
         # Exact N_m3u8DL-RE audio & video track suffixes:
         # e.g. <save_name>_hin.m4a, <save_name>_eng.m4a, <save_name>_audio_0.m4a, <save_name>.mkv_audio_0.m4a
         track_suffix_re = re.compile(
-            r"^" + re.escape(stem) + r"(?:\.mkv)?(?:_|\.)(?:[a-z]{2,4}|audio[_\d]*|video[_\d]*)\.(?:m4a|aac|ts|mp4|mkv)$",
+            r"^" + re.escape(stem) + r"(?:\.mkv)?(?:_|\.)(?:[a-z]{2,4}|audio[_\d]*|video[_\d]*|sub[_\d]*)\.(?:m4a|aac|ts|mp4|mkv|srt|vtt)$",
             re.IGNORECASE
         )
 
@@ -533,6 +533,9 @@ class OmniStreamEngine:
         save_dir: str = DEFAULT_SAVE_DIR,
         resolution: str = "1080p",
         audio_choice: str = "all",
+        include_subtitles: bool = True,
+        sub_format: str = "SRT",
+        sub_lang: str = "all",
         log_callback: Optional[Callable[[str], None]] = None,
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> str:
@@ -668,6 +671,17 @@ class OmniStreamEngine:
             "--no-ansi-color",
         ]
 
+        # Embed subtitles into final MKV if requested
+        if include_subtitles:
+            cmd.extend([
+                "--sub-format", sub_format.upper(),
+                "--auto-subtitle-fix",
+            ])
+            if sub_lang and sub_lang.lower() != "all":
+                cmd.extend(["-ss", f"lang={sub_lang}"])
+            else:
+                cmd.extend(["-ss", "all"])
+
         if "cookie" in info["headers"]:
             cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
 
@@ -782,15 +796,22 @@ class OmniStreamEngine:
                     else:
                         track_progress["main"] = raw_pct
 
-                    if len(track_progress) >= 2:
-                        vid_pct  = track_progress.get("vid", 0.0)
-                        aud_vals = [v for k, v in track_progress.items() if k.startswith("aud")]
-                        aud_avg  = sum(aud_vals) / len(aud_vals) if aud_vals else 0.0
-                        avg_pct  = vid_pct * 0.60 + aud_avg * 0.40
-                    else:
-                        avg_pct = raw_pct
+                    # Video track is the primary payload (>90% of file size).
+                    # Audio tracks are tiny and finish quickly; they must not cause overall progress to falsely jump to 99%.
+                    aud_vals = [v for k, v in track_progress.items() if k.startswith("aud")]
+                    aud_avg = sum(aud_vals) / len(aud_vals) if aud_vals else 0.0
 
-                    last_pct = max(last_pct, avg_pct)
+                    if "vid" in track_progress:
+                        vid_pct = track_progress["vid"]
+                        avg_pct = vid_pct * 0.90 + aud_avg * 0.10
+                    elif "main" in track_progress:
+                        avg_pct = track_progress["main"]
+                    else:
+                        # Only audio streams reported so far; keep progress at a modest early percentage
+                        avg_pct = min(10.0, aud_avg * 0.10)
+
+                    # Cap at 99.0% until file is fully written and verified
+                    last_pct = max(last_pct, min(99.0, avg_pct))
 
                     if speed_bps and speed_bps > 0:
                         last_speed_bps = (
