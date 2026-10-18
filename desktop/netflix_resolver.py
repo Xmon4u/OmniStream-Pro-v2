@@ -185,17 +185,37 @@ def resolve_netflix_title(
     # The embedded JSON on the show page contains the videoId with full episode metadata.
     try:
         url = f"https://www.netflix.com/title/{nid}"
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            try:
-                raw_bytes = resp.read()
-            except http.client.IncompleteRead as e:
-                raw_bytes = e.partial
-            page = raw_bytes.decode("utf-8", errors="ignore")
+        page = ""
+
+        # Prefer curl.exe for lightning fast HTTP/2 retrieval and bypass urllib SSL handshake delays
+        try:
+            import subprocess
+            curl_res = subprocess.run(
+                ["curl.exe", "-s", "-L", "--max-time", "4",
+                 "-A", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                 "-H", "Accept-Language: en-US,en;q=0.9", url],
+                capture_output=True, text=True, errors="ignore"
+            )
+            if curl_res.returncode == 0 and curl_res.stdout:
+                page = curl_res.stdout
+        except Exception:
+            page = ""
+
+        if not page:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9"
+            })
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                try:
+                    raw_bytes = resp.read()
+                except http.client.IncompleteRead as e:
+                    raw_bytes = e.partial
+                page = raw_bytes.decode("utf-8", errors="ignore")
+
+        # Unescape literal \x20, \x27 etc. in embedded JSON
+        page = re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m.group(1), 16)), page)
 
         # ── Step A: Get the show/movie title from <h1> ───────────────────────
         h1_m = re.search(r'<h1[^>]*>(.*?)</h1>', page, re.I)
@@ -205,9 +225,6 @@ def resolve_netflix_title(
                 title = cand
 
         # ── Step B: Detect if the original nid is an episode in embedded JSON ─
-        # Netflix's SSR page embeds JSON like:
-        # "videoId":81948683,"number":1,"runtimeSec":...,"title":"La Dolce Emily"
-        # We look for nid in the page and extract surrounding season/episode data.
         if nid in page:
             idx = page.find(nid)
             forward = page[idx: min(len(page), idx + 800)]
@@ -221,18 +238,12 @@ def resolve_netflix_title(
             ep_title = ""
             ep_title_m = re.search(r'"title":\s*"([^"]+)"', forward)
             if ep_title_m:
-                raw_ep = ep_title_m.group(1)
-                # Decode unicode escapes like \x20 → space
-                try:
-                    raw_ep = raw_ep.encode().decode("unicode-escape")
-                except Exception:
-                    pass
-                raw_ep = raw_ep.replace("\\x20", " ").replace('\\"', '"').strip()
+                raw_ep = ep_title_m.group(1).replace('\\"', '"').strip()
                 if raw_ep and not re.match(r'^Season\s*\d+$', raw_ep, re.I):
                     ep_title = sanitize_filename(raw_ep)
 
-            # Look backwards for the season number in "Season\\x204" or "Season 4"
-            s_nums = re.findall(r'Season(?:\\x20|\s)+(\d+)', back)
+            # Look backwards for the season number in "Season 4"
+            s_nums = re.findall(r'Season\s+(\d+)', back)
             season_num = int(s_nums[-1]) if s_nums else None
 
             if season_num and ep_num:

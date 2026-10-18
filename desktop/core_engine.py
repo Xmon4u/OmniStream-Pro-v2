@@ -388,7 +388,8 @@ class OmniStreamEngine:
             "-H", f"Referer: {info['referer']}",
             "-H", f"Origin: {info['origin']}",
             "-H", f"User-Agent: {info['user_agent']}",
-            "--max-time", "25",
+            "--connect-timeout", "5",
+            "--max-time", "10",
             "-o", local_path,
         ]
 
@@ -422,7 +423,7 @@ class OmniStreamEngine:
         )
         self.current_process = curl_proc
         try:
-            stdout, stderr = curl_proc.communicate(timeout=25)
+            stdout, stderr = curl_proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             try:
                 curl_proc.kill()
@@ -503,7 +504,7 @@ class OmniStreamEngine:
         if "cookie" in info.get("headers", {}):
             req.add_header("Cookie", info["headers"]["cookie"])
 
-        chunk_size = 128 * 1024
+        chunk_size = 1024 * 1024  # 1MB buffer for fast streaming
         downloaded = 0
         start_time = time.time()
         last_progress_time = 0.0
@@ -683,8 +684,11 @@ class OmniStreamEngine:
             "--save-name", save_name,
             "-M", "format=mkv:muxer=ffmpeg",
             "--ffmpeg-binary-path", ffmpeg_path,
-            "--thread-count", "16",
-            "--download-retry-count", "10",
+            "--thread-count", "32",
+            "--download-retry-count", "3",
+            "--http-request-timeout", "15",
+            "--disable-update-check",
+            "--no-log",
             "--check-segments-count", "false",
             "-H", f"Referer: {info['referer']}",
             "-H", f"Origin: {info['origin']}",
@@ -720,7 +724,7 @@ class OmniStreamEngine:
             if h_name.lower() not in skip_headers and h_val:
                 cmd.extend(["-H", f"{h_name}: {h_val}"])
 
-        log("[4/4] Starting concurrent download with 16 parallel threads...")
+        log("[4/4] Starting concurrent download with 32 parallel threads...")
         log(sep)
 
         startupinfo = None
@@ -771,7 +775,7 @@ class OmniStreamEngine:
                 log("[Aborted] Download cancelled by user.")
                 break
 
-            chunk = self.current_process.stdout.read(128)
+            chunk = self.current_process.stdout.read(4096)
             if not chunk:
                 break
             buf += chunk
@@ -1051,8 +1055,11 @@ class OmniStreamEngine:
             "--auto-subtitle-fix",                  # Auto-fix subtitle timing issues
             "--save-dir", save_dir,
             "--save-name", save_name,
-            "--thread-count", "8",
-            "--download-retry-count", "5",
+            "--thread-count", "16",
+            "--download-retry-count", "3",
+            "--http-request-timeout", "15",
+            "--disable-update-check",
+            "--no-log",
             "-H", f"Referer: {info['referer']}",
             "-H", f"Origin: {info['origin']}",
             "-H", f"User-Agent: {info['user_agent']}",
@@ -1107,7 +1114,7 @@ class OmniStreamEngine:
                 log("[Aborted] Subtitle download cancelled by user.")
                 break
 
-            chunk = self.current_process.stdout.read(128)
+            chunk = self.current_process.stdout.read(4096)
             if not chunk:
                 break
             buf += chunk
