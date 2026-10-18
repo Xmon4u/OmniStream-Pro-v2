@@ -12,6 +12,7 @@ import time
 import shutil
 import subprocess
 import urllib.request
+import urllib.parse
 from typing import Dict, Any, Optional, Callable
 
 from setup_dependencies import ensure_dependencies
@@ -425,6 +426,44 @@ class OmniStreamEngine:
                 "Session expired or access denied by remote host. Please copy a fresh stream link or cURL command."
             )
 
+        # Normalize master playlist: make any relative stream / audio / subtitle URLs absolute
+        # so each sub-stream resolves its segments against its own CDN host without global --base-url conflicts.
+        try:
+            with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+
+            modified = False
+            new_lines = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("#EXT-X-MEDIA") and 'URI="' in stripped:
+                    def _replace_uri(m):
+                        sub_uri = m.group(1)
+                        if not sub_uri.startswith(("http://", "https://")):
+                            abs_sub = urllib.parse.urljoin(url, sub_uri)
+                            return f'URI="{abs_sub}"'
+                        return m.group(0)
+
+                    new_line = re.sub(r'URI="([^"]+)"', _replace_uri, line)
+                    if new_line != line:
+                        modified = True
+                    new_lines.append(new_line)
+                elif stripped and not stripped.startswith("#"):
+                    if not stripped.startswith(("http://", "https://")):
+                        abs_stream = urllib.parse.urljoin(url, stripped)
+                        new_lines.append(abs_stream + "\n")
+                        modified = True
+                    else:
+                        new_lines.append(line)
+                else:
+                    new_lines.append(line)
+
+            if modified:
+                with open(local_path, "w", encoding="utf-8") as f:
+                    f.writelines(new_lines)
+        except Exception:
+            pass
+
         return local_path
 
     def _download_direct_file(
@@ -589,15 +628,15 @@ class OmniStreamEngine:
             log(f"  Notice: Direct stream URL mode ({exc}).")
             target_source = info["url"]
 
-        # Resolution mapping
+        # Resolution mapping — matches resolution strings like '1920x1080', '1280x720', etc.
         res_map = {
             "best":  "best",
-            "1080p": "res=1080p",
-            "720p":  "res=720p",
-            "480p":  "res=480p",
+            "1080p": 'res="1080|1920":for=best',
+            "720p":  'res="720|1280":for=best',
+            "480p":  'res="480|854":for=best',
             "audio_only": "none",
         }
-        video_sel = res_map.get(resolution, "res=1080p")
+        video_sel = res_map.get(resolution, "best")
 
         # Audio track mapping
         audio_sel_map = {
@@ -607,10 +646,6 @@ class OmniStreamEngine:
             "hin":   "lang=hin",
         }
         audio_sel = audio_sel_map.get(audio_choice, "all")
-
-        # Determine base URL for N_m3u8DL-RE so relative playlists/segments resolve against remote CDN
-        raw_url = info["url"].split("?")[0].split("#")[0]
-        base_url = (raw_url.rsplit("/", 1)[0] + "/") if "/" in raw_url else ""
 
         # Build command for N_m3u8DL-RE
         cmd = [
@@ -632,9 +667,6 @@ class OmniStreamEngine:
             "-H", f"User-Agent: {info['user_agent']}",
             "--no-ansi-color",
         ]
-
-        if playlist_downloaded and base_url and target_source != info["url"] and base_url.startswith("http"):
-            cmd.extend(["--base-url", base_url])
 
         if "cookie" in info["headers"]:
             cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
@@ -946,10 +978,6 @@ class OmniStreamEngine:
             log(f"  Notice: Direct stream URL mode ({exc}).")
             target_source = info["url"]
 
-        # Build base URL for relative segment resolution
-        raw_url = info["url"].split("?")[0].split("#")[0]
-        base_url = (raw_url.rsplit("/", 1)[0] + "/") if "/" in raw_url else ""
-
         if progress_callback:
             progress_callback(5.0, "Fetching subtitle tracks…  ·  0% done  ·  100% left")
 
@@ -975,9 +1003,6 @@ class OmniStreamEngine:
             cmd.extend(["-ss", f"lang={sub_lang}"])
         else:
             cmd.extend(["-ss", "all"])
-
-        if playlist_downloaded and base_url and target_source != info["url"] and base_url.startswith("http"):
-            cmd.extend(["--base-url", base_url])
 
         if "cookie" in info["headers"]:
             cmd.extend(["-H", f"Cookie: {info['headers']['cookie']}"])
