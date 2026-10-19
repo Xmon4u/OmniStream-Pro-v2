@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.3.0 — Comprehensive Self-Test Suite
+OmniStream Pro v2.4.0 — Comprehensive Self-Test Suite
 ======================================================
 Covers: Module imports, engine methods, progress parsing, subtitle engine,
         N_m3u8DL-RE binary flags, GUI source analysis, extension integrity,
@@ -58,7 +58,7 @@ def load_bg_helpers():
     ok("popup has Subtitles 1-click button", "sendSubtitlesToDesktop" in popup_js)
     ok("popup has no Clear button",        "clearDetectedBtn"  not in popup_html)
     man = json.load(open(os.path.join(EXT, "manifest.json"), encoding="utf-8"))
-    ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0"))
+    ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0", "2.4.0"))
     ok("manifest webRequest",      "webRequest" in man.get("permissions", []))
     ok("manifest host localhost",  any("127.0.0.1" in h for h in man.get("host_permissions", [])))
     ok("godmode FORCE_SCAN",       "FORCE_SCAN" in open(os.path.join(EXT, "godmode.js"), encoding="utf-8").read())
@@ -259,7 +259,7 @@ def test_gui_declutter():
     ok("GUI: Start Download",                   "Start Download"          in gui)
     ok("GUI: Download All queue",               "Download All"            in gui)
     ok("GUI: progress animation tick",          "_tick_progress_animation" in gui)
-    ok("GUI: footer version v2.3.0",            "v2.3.0" in gui or "v2.2.0" in gui or "v2.1.0" in gui)
+    ok("GUI: footer version v2.4.0",            "v2.4.0" in gui or "v2.3.0" in gui or "v2.2.0" in gui or "v2.1.0" in gui)
     ok("GUI: concurrent: no global flag",       "self.is_downloading = False" not in gui)
     ok("GUI: concurrent: _active_downloads",    "_active_downloads"       in gui)
     ok("GUI: concurrent: per-item cancel",      "_cancel_item"            in gui)
@@ -361,7 +361,7 @@ def test_direct_download_smoke():
     try:
         info = {
             "url": "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_92x30dp.png",
-            "user_agent": "OmniStreamPro-SelfTest/2.3.0",
+            "user_agent": "OmniStreamPro-SelfTest/2.4.0",
             "referer":    "https://www.google.com/",
             "origin":     "https://www.google.com",
             "headers":    {},
@@ -505,6 +505,8 @@ def test_bridge_optional():
         with urllib.request.urlopen("http://127.0.0.1:28795/health", timeout=1.5) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="ignore"))
             ok("bridge /health reachable", True, str(data)[:80])
+            from extension_manager import get_or_create_bridge_token
+            tok = get_or_create_bridge_token()
             req = urllib.request.Request(
                 "http://127.0.0.1:28795/add",
                 data=json.dumps({
@@ -513,7 +515,10 @@ def test_bridge_optional():
                     "curl": 'curl "https://example.com/test.m3u8"',
                     "autoStart": False,
                 }).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-OmniStream-Token": tok,
+                },
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=2) as add_resp:
@@ -532,7 +537,9 @@ def test_release_binaries_optional():
     out     = os.path.join(ROOT, "release_output")
     portable= os.path.join(out, "OmniStream_Pro.exe")
     setup   = os.path.join(out, "OmniStream_Pro_Setup.exe")
-    zip_v   = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.3.0.zip")
+    zip_v   = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.4.0.zip")
+    if not os.path.isfile(zip_v):
+        zip_v = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.3.0.zip")
     magic   = b"MEI\x0c\x0b\x0a\x0b\x0e"
 
     if os.path.isfile(portable):
@@ -558,11 +565,93 @@ def test_release_binaries_optional():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 14. Security, DRM Detection & Platform Hardening Tests
+# ─────────────────────────────────────────────────────────────────────────────
+def test_security_drm_platform():
+    """Verify Bridge security (token, origin, host, body limit, URL/path validation),
+    DRM detection signatures, and platform creationflag guards."""
+    import hmac
+    from core_engine import OmniStreamEngine, get_creation_flags
+    from bridge_server import (
+        sanitize_input_title,
+        is_valid_http_url,
+        ALLOWED_HOSTS,
+        ALLOWED_ORIGIN_PREFIXES,
+        BridgeHandler,
+    )
+    from extension_manager import get_or_create_bridge_token
+
+    # 1. Platform Guard
+    cf = get_creation_flags()
+    if sys.platform == "win32":
+        ok("platform guard: win32 CREATE_NO_WINDOW", cf == 0x08000000)
+    else:
+        ok("platform guard: non-win32 0", cf == 0)
+
+    # 2. Filename Sanitization & Path Traversal Prevention
+    ok("sanitize: path traversal forward-slash", sanitize_input_title("../../etc/passwd") == "passwd")
+    ok("sanitize: path traversal backslash", sanitize_input_title(r"..\..\..\secret.mkv") == "secret.mkv")
+    ok("sanitize: Windows reserved characters", sanitize_input_title('Movie: Part <1> "HD" *?|') == "Movie Part 1 HD")
+    ok("sanitize: Windows reserved device CON", sanitize_input_title("CON.mp4").startswith("omni_"))
+    ok("sanitize: Windows reserved device NUL", sanitize_input_title("nul.mkv").startswith("omni_"))
+    long_name = "A" * 300
+    ok("sanitize: max length 200", len(sanitize_input_title(long_name)) <= 200)
+
+    # 3. HTTP/HTTPS Input Validation
+    ok("url validation: valid https", is_valid_http_url("https://example.com/stream.m3u8"))
+    ok("url validation: valid http",  is_valid_http_url("http://127.0.0.1:8080/manifest.mpd"))
+    ok("url validation: rejects file://", not is_valid_http_url("file:///C:/Windows/System32/calc.exe"))
+    ok("url validation: rejects javascript:", not is_valid_http_url("javascript:alert('xss')"))
+    ok("url validation: rejects data URI", not is_valid_http_url("data:text/html,<script>"))
+    ok("url validation: rejects empty", not is_valid_http_url(""))
+
+    # 4. DRM Protection Detection
+    hls_sample_aes = '#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://key"\n#EXTINF:10.0,\nseg1.ts'
+    hls_widevine = '#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES-CTR,KEYFORMAT="com.widevine.alpha",URI="data:text/plain;base64,..."'
+    hls_playready = '#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,KEYFORMAT="com.microsoft.playready",URI="data:..."'
+    hls_fairplay = '#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,KEYFORMAT="com.apple.streamingkeydelivery",URI="skd://..."'
+    dash_widevine = '<MPD><ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"/></MPD>'
+    dash_playready = '<MPD><ContentProtection schemeIdUri="urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95"/></MPD>'
+    dash_generic = '<MPD><ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/></MPD>'
+    clean_hls = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXTINF:10.0,\nseg1.ts\n#EXT-X-ENDLIST'
+
+    ok("DRM detect: SAMPLE-AES", OmniStreamEngine.check_drm_protection(hls_sample_aes) == "SAMPLE-AES")
+    ok("DRM detect: Widevine HLS", OmniStreamEngine.check_drm_protection(hls_widevine) == "Widevine")
+    ok("DRM detect: PlayReady HLS", OmniStreamEngine.check_drm_protection(hls_playready) == "PlayReady")
+    ok("DRM detect: FairPlay HLS", OmniStreamEngine.check_drm_protection(hls_fairplay) == "FairPlay")
+    ok("DRM detect: Widevine DASH", OmniStreamEngine.check_drm_protection(dash_widevine) == "Widevine")
+    ok("DRM detect: PlayReady DASH", OmniStreamEngine.check_drm_protection(dash_playready) == "PlayReady")
+    ok("DRM detect: ContentProtection DASH", OmniStreamEngine.check_drm_protection(dash_generic) == "ContentProtection")
+    ok("DRM detect: Clean stream None", OmniStreamEngine.check_drm_protection(clean_hls) is None)
+
+    # 5. Bridge Token & Origin/Host Rejection
+    token = get_or_create_bridge_token()
+    ok("bridge token generated", bool(token) and len(token) >= 32)
+
+    # Origin verification
+    ok("bridge origin: accepts chrome-extension", any("chrome-extension://abcdef".startswith(p) for p in ALLOWED_ORIGIN_PREFIXES))
+    ok("bridge origin: accepts moz-extension", any("moz-extension://abcdef".startswith(p) for p in ALLOWED_ORIGIN_PREFIXES))
+    ok("bridge origin: rejects https evil origin", not any("https://evil-site.com".startswith(p) for p in ALLOWED_ORIGIN_PREFIXES))
+    ok("bridge origin: rejects http web origin", not any("http://attacker.com".startswith(p) for p in ALLOWED_ORIGIN_PREFIXES))
+
+    # Host verification
+    ok("bridge host: accepts 127.0.0.1:28795", "127.0.0.1:28795" in ALLOWED_HOSTS)
+    ok("bridge host: accepts localhost:28795", "localhost:28795" in ALLOWED_HOSTS)
+    ok("bridge host: rejects evil.com", "evil.com" not in ALLOWED_HOSTS)
+    ok("bridge host: rejects remote IP", "192.168.1.100:28795" not in ALLOWED_HOSTS)
+
+    # HMAC digest comparison
+    ok("bridge auth: valid token passes", hmac.compare_digest(token, token))
+    ok("bridge auth: invalid token rejected", not hmac.compare_digest("wrong_token_12345", token))
+    ok("bridge max body limit: 1MB", BridgeHandler.MAX_BODY_SIZE == 1024 * 1024)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 60)
-    print("  OmniStream Pro v2.3.0 — Self-Test Suite")
+    print("  OmniStream Pro v2.4.0 — Self-Test Suite")
     print("=" * 60)
     print()
 
@@ -616,6 +705,10 @@ if __name__ == "__main__":
 
     print("--- [13] Release Binaries (optional) ---")
     test_release_binaries_optional()
+    print()
+
+    print("--- [14] Security, DRM & Platform Hardening Tests ---")
+    test_security_drm_platform()
     print()
 
     print("=" * 60)

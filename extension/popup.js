@@ -13,7 +13,28 @@ const toastEl = $('toast');
 const modeNormalBtn = $('modeNormalBtn');
 const modeSubMergeBtn = $('modeSubMergeBtn');
 const modeNetflixBtn = $('modeNetflixBtn');
+const themeSelectorEl = $('themeSelector');
 let currentDownloadMode = 'normal';
+let currentTheme = 'cyber';
+
+function setTheme(theme, save = true) {
+  const safeTheme = (theme === 'black' || String(theme).toLowerCase().includes('black')) ? 'black' : 'cyber';
+  currentTheme = safeTheme;
+  document.body.classList.remove('theme-cyber', 'theme-black');
+  document.body.classList.add(`theme-${safeTheme}`);
+  if (themeSelectorEl) {
+    themeSelectorEl.value = safeTheme;
+  }
+  if (save) {
+    chrome.storage.local.set({ omni_theme: safeTheme });
+    const label = safeTheme === 'black' ? 'Midnight Black Theme' : 'Cyber Slate Theme';
+    showToast(label);
+    chrome.runtime.sendMessage({
+      action: 'SET_DESKTOP_THEME',
+      theme: safeTheme === 'black' ? 'Midnight Black' : 'Cyber Slate'
+    }, () => { void chrome.runtime.lastError; });
+  }
+}
 
 const downloadIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const subIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 10h4"/><path d="M6 14h8"/><path d="M14 10h4"/></svg>';
@@ -110,11 +131,20 @@ async function init() {
     currentDomainEl.textContent = 'This tab';
   }
 
-  chrome.storage.local.get(['omni_download_mode'], (res) => {
+  chrome.storage.local.get(['omni_download_mode', 'omni_theme'], (res) => {
     if (res && res.omni_download_mode) {
       setMode(res.omni_download_mode, false);
     }
+    if (res && res.omni_theme) {
+      setTheme(res.omni_theme, false);
+    } else {
+      setTheme('cyber', false);
+    }
   });
+
+  if (themeSelectorEl) {
+    themeSelectorEl.onchange = (e) => setTheme(e.target.value, true);
+  }
 
   if (modeNormalBtn) modeNormalBtn.onclick = () => setMode('normal', true);
   if (modeSubMergeBtn) modeSubMergeBtn.onclick = () => setMode('sub_merge', true);
@@ -166,9 +196,25 @@ function loadDetectedStreams() {
 function checkBridge() {
   chrome.runtime.sendMessage({ action: 'CHECK_OMNISTREAM_BRIDGE' }, (res) => {
     const connected = !!(res && res.connected);
-    bridgeStatusEl.classList.toggle('connected', connected);
+    const authed = !!(connected && res.data && res.data.authenticated !== false);
+    bridgeStatusEl.classList.toggle('connected', connected && authed);
+    if (connected && !authed) {
+      bridgeStatusEl.title = 'Authentication failed. Please restart OmniStream Pro app.';
+    } else if (connected) {
+      bridgeStatusEl.title = 'Connected to OmniStream Pro';
+    } else {
+      bridgeStatusEl.title = 'Desktop app offline (127.0.0.1:28795)';
+    }
     if (connected && res.data && res.data.mode && res.data.mode !== currentDownloadMode) {
       setMode(res.data.mode, false);
+    }
+    if (connected && res.data && res.data.theme) {
+      const desktopTheme = res.data.theme.toLowerCase().includes('black') ? 'black' : 'cyber';
+      chrome.storage.local.get(['omni_theme'], (storageRes) => {
+        if (!storageRes || !storageRes.omni_theme) {
+          setTheme(desktopTheme, false);
+        }
+      });
     }
   });
 }
@@ -259,7 +305,7 @@ function sendToDesktop(item, btn) {
       }
       checkBridge();
     } else {
-      showToast('Open the OmniStream app first');
+      showToast((res && res.error) ? res.error : 'Open the OmniStream app first');
     }
   });
 }
@@ -293,7 +339,7 @@ function sendSubtitlesToDesktop(item, btn) {
       }
       checkBridge();
     } else {
-      showToast('Open the OmniStream app first');
+      showToast((res && res.error) ? res.error : 'Open the OmniStream app first');
     }
   });
 }

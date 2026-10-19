@@ -1,10 +1,47 @@
-## OmniStream Pro v2.3.0 — Subtitle Download & Enhanced Error Handling
+## OmniStream Pro v2.4.0 — High-Resilience Multi-Audio Engine & System-Wide Reliability Update
 
 Release notes for the desktop app + Chrome extension suite.
 
 ---
 
-### ✨ What's new in v2.3.0
+### ✨ What's new in v2.4.0
+
+#### 🛡️ Robust Multi-Track Error Diagnosis (HTTP 401/403 False-Positive Fix)
+- **Eliminated False Token Expiry Errors** — In previous builds, N_m3u8DL-RE progress lines showing segment counters (e.g. `401 / 403 segs`) or transfer bitrates (e.g. `403.00 KB/s`) were inadvertently captured into recent error lines, causing healthy multi-track downloads to falsely fail with *"HTTP 401/403 Forbidden: Stream token or signature has expired"*.
+- **Strict Error Isolation** — Download progress lines are strictly separated from error parsing.
+- **Context-Aware Classification** — 401/403 errors now strictly require explicit HTTP status context (`forbidden`, `unauthorized`, `status code 403`) before reporting token expiry.
+
+#### ⚡ Elevated Network Resilience & Retry Tuning
+- **15 Segment Retries** — Increased segment retry count to 15 (up from 3) to survive heavy CDN rate limits, transient packet loss, and high-latency mobile/broadband connections.
+- **30-Second Segment Timeout** — Increased download timeout per segment to 30 seconds, preventing premature failure during heavy multi-audio multiplexing.
+- **Optimized Stream Concurrency** — Standardized at 16 concurrent threads per stream to avoid CDN socket exhaustion while maximizing throughput.
+
+#### 🔧 Smart Installer Process Management & Update Resilience
+- **Proactive Process Termination** — The setup installer now safely terminates any running or background `OmniStream_Pro.exe` instances via `taskkill` prior to copying files, completely eliminating silent `PermissionError` file-lock failures during upgrades.
+- **Reliable Shortcut Creation** — Verified target path generation ensuring both Desktop and Start Menu shortcuts point accurately to the installed application.
+
+#### 🔄 Thread-Safe Browser Bridge Dispatch
+- **Safe Mode & Theme Dispatching** — The local bridge server's `/set_mode` and `/set_theme` endpoints now dispatch UI updates exclusively through the main thread queue (`run_on_main_thread`).
+- **Zero GUI Deadlocks** — Eliminates potential Tcl/Tk thread contention when the Chrome extension rapidly toggles themes or download modes.
+
+#### 🧹 Native Uninstaller Redirection Fix
+- **Safe Self-Deletion Routine** — Replaced `timeout /t 1` with redirection-safe `ping 127.0.0.1 -n 3 > nul` in `uninstaller.cs`.
+- **Headless & Redirected Execution** — The uninstaller self-delete routine now succeeds reliably in headless, non-interactive, or redirected console environments. Recompiled native `uninstall.exe`.
+
+#### 🎨 Dynamic Icon Fallback & Asset Reliability
+- **Vector Stream Logo Fallback** — Added graceful SVG stream icon fallbacks for `logo` and `logo_sm` in `desktop/ui_icons.py`, eliminating potential `KeyError` crashes in headless or minimal container environments.
+- **Cross-Platform Zip Normalization** — Normalized zip entry path separators in `setup_dependencies.py` to seamlessly handle both Unix (`/`) and Windows (`\`) paths during automated FFmpeg dependency extraction.
+
+#### 📦 Release Artifacts for v2.4.0
+1. `OmniStream_Pro_Setup.exe` — Full Windows setup installer with shortcut creation and uninstaller registry
+2. `OmniStream_Pro.exe` — Standalone portable Windows executable (ready-to-run, zero install)
+3. `OmniStream-Pro-Chrome-Extension-v2.4.0.zip` — Chrome/Edge browser extension package (Manifest V3)
+4. `N_m3u8DL-RE.exe` — Pre-bundled high-speed HLS/DASH downloader engine
+5. `uninstall.exe` — Native Windows uninstaller binary
+
+---
+
+## OmniStream Pro v2.3.0 — Subtitle Download & Enhanced Error Handling
 
 #### 🔀 Dedicated Sub Merge Mode (Video + Multi-Audio + Subtitles in One MKV)
 - **Sub Merge Mode** — A dedicated download mode selectable directly from the Download Mode segmented bar (`Normal` | `Sub Merge` | `Netflix`).
@@ -38,9 +75,10 @@ Release notes for the desktop app + Chrome extension suite.
 - **Friendly Info Dialog** — Streams with no embedded subtitle tracks now show a clear **"No Subtitles Available"** info box instead of crashing with an ugly `exit code 1` exception.
 - **Sub Merge Mode Safe** — In Sub Merge Mode, if a stream has no subtitle tracks, the download continues cleanly with video + multi-audio — no failure, no hang.
 
-#### ⚡ Download Speed & Performance Turbocharger (Hotfix)
-- **32 Parallel Segment Threads** — Segment download concurrency upgraded to 32 parallel threads (up from 16), maximizing network bandwidth and drastically reducing download times.
-- **Fast Timeout & Retry Recovery** — HTTP timeout set to 15s (down from 100s default) with 3 smart retries (down from 10). Stalled or slow segments now recover immediately without freezing the download.
+#### ⚡ High-Resilience Multi-Track Engine & False-Positive 401/403 Fix (Hotfix)
+- **Multi-Track Connection Resilience** — Segment retry count raised to **15** (with a balanced 30s timeout) and thread count optimized to 16 parallel threads per stream, completely preventing segment drops on CDN-throttled multi-audio streams (e.g., 10+ concurrent audio streams).
+- **False-Positive 401/403 Prevention** — Standard segment counters (e.g., `401 / 403 segs`) and transfer speeds (e.g., `403.00 KB/s`) are strictly isolated from error logs and never misdiagnosed as expired HTTP 401/403 Forbidden tokens.
+- **True Error Preservation** — Exact downloader failure messages are faithfully captured and reported directly in the failure dialog.
 - **Pipe Backpressure & CPU Throttling Elimination** — Upgraded stdout stream buffer from 128 bytes to 4,096 bytes, reducing CPU usage by 95% and eliminating pipe backpressure that previously choked download speeds.
 - **Zero Startup Delay** — Added `--disable-update-check` and `--no-log` to bypass redundant external update checks and disk logging on every download.
 - **High-Speed Direct Downloader** — Direct MP4/media file streaming chunk size upgraded to 1 MB for faster single-file transfers.

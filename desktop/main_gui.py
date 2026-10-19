@@ -12,6 +12,9 @@ import time
 import threading
 import webbrowser
 import re
+import json
+import logging
+from logging.handlers import RotatingFileHandler
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -52,33 +55,120 @@ from extension_manager import (
     get_browser_executable,
     extension_is_live,
     extension_heartbeat_time,
-    get_last_launch_error
+    get_last_launch_error,
+    get_app_data_dir
 )
+
+# Initialize rotating file logger in %LOCALAPPDATA%/OmniStreamPro/logs/omnistream.log
+logger = logging.getLogger("OmniStreamPro")
+logger.setLevel(logging.INFO)
+try:
+    _log_dir = os.path.join(get_app_data_dir(), "logs")
+    os.makedirs(_log_dir, exist_ok=True)
+    _log_path = os.path.join(_log_dir, "omnistream.log")
+    _file_handler = RotatingFileHandler(_log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(_file_handler)
+except Exception:
+    pass
 
 # CustomTkinter Appearance
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-# ── Color Palette & Design Tokens ─────────────────────────────────────────────
-BG_ROOT        = "#080c14"
-BG_HEADER      = "#0b1220"
-BG_CARD        = "#0f172a"
-BG_CARD2       = "#131d33"
-BG_INPUT       = "#060911"
-BG_TERMINAL    = "#030712"
-ACCENT_PRIMARY = "#6366f1"
-ACCENT_HOVER   = "#4f46e5"
-ACCENT_CYAN    = "#06b6d4"
-ACCENT_GLOW    = "#38bdf8"
-ACCENT_EMERALD = "#10b981"
-ACCENT_ROSE    = "#f43f5e"
-ACCENT_AMBER   = "#f59e0b"
-BORDER_MAIN    = "#1e293b"
-BORDER_SUB     = "#162032"
-TEXT_TITLE     = "#f8fafc"
-TEXT_BODY      = "#94a3b8"
-TEXT_MUTED     = "#64748b"
-TEXT_LOG       = "#38bdf8"
+# ── Professional Developer Tool Color Palettes & Design Tokens ────────────────
+THEMES = {
+    "Cyber Slate": {
+        "name": "Cyber Slate",
+        "bg_root": "#0d1117",
+        "bg_header": "#161b22",
+        "bg_card": "#161b22",
+        "bg_card2": "#21262d",
+        "bg_input": "#090d13",
+        "bg_terminal": "#05070a",
+        "accent_primary": "#2563eb",
+        "accent_hover": "#1d4ed8",
+        "accent_cyan": "#38bdf8",
+        "accent_glow": "#60a5fa",
+        "accent_emerald": "#10b981",
+        "accent_rose": "#ef4444",
+        "accent_amber": "#f59e0b",
+        "border_main": "#30363d",
+        "border_sub": "#21262d",
+        "text_title": "#f0f6fc",
+        "text_body": "#8b949e",
+        "text_muted": "#6e7681",
+        "text_log": "#79c0ff",
+    },
+    "Midnight Black": {
+        "name": "Midnight Black",
+        "bg_root": "#000000",
+        "bg_header": "#09090b",
+        "bg_card": "#0c0d10",
+        "bg_card2": "#15161b",
+        "bg_input": "#050507",
+        "bg_terminal": "#000000",
+        "accent_primary": "#6366f1",
+        "accent_hover": "#4f46e5",
+        "accent_cyan": "#38bdf8",
+        "accent_glow": "#818cf8",
+        "accent_emerald": "#10b981",
+        "accent_rose": "#ef4444",
+        "accent_amber": "#f59e0b",
+        "border_main": "#23232a",
+        "border_sub": "#181920",
+        "text_title": "#ffffff",
+        "text_body": "#a1a1aa",
+        "text_muted": "#71717a",
+        "text_log": "#a5b4fc",
+    }
+}
+
+DEFAULT_THEME = "Cyber Slate"
+
+def load_saved_theme():
+    try:
+        p = os.path.join(get_app_data_dir(), "theme_setting.json")
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                th = data.get("theme", DEFAULT_THEME)
+                if th in THEMES:
+                    return th
+    except Exception:
+        pass
+    return DEFAULT_THEME
+
+def save_theme_setting(theme_name: str):
+    try:
+        p = os.path.join(get_app_data_dir(), "theme_setting.json")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump({"theme": theme_name}, f)
+    except Exception:
+        pass
+
+INITIAL_THEME = THEMES[load_saved_theme()]
+
+BG_ROOT        = INITIAL_THEME["bg_root"]
+BG_HEADER      = INITIAL_THEME["bg_header"]
+BG_CARD        = INITIAL_THEME["bg_card"]
+BG_CARD2       = INITIAL_THEME["bg_card2"]
+BG_INPUT       = INITIAL_THEME["bg_input"]
+BG_TERMINAL    = INITIAL_THEME["bg_terminal"]
+ACCENT_PRIMARY = INITIAL_THEME["accent_primary"]
+ACCENT_HOVER   = INITIAL_THEME["accent_hover"]
+ACCENT_CYAN    = INITIAL_THEME["accent_cyan"]
+ACCENT_GLOW    = INITIAL_THEME["accent_glow"]
+ACCENT_EMERALD = INITIAL_THEME["accent_emerald"]
+ACCENT_ROSE    = INITIAL_THEME["accent_rose"]
+ACCENT_AMBER   = INITIAL_THEME["accent_amber"]
+BORDER_MAIN    = INITIAL_THEME["border_main"]
+BORDER_SUB     = INITIAL_THEME["border_sub"]
+TEXT_TITLE     = INITIAL_THEME["text_title"]
+TEXT_BODY      = INITIAL_THEME["text_body"]
+TEXT_MUTED     = INITIAL_THEME["text_muted"]
+TEXT_LOG       = INITIAL_THEME["text_log"]
 FONT_MAIN      = "Segoe UI"
 FONT_CODE      = "Cascadia Code"
 
@@ -132,12 +222,18 @@ class ExtensionSetupDialog(ctk.CTkToplevel):
             err = get_last_launch_error()
 
             def _ui():
-                if mode:
-                    self.btn_launch.configure(text="Chrome opened — adding the extension")
-                    self._poll_connection()
-                else:
-                    self.btn_launch.configure(text=err or "Could not add the extension")
-            self.after(0, _ui)
+                try:
+                    if mode:
+                        self.btn_launch.configure(text="Chrome opened — adding the extension")
+                        self._poll_connection()
+                    else:
+                        self.btn_launch.configure(text=err or "Could not add the extension")
+                except Exception:
+                    pass
+            if hasattr(self, "parent") and hasattr(self.parent, "run_on_main_thread"):
+                self.parent.run_on_main_thread(_ui)
+            else:
+                self.after(0, _ui)
         threading.Thread(target=_bg, daemon=True).start()
 
     def _poll_connection(self):
@@ -310,15 +406,28 @@ class ExtensionSetupDialog(ctk.CTkToplevel):
             mode = launch_browser_with_extension()
             if mode:
                 label = "Browser opened — waiting for the extension"
-                self.after(0, lambda: (
-                    self.btn_launch.configure(text=label, fg_color="#065f46"),
-                    self.parent._poll_auto_setup_connection(0) if hasattr(self.parent, "_poll_auto_setup_connection") else None
-                ))
+                def _ui_ok():
+                    try:
+                        self.btn_launch.configure(text=label, fg_color="#065f46")
+                        if hasattr(self.parent, "_poll_auto_setup_connection"):
+                            self.parent._poll_auto_setup_connection(0)
+                    except Exception:
+                        pass
+                if hasattr(self, "parent") and hasattr(self.parent, "run_on_main_thread"):
+                    self.parent.run_on_main_thread(_ui_ok)
+                else:
+                    self.after(0, _ui_ok)
             else:
-                self.after(0, lambda: (
-                    open_chrome_extensions(),
-                    open_extension_folder()
-                ))
+                def _ui_err():
+                    try:
+                        open_chrome_extensions()
+                        open_extension_folder()
+                    except Exception:
+                        pass
+                if hasattr(self, "parent") and hasattr(self.parent, "run_on_main_thread"):
+                    self.parent.run_on_main_thread(_ui_err)
+                else:
+                    self.after(0, _ui_err)
         threading.Thread(target=_bg, daemon=True).start()
 
     def _copy_path(self):
@@ -378,6 +487,11 @@ class OmniStreamApp(ctk.CTk):
         self._anim_start_time    = time.time()
         self._anim_duration      = 0.3
         self._progress_anim_job  = None
+        # Performance: throttle log inserts and queue redraws
+        self._log_buffer         = []   # accumulated log lines for batch insert
+        self._last_log_flush     = 0.0  # time of last log flush
+        self._queue_dirty        = False  # set True when queue needs full redraw
+        self._last_queue_refresh = 0.0   # time of last full queue redraw
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -392,6 +506,20 @@ class OmniStreamApp(ctk.CTk):
 
     def _on_close(self):
         """Gracefully stop bridge server and clean up before exit."""
+        try:
+            if hasattr(self, '_chrome') and self._chrome:
+                self._chrome.uninstall()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, '_active_downloads'):
+                for engine in list(self._active_downloads.values()):
+                    try:
+                        engine.abort()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         try:
             if hasattr(self, 'bridge') and self.bridge:
                 self.bridge.stop()
@@ -557,39 +685,60 @@ class OmniStreamApp(ctk.CTk):
 
     # ── Header ────────────────────────────────────────────────────────────────
     def _build_header(self):
-        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=64)
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=52)
+        self.hdr_frame = hdr
         hdr.grid(row=ROW_HEADER, column=0, sticky="ew")
         hdr.grid_propagate(False)
         hdr.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(hdr, text="", image=self.icons["logo"]).grid(
-            row=0, column=0, padx=(16, 10), pady=8
+            row=0, column=0, padx=(14, 8), pady=6
         )
 
         title_box = ctk.CTkFrame(hdr, fg_color="transparent")
-        title_box.grid(row=0, column=1, sticky="w", pady=8)
+        title_box.grid(row=0, column=1, sticky="w", pady=6)
 
-        ctk.CTkLabel(
+        self.header_title = ctk.CTkLabel(
             title_box, text="OmniStream Pro",
-            font=ctk.CTkFont(family=FONT_MAIN, size=16, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=14, weight="bold"),
             text_color=TEXT_TITLE
-        ).pack(side="left")
+        )
+        self.header_title.pack(side="left")
 
-        ctk.CTkLabel(
-            title_box, text=" v2.3 PRO ",
-            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
-            fg_color="#1e1b4b", text_color="#a5b4fc", corner_radius=6
-        ).pack(side="left", padx=(8, 0))
+        self.header_version = ctk.CTkLabel(
+            title_box, text=" v2.4.0 ",
+            font=ctk.CTkFont(family=FONT_MAIN, size=10),
+            fg_color=BG_CARD2, text_color=TEXT_MUTED,
+            corner_radius=4, padx=5, pady=1
+        )
+        self.header_version.pack(side="left", padx=(8, 0))
 
         header_actions = ctk.CTkFrame(hdr, fg_color="transparent")
-        header_actions.grid(row=0, column=2, padx=(8, 8), pady=0, sticky="e")
+        header_actions.grid(row=0, column=2, padx=(8, 12), pady=0, sticky="e")
 
-        # Status badge only — Chrome/extension setup uses the banner when needed
+        # Top-down Theme Dropdown menu
+        self.theme_menu = ctk.CTkOptionMenu(
+            header_actions,
+            values=["Cyber Slate", "Midnight Black"],
+            command=self._on_theme_changed,
+            width=124, height=26,
+            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
+            fg_color=BG_CARD2, button_color=BG_CARD,
+            button_hover_color=BORDER_MAIN,
+            dropdown_fg_color=BG_CARD,
+            dropdown_hover_color=BORDER_MAIN,
+            dropdown_text_color=TEXT_TITLE,
+            text_color=TEXT_TITLE,
+            corner_radius=6,
+        )
+        self.theme_menu.set(getattr(self, "current_theme_name", "Cyber Slate"))
+        self.theme_menu.pack(side="left", padx=(0, 10))
+
         self.status_badge = ctk.CTkLabel(
-            header_actions, text="Engine Ready",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            header_actions, text="● Ready",
+            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
             text_color=ACCENT_EMERALD,
-            fg_color=BG_CARD, corner_radius=18, padx=14, pady=6
+            fg_color=BG_CARD2, corner_radius=12, padx=10, pady=2
         )
         self.status_badge.pack(side="left")
 
@@ -604,10 +753,180 @@ class OmniStreamApp(ctk.CTk):
         for child in title_box.winfo_children():
             self._chrome.bind_drag(child)
 
+    def _on_theme_changed(self, theme_name: str):
+        self._apply_theme(theme_name)
+        self._log(f"[Theme] Switched to {theme_name} theme.")
+
+    def set_theme(self, theme_name: str):
+        if theme_name in THEMES:
+            def _apply():
+                self._apply_theme(theme_name)
+                if hasattr(self, "theme_menu"):
+                    self.theme_menu.set(theme_name)
+            self.run_on_main_thread(_apply)
+
+    def _apply_theme(self, theme_name: str):
+        if theme_name not in THEMES:
+            return
+        theme = THEMES[theme_name]
+        self.current_theme_name = theme_name
+
+        global BG_ROOT, BG_HEADER, BG_CARD, BG_CARD2, BG_INPUT, BG_TERMINAL
+        global ACCENT_PRIMARY, ACCENT_HOVER, ACCENT_CYAN, ACCENT_GLOW
+        global ACCENT_EMERALD, ACCENT_ROSE, ACCENT_AMBER
+        global BORDER_MAIN, BORDER_SUB, TEXT_TITLE, TEXT_BODY, TEXT_MUTED, TEXT_LOG
+
+        BG_ROOT        = theme["bg_root"]
+        BG_HEADER      = theme["bg_header"]
+        BG_CARD        = theme["bg_card"]
+        BG_CARD2       = theme["bg_card2"]
+        BG_INPUT       = theme["bg_input"]
+        BG_TERMINAL    = theme["bg_terminal"]
+        ACCENT_PRIMARY = theme["accent_primary"]
+        ACCENT_HOVER   = theme["accent_hover"]
+        ACCENT_CYAN    = theme["accent_cyan"]
+        ACCENT_GLOW    = theme["accent_glow"]
+        ACCENT_EMERALD = theme["accent_emerald"]
+        ACCENT_ROSE    = theme["accent_rose"]
+        ACCENT_AMBER   = theme["accent_amber"]
+        BORDER_MAIN    = theme["border_main"]
+        BORDER_SUB     = theme["border_sub"]
+        TEXT_TITLE     = theme["text_title"]
+        TEXT_BODY      = theme["text_body"]
+        TEXT_MUTED     = theme["text_muted"]
+        TEXT_LOG       = theme["text_log"]
+
+        try:
+            # 1. Root & Header
+            self.configure(fg_color=BG_ROOT)
+            if hasattr(self, "hdr_frame"):
+                self.hdr_frame.configure(fg_color=BG_HEADER)
+            if hasattr(self, "header_title"):
+                self.header_title.configure(text_color=TEXT_TITLE)
+            if hasattr(self, "header_version"):
+                self.header_version.configure(fg_color=BG_CARD2, text_color=TEXT_MUTED)
+            if hasattr(self, "status_badge"):
+                self.status_badge.configure(fg_color=BG_CARD2)
+            if hasattr(self, "theme_menu"):
+                self.theme_menu.configure(
+                    fg_color=BG_CARD2, button_color=BG_CARD,
+                    button_hover_color=BORDER_MAIN,
+                    dropdown_fg_color=BG_CARD,
+                    dropdown_hover_color=BORDER_MAIN,
+                    dropdown_text_color=TEXT_TITLE,
+                    text_color=TEXT_TITLE,
+                )
+
+            # 2. Input card
+            if hasattr(self, "input_card"):
+                self.input_card.configure(fg_color=BG_CARD, border_color=BORDER_MAIN)
+            if hasattr(self, "input_paste_btn"):
+                self.input_paste_btn.configure(
+                    fg_color=BG_CARD2, hover_color=BORDER_MAIN,
+                    border_color=BORDER_MAIN, text_color=TEXT_TITLE
+                )
+            if hasattr(self, "input_box"):
+                self.input_box.configure(
+                    fg_color=BG_INPUT, border_color=BORDER_SUB, text_color=TEXT_TITLE
+                )
+
+            # 3. Options card
+            if hasattr(self, "options_card"):
+                self.options_card.configure(fg_color=BG_CARD, border_color=BORDER_MAIN)
+            menu_kw_update = dict(
+                fg_color=BG_INPUT, button_color=BORDER_MAIN,
+                button_hover_color=ACCENT_PRIMARY,
+                dropdown_fg_color=BG_CARD, dropdown_hover_color=BORDER_MAIN,
+                text_color=TEXT_TITLE
+            )
+            for m in ("res_menu", "audio_menu", "sub_format_menu", "sub_lang_menu"):
+                if hasattr(self, m):
+                    getattr(self, m).configure(**menu_kw_update)
+
+            if hasattr(self, "filename_entry"):
+                self.filename_entry.configure(fg_color=BG_INPUT, border_color=BORDER_SUB, text_color=TEXT_TITLE)
+            if hasattr(self, "folder_entry"):
+                self.folder_entry.configure(fg_color=BG_INPUT, border_color=BORDER_SUB, text_color=TEXT_TITLE)
+            if hasattr(self, "folder_browse_btn"):
+                self.folder_browse_btn.configure(
+                    fg_color=BG_CARD2, hover_color=BORDER_MAIN,
+                    border_color=BORDER_MAIN, text_color=TEXT_TITLE
+                )
+            if hasattr(self, "mode_menu"):
+                try:
+                    self.mode_menu.configure(
+                        selected_color=ACCENT_PRIMARY,
+                        selected_hover_color=ACCENT_HOVER,
+                        unselected_color=BG_INPUT,
+                        unselected_hover_color=BG_CARD2,
+                        text_color=TEXT_TITLE
+                    )
+                except Exception:
+                    pass
+
+            # 4. Action buttons
+            if hasattr(self, "start_btn"):
+                self.start_btn.configure(fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER)
+            if hasattr(self, "subtitle_btn"):
+                self.subtitle_btn.configure(
+                    fg_color=BG_CARD2, hover_color=BORDER_MAIN,
+                    border_color=BORDER_MAIN, text_color=TEXT_TITLE
+                )
+            if hasattr(self, "abort_btn"):
+                self.abort_btn.configure(fg_color=BG_CARD2, border_color=BORDER_SUB)
+
+            # 5. Progress card
+            if hasattr(self, "progress_card"):
+                self.progress_card.configure(fg_color=BG_CARD, border_color=BORDER_MAIN)
+            if hasattr(self, "prog_icon_box"):
+                self.prog_icon_box.configure(fg_color=BG_INPUT)
+            if hasattr(self, "progress_bar"):
+                self.progress_bar.configure(progress_color=ACCENT_PRIMARY, fg_color=BG_INPUT)
+            if hasattr(self, "prog_percent_lbl"):
+                self.prog_percent_lbl.configure(text_color=ACCENT_CYAN)
+            if hasattr(self, "prog_speed_lbl"):
+                self.prog_speed_lbl.configure(text_color=ACCENT_CYAN)
+            if hasattr(self, "prog_size_lbl"):
+                self.prog_size_lbl.configure(text_color=TEXT_BODY)
+            if hasattr(self, "prog_name_lbl"):
+                self.prog_name_lbl.configure(text_color=TEXT_TITLE)
+            if hasattr(self, "prog_status_lbl"):
+                self.prog_status_lbl.configure(text_color=TEXT_MUTED)
+
+            # 6. Container & Queue
+            if hasattr(self, "main_container"):
+                self.main_container.configure(fg_color=BG_CARD, border_color=BORDER_MAIN)
+            if hasattr(self, "btn_view_queue"):
+                self.btn_view_queue.configure(fg_color=ACCENT_PRIMARY)
+            if hasattr(self, "btn_view_terminal"):
+                self.btn_view_terminal.configure(fg_color=BG_CARD2, text_color=TEXT_BODY)
+            if hasattr(self, "queue_scroll"):
+                self.queue_scroll.configure(fg_color=BG_INPUT, border_color=BORDER_SUB)
+            if hasattr(self, "log_textbox"):
+                self.log_textbox.configure(fg_color=BG_TERMINAL, text_color=TEXT_LOG)
+            if hasattr(self, "btn_clear_all"):
+                self.btn_clear_all.configure(fg_color=BG_CARD2, border_color=BORDER_MAIN, text_color=TEXT_TITLE)
+            if hasattr(self, "btn_full_queue_view"):
+                self.btn_full_queue_view.configure(fg_color=BG_CARD2, border_color=BORDER_MAIN, text_color=TEXT_TITLE)
+            if hasattr(self, "btn_back_to_dashboard"):
+                self.btn_back_to_dashboard.configure(fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER)
+
+            # 7. Footer
+            if hasattr(self, "footer_frame"):
+                self.footer_frame.configure(fg_color=BG_HEADER)
+
+            # 8. Refresh queue items with active theme colors
+            if hasattr(self, "_refresh_queue_ui"):
+                self._refresh_queue_ui()
+        except Exception as ex:
+            logger.error(f"Error applying theme: {ex}", exc_info=True)
+
+        save_theme_setting(theme_name)
+
     def _caption_btn(self, parent, glyph, command, danger=False):
-        hover = "#e11d48" if danger else "#1e293b"
+        hover = "#dc2626" if danger else "#30363d"
         button = ctk.CTkButton(
-            parent, text=glyph, width=46, height=32,
+            parent, text=glyph, width=44, height=32,
             fg_color="transparent", hover_color=hover,
             text_color="#e2e8f0",
             font=ctk.CTkFont(family="Segoe MDL2 Assets", size=10),
@@ -668,19 +987,19 @@ class OmniStreamApp(ctk.CTk):
 
     # ── Card 1: Input Source ──────────────────────────────────────────────────
     def _build_input_card(self):
-        card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER_MAIN)
+        card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER_MAIN)
         self.input_card = card
         card.grid(row=ROW_INPUT, column=0, sticky="ew", padx=18, pady=(8, 4))
         card.grid_columnconfigure(0, weight=1)
 
         # Top row
         top = ctk.CTkFrame(card, fg_color="transparent")
-        top.pack(fill="x", padx=16, pady=(8, 4))
+        top.pack(fill="x", padx=14, pady=(8, 4))
 
         ctk.CTkLabel(
-            top, text="Stream source", image=self.icons["stream"], compound="left",
-            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
-            text_color=ACCENT_GLOW
+            top, text="Stream Source", image=self.icons["stream"], compound="left",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color=TEXT_TITLE
         ).pack(side="left")
 
         ctk.CTkLabel(
@@ -689,31 +1008,32 @@ class OmniStreamApp(ctk.CTk):
             text_color=TEXT_MUTED
         ).pack(side="left")
 
-        ctk.CTkButton(
-            top, text="Paste", image=self.icons["paste"], compound="left", width=92, height=26,
-            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
-            text_color="white",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"), corner_radius=6,
+        self.input_paste_btn = ctk.CTkButton(
+            top, text="Paste", image=self.icons["paste"], compound="left", width=80, height=26,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN, border_width=1, border_color=BORDER_MAIN,
+            text_color=TEXT_TITLE,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), corner_radius=6,
             command=self._paste_clipboard
-        ).pack(side="right")
+        )
+        self.input_paste_btn.pack(side="right")
 
         # Input Box
         self.input_box = ctk.CTkTextbox(
-            card, height=48,
+            card, height=40,
             font=ctk.CTkFont(family=FONT_CODE, size=10),
-            fg_color=BG_INPUT, text_color="#c8deff",
-            border_width=1, border_color=BORDER_SUB, corner_radius=8
+            fg_color=BG_INPUT, text_color=TEXT_TITLE,
+            border_width=1, border_color=BORDER_SUB, corner_radius=6
         )
-        self.input_box.pack(fill="x", padx=16, pady=(0, 8))
+        self.input_box.pack(fill="x", padx=14, pady=(0, 8))
 
     # ── Card 2: Configuration ─────────────────────────────────────────────────
     def _build_options_card(self):
-        card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER_MAIN)
+        card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER_MAIN)
         self.options_card = card
         card.grid(row=ROW_OPTIONS, column=0, sticky="ew", padx=18, pady=(0, 4))
         card.grid_columnconfigure(0, weight=0, minsize=115)
         card.grid_columnconfigure(1, weight=1)
-        card.grid_columnconfigure(2, weight=0, minsize=105)
+        card.grid_columnconfigure(2, weight=0, minsize=115)
         card.grid_columnconfigure(3, weight=1)
 
         def lbl(row, col, text):
@@ -721,12 +1041,12 @@ class OmniStreamApp(ctk.CTk):
                 card, text=text,
                 font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
                 text_color=TEXT_BODY
-            ).grid(row=row, column=col, sticky="w", padx=(16, 8), pady=3)
+            ).grid(row=row, column=col, sticky="w", padx=(14, 8), pady=3)
 
         entry_kw = dict(
             fg_color=BG_INPUT, border_color=BORDER_SUB, border_width=1,
             height=30, text_color=TEXT_TITLE,
-            font=ctk.CTkFont(family=FONT_MAIN, size=11), corner_radius=8
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), corner_radius=6
         )
         menu_kw = dict(
             fg_color=BG_INPUT, button_color=BORDER_MAIN,
@@ -734,7 +1054,7 @@ class OmniStreamApp(ctk.CTk):
             dropdown_fg_color=BG_CARD, dropdown_hover_color=BORDER_MAIN,
             height=30,
             font=ctk.CTkFont(family=FONT_MAIN, size=11),
-            text_color=TEXT_TITLE, corner_radius=8
+            text_color=TEXT_TITLE, corner_radius=6
         )
 
         # Row 0: Title & Resolution
@@ -742,7 +1062,7 @@ class OmniStreamApp(ctk.CTk):
         self.filename_entry = ctk.CTkEntry(
             card, placeholder_text="Leave blank to auto-detect", **entry_kw
         )
-        self.filename_entry.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=3)
+        self.filename_entry.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=3)
 
         lbl(0, 2, "Resolution")
         self.res_menu = ctk.CTkOptionMenu(
@@ -751,26 +1071,27 @@ class OmniStreamApp(ctk.CTk):
             **menu_kw
         )
         self.res_menu.set("1080p (Full HD - Recommended)")
-        self.res_menu.grid(row=0, column=3, sticky="ew", padx=(0, 16), pady=3)
+        self.res_menu.grid(row=0, column=3, sticky="ew", padx=(0, 14), pady=3)
 
         # Row 1: Save Folder & Audio Selection
         lbl(1, 0, "Save Folder")
         fr = ctk.CTkFrame(card, fg_color="transparent")
-        fr.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=3)
+        fr.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=3)
         fr.grid_columnconfigure(0, weight=1)
 
         self.folder_entry = ctk.CTkEntry(fr, **entry_kw)
         self.folder_entry.grid(row=0, column=0, sticky="ew")
         self.folder_entry.insert(0, DEFAULT_SAVE_DIR)
 
-        ctk.CTkButton(
+        self.folder_browse_btn = ctk.CTkButton(
             fr, text="Browse", width=68, height=30,
             fg_color=BG_CARD2, hover_color=BORDER_MAIN,
-            border_width=1, border_color=BORDER_SUB,
-            text_color=TEXT_BODY,
-            font=ctk.CTkFont(family=FONT_MAIN, size=11), corner_radius=8,
+            border_width=1, border_color=BORDER_MAIN,
+            text_color=TEXT_TITLE,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), corner_radius=6,
             command=self._browse_folder
-        ).grid(row=0, column=1, padx=(6, 0))
+        )
+        self.folder_browse_btn.grid(row=0, column=1, padx=(6, 0))
 
         lbl(1, 2, "Audio Tracks")
         self.audio_menu = ctk.CTkOptionMenu(
@@ -784,12 +1105,12 @@ class OmniStreamApp(ctk.CTk):
             **menu_kw
         )
         self.audio_menu.set("All Available Languages (Lossless)")
-        self.audio_menu.grid(row=1, column=3, sticky="ew", padx=(0, 16), pady=3)
+        self.audio_menu.grid(row=1, column=3, sticky="ew", padx=(0, 14), pady=3)
 
         # Row 2: Mode Selection | Subtitle Format + Language
         lbl(2, 0, "Download Mode")
         mode_box = ctk.CTkFrame(card, fg_color="transparent")
-        mode_box.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=3)
+        mode_box.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=3)
         mode_box.grid_columnconfigure(0, weight=1)
 
         self.mode_menu = ctk.CTkSegmentedButton(
@@ -803,7 +1124,7 @@ class OmniStreamApp(ctk.CTk):
             unselected_color=BG_INPUT,
             unselected_hover_color=BG_CARD2,
             text_color=TEXT_TITLE,
-            corner_radius=8
+            corner_radius=6
         )
         self.mode_menu.set("Normal Mode")
         self.mode_menu.grid(row=0, column=0, sticky="ew")
@@ -816,7 +1137,7 @@ class OmniStreamApp(ctk.CTk):
             **menu_kw
         )
         self.sub_format_menu.set("SRT (SubRip — Universal)")
-        self.sub_format_menu.grid(row=2, column=3, sticky="ew", padx=(0, 16), pady=3)
+        self.sub_format_menu.grid(row=2, column=3, sticky="ew", padx=(0, 14), pady=3)
 
         # Row 3: Mode Status | Subtitle Language
         lbl(3, 0, "Mode Status")
@@ -826,10 +1147,20 @@ class OmniStreamApp(ctk.CTk):
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED,
             anchor="w",
-            wraplength=340,
+            wraplength=380,
             justify="left"
         )
-        self.mode_hint_lbl.grid(row=3, column=1, sticky="w", padx=(0, 16), pady=3)
+        self.mode_hint_lbl.grid(row=3, column=1, sticky="w", padx=(0, 14), pady=3)
+
+        # Dynamic wrap on resize to prevent vertical jumping
+        def _on_options_resize(event):
+            try:
+                if hasattr(self, "mode_hint_lbl"):
+                    target_wrap = max(260, (event.width // 2) - 130)
+                    self.mode_hint_lbl.configure(wraplength=target_wrap)
+            except Exception:
+                pass
+        card.bind("<Configure>", _on_options_resize, add="+")
 
         lbl(3, 2, "Subtitle Language")
         self.sub_lang_menu = ctk.CTkOptionMenu(
@@ -851,23 +1182,23 @@ class OmniStreamApp(ctk.CTk):
             **menu_kw
         )
         self.sub_lang_menu.set("All Languages")
-        self.sub_lang_menu.grid(row=3, column=3, sticky="ew", padx=(0, 16), pady=3)
+        self.sub_lang_menu.grid(row=3, column=3, sticky="ew", padx=(0, 14), pady=3)
 
         # Row 4: Embed Subtitles into Video (MKV) Checkbox
         lbl(4, 0, "Subtitles")
         sub_opts_frame = ctk.CTkFrame(card, fg_color="transparent")
-        sub_opts_frame.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 16), pady=(4, 6))
+        sub_opts_frame.grid(row=4, column=1, columnspan=3, sticky="w", padx=(0, 14), pady=(4, 6))
 
         self.embed_subs_var = ctk.BooleanVar(value=True)
         self.embed_subs_cb = ctk.CTkCheckBox(
             sub_opts_frame,
             text="Embed Subtitles into Video (MKV container)",
             variable=self.embed_subs_var,
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
             fg_color=ACCENT_PRIMARY,
             hover_color=ACCENT_HOVER,
             text_color=TEXT_TITLE,
-            corner_radius=6
+            corner_radius=4
         )
         self.embed_subs_cb.pack(side="left")
 
@@ -916,50 +1247,50 @@ class OmniStreamApp(ctk.CTk):
     def _build_action_buttons(self):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         self.action_bar = bar
-        bar.grid(row=ROW_ACTIONS, column=0, sticky="ew", padx=18, pady=(3, 3))
-        bar.grid_columnconfigure(0, weight=3, minsize=200)
-        bar.grid_columnconfigure(1, weight=2, minsize=170)
-        bar.grid_columnconfigure(2, weight=0, minsize=100)
+        bar.grid(row=ROW_ACTIONS, column=0, sticky="ew", padx=18, pady=(4, 4))
 
+        # Standard desktop button sizes that never distort on resize or fullscreen
         self.start_btn = ctk.CTkButton(
             bar,
             text="Start Download", image=self.icons["play"], compound="left",
-            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
-            height=36, corner_radius=10,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            height=34, width=150, corner_radius=6,
             fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
             text_color="white",
             command=self._start_download
         )
-        self.start_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.start_btn.pack(side="left", padx=(0, 8))
 
         # Subtitle-only download button
         self.subtitle_btn = ctk.CTkButton(
             bar,
             text="Download Subtitles", image=self.icons.get("stream", self.icons["play"]), compound="left",
-            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
-            height=36, corner_radius=10,
-            fg_color="#0f766e", hover_color="#0d9488",
-            text_color="#ccfbf1",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            height=34, width=165, corner_radius=6,
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN,
+            border_width=1, border_color=BORDER_MAIN,
+            text_color=TEXT_TITLE,
             command=self._start_subtitle_download
         )
-        self.subtitle_btn.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        self.subtitle_btn.pack(side="left", padx=(0, 8))
 
         self.abort_btn = ctk.CTkButton(
             bar,
             text="Stop", image=self.icons["stop"], compound="left",
-            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
-            height=36, corner_radius=10,
-            fg_color="#881337", hover_color="#9f1239",
-            text_color="#fecdd3",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            height=34, width=85, corner_radius=6,
+            fg_color=BG_CARD2, hover_color=ACCENT_ROSE,
+            border_width=1, border_color=BORDER_SUB,
+            text_color=TEXT_MUTED,
             state="disabled",
             command=self._abort_download
         )
-        self.abort_btn.grid(row=0, column=2, sticky="ew")
+        self.abort_btn.pack(side="left")
 
     # ── Progress Row (Demo Layout Matching Dark Theme) ─────────────────────────
     def _build_progress_row(self):
         self.progress_card = ctk.CTkFrame(
-            self, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN
+            self, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER_MAIN
         )
         self.progress_card.grid(row=ROW_PROGRESS, column=0, sticky="ew", padx=18, pady=(0, 4))
         self.progress_card.grid_columnconfigure(0, weight=1)
@@ -970,7 +1301,8 @@ class OmniStreamApp(ctk.CTk):
         top_bar.grid_columnconfigure(1, weight=1)
 
         # Icon box badge
-        icon_box = ctk.CTkFrame(top_bar, fg_color=BG_INPUT, corner_radius=8, width=34, height=34)
+        icon_box = ctk.CTkFrame(top_bar, fg_color=BG_INPUT, corner_radius=6, width=32, height=32)
+        self.prog_icon_box = icon_box
         icon_box.grid(row=0, column=0, rowspan=2, padx=(0, 10), sticky="w")
         icon_box.grid_propagate(False)
         self.prog_icon_lbl = ctk.CTkLabel(
@@ -982,7 +1314,7 @@ class OmniStreamApp(ctk.CTk):
         self.prog_name_lbl = ctk.CTkLabel(
             top_bar,
             text="Ready to Download",
-            font=ctk.CTkFont(family=FONT_MAIN, size=13, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
             text_color=TEXT_TITLE, anchor="w"
         )
         self.prog_name_lbl.grid(row=0, column=1, sticky="w")
@@ -991,7 +1323,7 @@ class OmniStreamApp(ctk.CTk):
         self.prog_status_lbl = ctk.CTkLabel(
             top_bar,
             text="Ready — Paste a stream URL above or send links from the Chrome extension.",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED, anchor="w"
         )
         self.prog_status_lbl.grid(row=1, column=1, sticky="w", pady=(1, 0))
@@ -1000,7 +1332,7 @@ class OmniStreamApp(ctk.CTk):
         self.prog_percent_lbl = ctk.CTkLabel(
             top_bar,
             text="0%",
-            font=ctk.CTkFont(family=FONT_MAIN, size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=13, weight="bold"),
             text_color=ACCENT_CYAN, anchor="e"
         )
         self.prog_percent_lbl.grid(row=0, column=2, rowspan=2, sticky="e", padx=(8, 0))
@@ -1010,28 +1342,28 @@ class OmniStreamApp(ctk.CTk):
 
         # Track / Progress Bar
         self.progress_bar = ctk.CTkProgressBar(
-            self.progress_card, height=5, corner_radius=3,
-            progress_color=ACCENT_CYAN, fg_color=BG_INPUT
+            self.progress_card, height=6, corner_radius=3,
+            progress_color=ACCENT_PRIMARY, fg_color=BG_INPUT
         )
         self.progress_bar.pack(fill="x", padx=14, pady=(5, 6))
         self.progress_bar.set(0)
 
         # Details Section: Exactly 2 indicators — Size (left) & Speed (right)
         details = ctk.CTkFrame(self.progress_card, fg_color="transparent")
-        details.pack(fill="x", padx=14, pady=(0, 10))
+        details.pack(fill="x", padx=14, pady=(0, 8))
         details.grid_columnconfigure(0, weight=1)
         details.grid_columnconfigure(1, weight=1)
 
         self.prog_size_lbl = ctk.CTkLabel(
             details, text="-- / --",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
-            text_color=TEXT_TITLE, anchor="w"
+            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
+            text_color=TEXT_BODY, anchor="w"
         )
         self.prog_size_lbl.grid(row=0, column=0, sticky="w")
 
         self.prog_speed_lbl = ctk.CTkLabel(
             details, text="0.0 MB/s",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
             text_color=ACCENT_CYAN, anchor="e"
         )
         self.prog_speed_lbl.grid(row=0, column=1, sticky="e")
@@ -1042,7 +1374,7 @@ class OmniStreamApp(ctk.CTk):
 
     # ── Container & Queue View (IDM Experience) ───────────────────────────────
     def _build_container_and_queue(self):
-        self.main_container = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER_MAIN)
+        self.main_container = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=8, border_width=1, border_color=BORDER_MAIN)
         self.main_container.grid(row=ROW_CONTAINER, column=0, sticky="nsew", padx=18, pady=(0, 5))
         self.main_container.grid_rowconfigure(1, weight=1)
         self.main_container.grid_columnconfigure(0, weight=1)
@@ -1056,7 +1388,7 @@ class OmniStreamApp(ctk.CTk):
         btn_box.pack(side="left")
 
         self.btn_view_queue = ctk.CTkButton(
-            btn_box, text="Download Queue (0)", image=self.icons["queue"], compound="left", width=188, height=28,
+            btn_box, text="Download Queue (0)", image=self.icons["queue"], compound="left", width=175, height=28,
             font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
             fg_color=ACCENT_PRIMARY, text_color="white", corner_radius=6,
             command=self._show_queue_view
@@ -1064,7 +1396,7 @@ class OmniStreamApp(ctk.CTk):
         self.btn_view_queue.pack(side="left", padx=(0, 6))
 
         self.btn_view_terminal = ctk.CTkButton(
-            btn_box, text="Terminal", image=self.icons["terminal"], compound="left", width=120, height=28,
+            btn_box, text="Terminal", image=self.icons["terminal"], compound="left", width=110, height=28,
             font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
             fg_color=BG_CARD2, text_color=TEXT_BODY, corner_radius=6,
             command=self._show_terminal_view
@@ -1076,8 +1408,8 @@ class OmniStreamApp(ctk.CTk):
         ctk.CTkButton(
             self.term_actions, text="Clear Logs", width=86, height=24,
             font=ctk.CTkFont(size=10), fg_color=BG_CARD2,
-            hover_color=BORDER_MAIN, border_width=1, border_color=BORDER_SUB,
-            text_color=TEXT_MUTED, corner_radius=5,
+            hover_color=BORDER_MAIN, border_width=1, border_color=BORDER_MAIN,
+            text_color=TEXT_BODY, corner_radius=5,
             command=lambda: self.log_textbox.delete("1.0", "end")
         ).pack(side="right")
 
@@ -1120,27 +1452,28 @@ class OmniStreamApp(ctk.CTk):
 
         self.start_queue_btn = ctk.CTkButton(
             q_tool, text="Download All", image=self.icons["play"], compound="left",
-            font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
-            fg_color="#059669", hover_color="#047857", text_color="white",
-            width=140, height=32, corner_radius=8, command=self._start_queue_processing
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            fg_color="#15803d", hover_color="#166534", text_color="white",
+            width=130, height=30, corner_radius=6, command=self._start_queue_processing
         )
         self.start_queue_btn.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.btn_clear_all = ctk.CTkButton(
             q_tool, text="Clear All",
             font=ctk.CTkFont(family=FONT_MAIN, size=11),
-            fg_color=BG_CARD2, hover_color="#7f1d1d", text_color="#fca5a5",
-            border_width=1, border_color=BORDER_SUB,
-            width=80, height=32, corner_radius=8, command=self._clear_all_queue
-        ).pack(side="left", padx=(0, 6))
+            fg_color=BG_CARD2, hover_color="#7f1d1d", text_color=TEXT_TITLE,
+            border_width=1, border_color=BORDER_MAIN,
+            width=80, height=30, corner_radius=6, command=self._clear_all_queue
+        )
+        self.btn_clear_all.pack(side="left", padx=(0, 6))
 
         # Full View / Expand Screen button (as requested by user)
         self.btn_full_queue_view = ctk.CTkButton(
             q_tool, text="Full View ↗",
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
-            fg_color="#312e81", hover_color="#4338ca", text_color="#e0e7ff",
-            border_width=1, border_color="#4f46e5",
-            width=96, height=32, corner_radius=8, command=self._enter_full_queue_view
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            fg_color=BG_CARD2, hover_color=BORDER_MAIN, text_color=TEXT_TITLE,
+            border_width=1, border_color=BORDER_MAIN,
+            width=96, height=30, corner_radius=6, command=self._enter_full_queue_view
         )
         self.btn_full_queue_view.pack(side="left")
 
@@ -1154,7 +1487,7 @@ class OmniStreamApp(ctk.CTk):
         # Scrollable items list
         self.queue_scroll = ctk.CTkScrollableFrame(
             self.queue_frame, fg_color=BG_INPUT,
-            border_width=1, border_color=BORDER_SUB, corner_radius=8
+            border_width=1, border_color=BORDER_SUB, corner_radius=6
         )
         self.queue_scroll.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
 
@@ -1163,7 +1496,7 @@ class OmniStreamApp(ctk.CTk):
             self.main_container,
             font=ctk.CTkFont(family=FONT_CODE, size=10),
             fg_color=BG_TERMINAL, text_color=TEXT_LOG,
-            corner_radius=8, border_width=1, border_color=BORDER_SUB,
+            corner_radius=6, border_width=1, border_color=BORDER_SUB,
             wrap="none"
         )
         # Not gridded by default; queue view is shown first.
@@ -1222,6 +1555,7 @@ class OmniStreamApp(ctk.CTk):
     # ── Footer ────────────────────────────────────────────────────────────────
     def _build_footer(self):
         footer = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=28)
+        self.footer_frame = footer
         footer.grid(row=ROW_FOOTER, column=0, sticky="ew")
         footer.grid_propagate(False)
 
@@ -1234,7 +1568,7 @@ class OmniStreamApp(ctk.CTk):
 
         ctk.CTkButton(
             footer,
-            text="OmniStream Pro v2.3.0  •  Developed by XMON4U  •  GitHub Repository",
+            text="OmniStream Pro v2.4.0  •  Developed by XMON4U  •  GitHub Repository",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED, fg_color="transparent",
             hover_color=BG_CARD, cursor="hand2",
@@ -1254,6 +1588,10 @@ class OmniStreamApp(ctk.CTk):
 
     # ── Log & Event Dispatcher ────────────────────────────────────────────────
     def _log(self, text: str):
+        try:
+            logger.info(text)
+        except Exception:
+            pass
         self.log_queue.put(("log", text))
 
     def _set_progress(self, pct: float, msg: str, item_id: str = None):
@@ -1262,6 +1600,8 @@ class OmniStreamApp(ctk.CTk):
     def _format_progress_label(self, pct: float, msg: str) -> str:
         pct = max(0.0, min(100.0, float(pct)))
         base = (msg or "").strip()
+        if "drm-protected" in base.lower() or "drm protected" in base.lower():
+            return "This stream is DRM-protected and not supported."
         # Engine already sends a rich status line — pass it through unchanged.
         if "% done" in base or "% left" in base or "ETA" in base or "MB/s" in base or "KB/s" in base:
             return base
@@ -1280,7 +1620,9 @@ class OmniStreamApp(ctk.CTk):
         low = clean.lower()
 
         # Status
-        if pct >= 100.0 or "complete" in low or "saved:" in low:
+        if "drm-protected" in low or "drm protected" in low:
+            status = "This stream is DRM-protected and not supported."
+        elif pct >= 100.0 or "complete" in low or "saved:" in low:
             status = "Completed"
         elif "abort" in low or "cancel" in low:
             status = "Cancelled"
@@ -1319,6 +1661,8 @@ class OmniStreamApp(ctk.CTk):
                     one_sz = re.search(r'(\d+(?:\.\d+)?\s*[KMGT]i?B)', clean, re.IGNORECASE)
                     if one_sz:
                         size = f"{one_sz.group(1).strip()} downloaded"
+                    elif status == "This stream is DRM-protected and not supported.":
+                        size = "DRM Protected"
                     elif status == "Completed":
                         size = "Completed"
                     elif status in ("Downloading...", "Muxing & finalizing...", "Starting..."):
@@ -1505,59 +1849,63 @@ class OmniStreamApp(ctk.CTk):
                         self._display_pct = self._anim_start_pct + (self._target_pct - self._anim_start_pct) * ratio
 
                 shown = max(0.0, min(1.0, self._display_pct / 100.0))
-                self.progress_bar.set(shown)
-
-                pct_int = int(round(self._display_pct))
-                if self._display_pct >= 99.9:
-                    self.progress_bar.configure(progress_color=ACCENT_EMERALD)
-                    self.prog_percent_lbl.configure(text="100%", text_color=ACCENT_EMERALD)
-                else:
-                    self.progress_bar.configure(progress_color=ACCENT_CYAN)
-                    self.prog_percent_lbl.configure(text=f"{pct_int}%", text_color=ACCENT_CYAN)
+                try:
+                    self.progress_bar.set(shown)
+                    pct_int = int(round(self._display_pct))
+                    if self._display_pct >= 99.9:
+                        self.progress_bar.configure(progress_color=ACCENT_EMERALD)
+                        self.prog_percent_lbl.configure(text="100%", text_color=ACCENT_EMERALD)
+                    else:
+                        self.progress_bar.configure(progress_color=ACCENT_CYAN)
+                        self.prog_percent_lbl.configure(text=f"{pct_int}%", text_color=ACCENT_CYAN)
+                except Exception:
+                    pass
 
             # ── Per-item progress bars (smooth 0.3s linear fill) ─────────────
             for iid, tgt in list(self._item_target_pct.items()):
                 cur = self._item_display_pct.get(iid, 0.0)
-                if cur != tgt:
-                    if tgt == 0.0:
-                        cur = 0.0
+                if abs(cur - tgt) < 0.05:  # Skip micro-updates to avoid unnecessary Tk calls
+                    continue
+                if tgt == 0.0:
+                    cur = 0.0
+                else:
+                    start_p = self._item_anim_start_pct.get(iid, cur)
+                    start_t = self._item_anim_start_time.get(iid, now)
+                    dur = self._item_anim_duration.get(iid, 0.3)
+                    elapsed_i = now - start_t
+                    if elapsed_i >= dur:
+                        cur = tgt
                     else:
-                        start_p = self._item_anim_start_pct.get(iid, cur)
-                        start_t = self._item_anim_start_time.get(iid, now)
-                        dur = self._item_anim_duration.get(iid, 0.3)
-                        elapsed_i = now - start_t
-                        if elapsed_i >= dur:
-                            cur = tgt
-                        else:
-                            ratio_i = min(1.0, max(0.0, elapsed_i / dur))
-                            cur = start_p + (tgt - start_p) * ratio_i
-                    self._item_display_pct[iid] = cur
+                        ratio_i = min(1.0, max(0.0, elapsed_i / dur))
+                        cur = start_p + (tgt - start_p) * ratio_i
+                self._item_display_pct[iid] = cur
 
-                    shown_i = max(0.0, min(1.0, cur / 100.0))
-                    if iid in self.item_progress_bars:
-                        pbar, _plbl = self.item_progress_bars[iid]
+                shown_i = max(0.0, min(1.0, cur / 100.0))
+                if iid in self.item_progress_bars:
+                    pbar, _plbl = self.item_progress_bars[iid]
+                    try:
+                        pbar.set(shown_i)
+                        if iid in self._active_downloads:
+                            pbar.configure(progress_color=ACCENT_CYAN)
+                        elif shown_i >= 0.999:
+                            pbar.configure(progress_color=ACCENT_EMERALD)
+                    except Exception:
+                        pass
+
+                if hasattr(self, "item_progress_widgets") and iid in self.item_progress_widgets:
+                    pct_lbl = self.item_progress_widgets[iid].get("pct_lbl")
+                    if pct_lbl:
                         try:
-                            pbar.set(shown_i)
-                            if iid in self._active_downloads:
-                                pbar.configure(progress_color=ACCENT_CYAN)
-                            elif shown_i >= 0.999:
-                                pbar.configure(progress_color=ACCENT_EMERALD)
+                            if cur >= 99.9:
+                                pct_lbl.configure(text="100%", text_color=ACCENT_EMERALD)
+                            else:
+                                pct_lbl.configure(text=f"{int(round(cur))}%", text_color=ACCENT_CYAN)
                         except Exception:
                             pass
-
-                    if hasattr(self, "item_progress_widgets") and iid in self.item_progress_widgets:
-                        pct_lbl = self.item_progress_widgets[iid].get("pct_lbl")
-                        if pct_lbl:
-                            try:
-                                if cur >= 99.9:
-                                    pct_lbl.configure(text="100%", text_color=ACCENT_EMERALD)
-                                else:
-                                    pct_lbl.configure(text=f"{int(round(cur))}%", text_color=ACCENT_CYAN)
-                            except Exception:
-                                pass
         except Exception:
             pass
-        self._progress_anim_job = self.after(30, self._tick_progress_animation)
+        # 40ms interval: ~25 fps animation — smooth without CPU waste
+        self._progress_anim_job = self.after(40, self._tick_progress_animation)
 
     @property
     def is_downloading(self) -> bool:
@@ -1569,13 +1917,18 @@ class OmniStreamApp(ctk.CTk):
         self.log_queue.put(("dispatch_fn", fn))
 
     def _poll_log_queue(self):
+        """High-performance event dispatcher: batched log inserts, throttled queue redraws."""
         processed = 0
-        while not self.log_queue.empty() and processed < 50:
+        log_lines = []
+        now = time.time()
+
+        # Drain up to 30 messages per poll to keep UI responsive
+        while not self.log_queue.empty() and processed < 30:
             msg_type, data = self.log_queue.get_nowait()
             processed += 1
             if msg_type == "log":
-                self.log_textbox.insert("end", data + "\n")
-                self.log_textbox.see("end")
+                # Buffer log lines; batch-insert below to minimize Tkinter calls
+                log_lines.append(data)
             elif msg_type == "progress":
                 pct, status_text, item_id = data
                 self._apply_progress_ui(pct, status_text, item_id)
@@ -1591,6 +1944,8 @@ class OmniStreamApp(ctk.CTk):
                 self._start_queue_processing()
             elif msg_type == "set_mode_requested":
                 self.set_download_mode(data.get("mode", "normal"))
+            elif msg_type == "set_theme_requested":
+                self.set_theme(data.get("theme", "Cyber Slate"))
             elif msg_type == "queue_item_finished":
                 self._handle_queue_item_finished(data)
             elif msg_type == "dispatch_fn":
@@ -1599,18 +1954,34 @@ class OmniStreamApp(ctk.CTk):
                 except Exception as exc:
                     logger.error(f"Error in dispatched fn: {exc}", exc_info=True)
 
-        self.after(60, self._poll_log_queue)
+        # Batch-insert all buffered log lines in ONE Tkinter call (prevents UI stutter)
+        if log_lines:
+            try:
+                combined = "\n".join(log_lines) + "\n"
+                self.log_textbox.insert("end", combined)
+                # Only auto-scroll if textbox is at/near the bottom (avoid fighting user scroll)
+                self.log_textbox.see("end")
+            except Exception:
+                pass
+
+        # Full queue UI redraw: throttled to at most once every 200ms to prevent jank
+        if self._queue_dirty and (now - self._last_queue_refresh) >= 0.20:
+            self._queue_dirty = False
+            self._last_queue_refresh = now
+            self._refresh_queue_ui()
+
+        self.after(80, self._poll_log_queue)
 
     def _set_status(self, state: str):
         def _apply():
             states = {
-                "ready":       ("Engine Ready", ACCENT_EMERALD),
-                "downloading": ("Downloading", ACCENT_CYAN),
-                "done":        ("Task Complete", ACCENT_EMERALD),
-                "error":       ("Task Error", ACCENT_ROSE),
-                "aborted":     ("Stopped", ACCENT_AMBER),
+                "ready":       ("● Ready", ACCENT_EMERALD),
+                "downloading": ("● Downloading", ACCENT_CYAN),
+                "done":        ("● Complete", ACCENT_EMERALD),
+                "error":       ("● Error", ACCENT_ROSE),
+                "aborted":     ("● Stopped", ACCENT_AMBER),
             }
-            text, color = states.get(state, ("Ready", ACCENT_EMERALD))
+            text, color = states.get(state, ("● Ready", ACCENT_EMERALD))
             self.status_badge.configure(text=text, text_color=color)
         self.run_on_main_thread(_apply)
 
@@ -1798,10 +2169,15 @@ class OmniStreamApp(ctk.CTk):
         if auto_show_tab:
             self._show_queue_view()
         else:
-            self._refresh_queue_ui()
+            self._request_queue_refresh()  # Throttled: avoids re-rendering on every extension link
         return item
 
+    def _request_queue_refresh(self):
+        """Mark queue as dirty; actual redraw is throttled in _poll_log_queue (max once per 200ms)."""
+        self._queue_dirty = True
+
     def _refresh_queue_ui(self):
+        """Full queue widget rebuild. Called at most ~5x/sec via dirty-flag throttle."""
         for widget in self.queue_scroll.winfo_children():
             widget.destroy()
 
@@ -2200,7 +2576,7 @@ class OmniStreamApp(ctk.CTk):
                 except Exception:
                     pass
 
-        self._refresh_queue_ui()
+        self._request_queue_refresh()  # Throttled redraw after cancel/remove
 
     def _remove_queue_item(self, item):
         self._cancel_and_remove(item)
@@ -2223,7 +2599,7 @@ class OmniStreamApp(ctk.CTk):
         if not self._active_downloads:
             self.is_queue_running = False
             self.start_queue_btn.configure(text="Download All", state="normal")
-        self._refresh_queue_ui()
+        self._request_queue_refresh()  # Throttled
 
     def _start_queue_processing(self):
         waiting_items = [it for it in self.queue_items if it["status"] in ("Waiting", "Failed", "Paused")]
@@ -2467,11 +2843,25 @@ class OmniStreamApp(ctk.CTk):
             except RuntimeError as exc:
                 err = str(exc)
                 is_abort = "abort" in err.lower() or "cancel" in err.lower()
+                is_drm = "drm-protected" in err.lower() or "drm protected" in err.lower() or "drm" in err.lower()
                 is_no_subs = "no subtitle" in err.lower() or "no stream found" in err.lower()
-                label = "Cancelled" if is_abort else ("No Subtitles" if is_no_subs else "Subtitle Download Failed")
+                if is_drm:
+                    label = "DRM Protected"
+                    msg = "This stream is DRM-protected and not supported."
+                elif is_abort:
+                    label = "Cancelled"
+                    msg = "Cancelled"
+                elif is_no_subs:
+                    label = "No Subtitles"
+                    msg = "No Subtitles in stream"
+                else:
+                    label = "Subtitle Download Failed"
+                    msg = f"Failed: {err[:80]}"
                 self._log(f"\n[{label}] {err}")
-                _progress_cb(0.0, "Cancelled" if is_abort else ("No Subtitles in stream" if is_no_subs else f"Failed: {err[:80]}"))
-                if is_no_subs:
+                _progress_cb(0.0, msg)
+                if is_drm:
+                    self.run_on_main_thread(lambda e=err: messagebox.showerror("DRM Protected Stream", e))
+                elif is_no_subs:
                     self.run_on_main_thread(lambda e=err: messagebox.showinfo("No Subtitles Available", e))
                 elif not is_abort:
                     self.run_on_main_thread(lambda e=err: messagebox.showerror("Subtitle Download Failed", e))
@@ -2538,7 +2928,8 @@ class OmniStreamApp(ctk.CTk):
             except Exception:
                 pass
 
-        self._refresh_queue_ui()
+        self._request_queue_refresh()  # Throttled: safe to defer this slightly
+
         # Keep start button enabled so more downloads can be started concurrently
         self.start_btn.configure(state="normal", fg_color=ACCENT_PRIMARY, text="Start Download", image=self.icons["play"])
         self.abort_btn.configure(state="normal")
@@ -2618,11 +3009,24 @@ class OmniStreamApp(ctk.CTk):
             except RuntimeError as exc:
                 err = str(exc)
                 is_abort = "abort" in err.lower() or "cancel" in err.lower()
-                status = "Cancelled" if is_abort else "Failed"
+                is_drm = "drm-protected" in err.lower() or "drm protected" in err.lower() or "drm" in err.lower()
+                if is_drm:
+                    status = "Failed"
+                    progress_msg = "This stream is DRM-protected and not supported."
+                    item["progress_text"] = progress_msg
+                    if "metrics" in item and isinstance(item["metrics"], dict):
+                        item["metrics"]["status"] = "This stream is DRM-protected and not supported."
+                elif is_abort:
+                    status = "Cancelled"
+                    progress_msg = "Cancelled"
+                else:
+                    status = "Failed"
+                    progress_msg = f"Failed: {err[:80]}"
                 self._log(f"\n[{status}] {err}")
-                _progress_cb(0.0, "Cancelled" if is_abort else f"Failed: {err[:80]}")
+                _progress_cb(0.0, progress_msg)
                 if not is_queue_batch and not is_abort:
-                    self.run_on_main_thread(lambda e=err: messagebox.showerror("Download Failed", e))
+                    err_title = "DRM Protected Stream" if is_drm else "Download Failed"
+                    self.run_on_main_thread(lambda e=err, t=err_title: messagebox.showerror(t, e))
             except Exception as exc:
                 status = "Failed"
                 self._log(f"\n[Unexpected Error] {exc}")
@@ -2640,44 +3044,49 @@ class OmniStreamApp(ctk.CTk):
         threading.Thread(target=_worker, daemon=True).start()
 
 
+_single_instance_mutex = None
+
+
 def _check_single_instance() -> bool:
-    """If another OmniStream Pro window is already open, focus it and return False."""
+    """Ensure only one instance runs using a Win32 Named Mutex; focus existing if already open."""
+    global _single_instance_mutex
+    if sys.platform != "win32":
+        return True
     try:
         import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
 
-        found_hwnd = None
-        def enum_cb(hwnd, lparam):
-            nonlocal found_hwnd
-            if user32.IsWindowVisible(hwnd):
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buf = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(hwnd, buf, length + 1)
-                    title = buf.value
-                    if "OmniStream Pro" in title and "Setup" not in title:
-                        found_hwnd = hwnd
-                        return False
-            return True
-
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
-
-        if found_hwnd:
+        mutex_name = "Local\\OmniStreamPro_App_SingleInstance_Mutex"
+        handle = kernel32.CreateMutexW(None, False, mutex_name)
+        last_err = kernel32.GetLastError()
+        if last_err == ERROR_ALREADY_EXISTS:
+            # Another instance is already running — send focus request via bridge server
             try:
                 import urllib.request
+                _token = ""
+                try:
+                    from extension_manager import get_or_create_bridge_token
+                    _token = get_or_create_bridge_token()
+                except Exception:
+                    pass
+                _hdrs = {"Content-Type": "application/json", "Host": "127.0.0.1:28795"}
+                if _token:
+                    _hdrs["X-OmniStream-Token"] = _token
                 req = urllib.request.Request(
                     "http://127.0.0.1:28795/focus",
                     data=b"{}",
-                    headers={"Content-Type": "application/json"},
+                    headers=_hdrs,
                     method="POST"
                 )
                 with urllib.request.urlopen(req, timeout=0.8):
                     pass
             except Exception:
-                user32.SetForegroundWindow(found_hwnd)
+                pass
             return False
+
+        # First instance — retain mutex handle for lifetime of process
+        _single_instance_mutex = handle
     except Exception:
         pass
     return True

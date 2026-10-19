@@ -4,6 +4,39 @@
 const tabMediaMap = new Map(); // tabId -> MediaItem[]
 const BRIDGE_URL = 'http://127.0.0.1:28795';
 
+let cachedBridgeToken = '';
+async function getBridgeToken() {
+  if (cachedBridgeToken) return cachedBridgeToken;
+  try {
+    const res = await fetch(chrome.runtime.getURL('bridge_token.json'));
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.token) {
+        cachedBridgeToken = data.token;
+        return cachedBridgeToken;
+      }
+    }
+  } catch (e) {}
+  try {
+    const stored = await chrome.storage.local.get('bridgeToken');
+    if (stored && stored.bridgeToken) {
+      cachedBridgeToken = stored.bridgeToken;
+      return cachedBridgeToken;
+    }
+  } catch (e) {}
+  return '';
+}
+
+async function bridgeFetch(path, options = {}) {
+  const token = await getBridgeToken();
+  const headers = Object.assign({}, options.headers || {});
+  if (token) {
+    headers['X-OmniStream-Token'] = token;
+  }
+  return fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers }));
+}
+
+
 const STREAM_URL_REGEX = /\.(m3u8|mpd|mp4|webm|mkv|m4s)(\?|$|#)/i;
 const MEDIA_MIME_TYPES = [
   'application/vnd.apple.mpegurl',
@@ -422,7 +455,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 1800);
 
-    fetch(`${BRIDGE_URL}/health`, { method: 'GET', signal: controller.signal })
+    bridgeFetch('/health', { method: 'GET', signal: controller.signal })
       .then(res => res.json())
       .then(data => {
         clearTimeout(timeoutId);
@@ -437,13 +470,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Send single stream to OmniStream Pro Desktop
   if (message.action === 'SEND_TO_OMNISTREAM') {
-    fetch(`${BRIDGE_URL}/add`, {
+    bridgeFetch('/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(message.data)
     })
       .then(res => res.json())
-      .then(data => sendResponse({ success: true, data }))
+      .then(data => {
+        if (data && data.success) {
+          sendResponse({ success: true, data });
+        } else {
+          sendResponse({ success: false, error: (data && data.error) || 'Failed to add stream to desktop queue.' });
+        }
+      })
       .catch(err => {
         sendResponse({
           success: false,
@@ -455,13 +494,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Send batch of streams to OmniStream Pro Desktop (IDM batch mode)
   if (message.action === 'SEND_BATCH_TO_OMNISTREAM') {
-    fetch(`${BRIDGE_URL}/batch_add`, {
+    bridgeFetch('/batch_add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(message.data)
     })
       .then(res => res.json())
-      .then(data => sendResponse({ success: true, data }))
+      .then(data => {
+        if (data && data.success) {
+          sendResponse({ success: true, data });
+        } else {
+          sendResponse({ success: false, error: (data && data.error) || 'Failed to add batch to desktop queue.' });
+        }
+      })
       .catch(err => {
         sendResponse({
           success: false,
@@ -473,7 +518,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Trigger Download All remotely
   if (message.action === 'START_DESKTOP_QUEUE') {
-    fetch(`${BRIDGE_URL}/start_queue`, { method: 'POST' })
+    bridgeFetch('/start_queue', { method: 'POST' })
       .then(res => res.json())
       .then(data => sendResponse({ success: true, data }))
       .catch(err => sendResponse({ success: false, error: String(err) }));
@@ -482,10 +527,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Set Desktop Mode remotely
   if (message.action === 'SET_DESKTOP_MODE') {
-    fetch(`${BRIDGE_URL}/set_mode`, {
+    bridgeFetch('/set_mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: message.mode })
+    })
+      .then(res => res.json())
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: String(err) }));
+    return true;
+  }
+
+  // Set Desktop Theme remotely
+  if (message.action === 'SET_DESKTOP_THEME') {
+    bridgeFetch('/set_theme', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: message.theme })
     })
       .then(res => res.json())
       .then(data => sendResponse({ success: true, data }))
@@ -515,7 +573,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function pingDesktopBridge() {
-  fetch(`${BRIDGE_URL}/health`, { method: 'GET', cache: 'no-store' }).catch(() => {});
+  bridgeFetch('/health', { method: 'GET', cache: 'no-store' }).catch(() => {});
 }
 
 pingDesktopBridge();

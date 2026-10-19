@@ -1,4 +1,4 @@
-﻿# OmniStream Pro v2.3.0  Universal Stream Downloader & Extension Suite
+# OmniStream Pro v2.4.0  Universal Stream Downloader & Extension Suite
 
 <div align="center">
 
@@ -8,9 +8,9 @@
 
 **High-performance stream download suite with concurrent multi-file downloads, browser extension integration, and real-time progress tracking.**
 
-[![Release](https://img.shields.io/badge/Release-v2.3.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
+[![Release](https://img.shields.io/badge/Release-v2.4.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-06b6d4?style=for-the-badge&logo=windows)](https://github.com/Xmon4u/OmniStream-Pro-v2)
-[![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3%20v2.3.0-10b981?style=for-the-badge&logo=googlechrome)](extension)
+[![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3%20v2.4.0-10b981?style=for-the-badge&logo=googlechrome)](extension)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
 </div>
@@ -19,7 +19,7 @@
 
 ## Overview
 
-**OmniStream Pro v2.3.0** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
+**OmniStream Pro v2.4.0** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
 
 Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all available multi-language audio tracks, and multiplex them into a single `.mkv` container with no quality loss. Download multiple files simultaneously, each with its own real-time progress bar, speed indicator, and individual cancel button.
 
@@ -73,7 +73,7 @@ graph LR
         BridgeServer["HTTP Bridge Server (/add, /batch_add)"]
     end
 
-    subgraph DesktopApp ["OmniStream Pro Desktop v2.3.0"]
+    subgraph DesktopApp ["OmniStream Pro Desktop v2.4.0"]
         GUI["CustomTkinter Dark GUI"]
         QueueMgr["Queue Manager (Download All)"]
         Engine["High-Speed Engine (N_m3u8DL-RE + FFmpeg)"]
@@ -174,7 +174,7 @@ OmniStream_Pro_v2/
 â”‚   â””â”€â”€ app_icon.png
 â”‚
 â”œâ”€â”€ extension/
-â”‚   â”œâ”€â”€ manifest.json            # Chrome MV3 manifest (v2.3.0)
+â”‚   â”œâ”€â”€ manifest.json            # Chrome MV3 manifest (v2.4.0)
 â”‚   â”œâ”€â”€ background.js            # Network sniffer & bridge
 â”‚   â”œâ”€â”€ content.js               # Content script injector
 â”‚   â”œâ”€â”€ godmode.js               # Deep scan + anti-devtools

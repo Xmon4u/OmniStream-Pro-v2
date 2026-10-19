@@ -19,6 +19,11 @@ from typing import Dict, Any, Optional
 
 APP_DIR_NAME = "OmniStreamPro"
 
+def get_creation_flags() -> int:
+    """Return CREATE_NO_WINDOW on Windows, 0 on other platforms."""
+    return 0x08000000 if sys.platform == "win32" else 0
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Core Path Helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -98,6 +103,51 @@ def extension_is_live(max_age: float = 75.0) -> bool:
     ts = extension_heartbeat_time()
     return ts > 0 and (time.time() - ts) <= max_age
 
+def get_or_create_bridge_token() -> str:
+    """Return persistent random authentication token for localhost bridge communication."""
+    token_file = os.path.join(get_app_data_dir(), "bridge_token.txt")
+    try:
+        if os.path.isfile(token_file):
+            with open(token_file, "r", encoding="utf-8") as f:
+                tok = f.read().strip()
+                if len(tok) >= 32:
+                    return tok
+    except Exception:
+        pass
+    import secrets
+    tok = secrets.token_hex(24)
+    try:
+        with open(token_file, "w", encoding="utf-8") as f:
+            f.write(tok)
+    except Exception:
+        pass
+    return tok
+
+def write_extension_bridge_token() -> str:
+    """Write bridge_token.json into deployed extension folder and local extension folders for pairing."""
+    token = get_or_create_bridge_token()
+    token_data = json.dumps({"token": token, "port": 28795}, indent=2)
+
+    targets = [
+        os.path.join(get_deployed_extension_dir(), "bridge_token.json")
+    ]
+    base_dir = get_base_dir()
+    for cand in [
+        os.path.join(base_dir, "extension", "bridge_token.json"),
+        os.path.join(os.path.dirname(base_dir), "extension", "bridge_token.json"),
+    ]:
+        cand_dir = os.path.dirname(cand)
+        if os.path.isdir(cand_dir) and os.path.isfile(os.path.join(cand_dir, "manifest.json")):
+            targets.append(cand)
+
+    for target in targets:
+        try:
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(token_data)
+        except Exception:
+            pass
+    return token
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Browser Detection
 # ──────────────────────────────────────────────────────────────────────────────
@@ -155,7 +205,7 @@ def is_browser_running(browser_exe: Optional[str] = None) -> bool:
     try:
         result = subprocess.run(
             ["tasklist", "/FI", f"IMAGENAME eq {image}"],
-            capture_output=True, text=True, timeout=3, creationflags=0x08000000
+            capture_output=True, text=True, timeout=3, creationflags=get_creation_flags()
         )
         return image in result.stdout.lower()
     except Exception:
@@ -279,6 +329,11 @@ def deploy_extension_files() -> str:
         except Exception:
             pass
 
+    try:
+        write_extension_bridge_token()
+    except Exception:
+        pass
+
     return dest_dir
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -288,32 +343,51 @@ def deploy_extension_files() -> str:
 def copy_path_to_clipboard(text: str = "") -> bool:
     """
     Copy text (or deployed extension path) to Windows clipboard instantly using Win32 API.
-    Zero process overhead, zero freeze.
+    Fully 64-bit safe with explicit ctypes argtypes and restypes to prevent pointer truncation.
     """
     if not text:
         text = get_deployed_extension_dir()
     try:
         import ctypes
+        from ctypes import wintypes
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
+
+        kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+        user32.OpenClipboard.argtypes = [wintypes.HWND]
+        user32.OpenClipboard.restype = wintypes.BOOL
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = wintypes.BOOL
+        user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = wintypes.BOOL
+
         if user32.OpenClipboard(None):
-            user32.EmptyClipboard()
-            encoded = text.encode('utf-16le') + b'\x00\x00'
-            h_mem = kernel32.GlobalAlloc(0x0042, len(encoded))  # GMEM_MOVEABLE | GMEM_ZEROINIT
-            if h_mem:
-                p_mem = kernel32.GlobalLock(h_mem)
-                if p_mem:
-                    ctypes.memmove(p_mem, encoded, len(encoded))
-                    kernel32.GlobalUnlock(h_mem)
-                    user32.SetClipboardData(13, h_mem)  # CF_UNICODETEXT = 13
-            user32.CloseClipboard()
+            try:
+                user32.EmptyClipboard()
+                encoded = text.encode('utf-16le') + b'\x00\x00'
+                h_mem = kernel32.GlobalAlloc(0x0042, len(encoded))  # GMEM_MOVEABLE | GMEM_ZEROINIT
+                if h_mem:
+                    p_mem = kernel32.GlobalLock(h_mem)
+                    if p_mem:
+                        ctypes.memmove(p_mem, encoded, len(encoded))
+                        kernel32.GlobalUnlock(h_mem)
+                        user32.SetClipboardData(13, h_mem)  # CF_UNICODETEXT = 13
+            finally:
+                user32.CloseClipboard()
             return True
     except Exception:
         pass
 
     # Safe fallback using subprocess without blocking GUI
     try:
-        p = subprocess.Popen(["clip.exe"], stdin=subprocess.PIPE, creationflags=0x08000000)
+        p = subprocess.Popen(["clip.exe"], stdin=subprocess.PIPE, creationflags=get_creation_flags())
         p.communicate(input=text.encode("utf-8"), timeout=1)
         return True
     except Exception:
@@ -542,7 +616,7 @@ def _profile_processes(image_name: str, profile_dir: str) -> list:
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", script],
-            capture_output=True, text=True, timeout=8, creationflags=0x08000000
+            capture_output=True, text=True, timeout=8, creationflags=get_creation_flags()
         )
         raw = (result.stdout or "").strip()
         if not raw:
@@ -564,7 +638,7 @@ def _close_profile_processes(image_name: str, profile_dir: str) -> None:
         try:
             subprocess.run(
                 ["taskkill", "/F", "/PID", str(pid)],
-                capture_output=True, timeout=3, creationflags=0x08000000
+                capture_output=True, timeout=3, creationflags=get_creation_flags()
             )
         except Exception:
             pass
@@ -754,14 +828,14 @@ function Invoke-El($el) {
 $ext = $null
 $deadline = (Get-Date).AddSeconds(12)
 while ((Get-Date) -lt $deadline -and -not $ext) {
-    $ext = Find-Window @('Extensions', 'এক্সটেনশন')
+    $ext = Find-Window @('Extensions')
     if (-not $ext) { Start-Sleep -Milliseconds 400 }
 }
 if (-not $ext) { Write-Output 'FAIL no extensions page'; exit 0 }
 
-$load = Find-Named $ext @('Load unpacked', 'আনপ্যাক')
+$load = Find-Named $ext @('Load unpacked')
 if (-not $load) {
-    $dev = Find-Named $ext @('Developer mode', 'ডেভেলপার মোড')
+    $dev = Find-Named $ext @('Developer mode')
     if ($dev) {
         try {
             $toggle = $dev.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
@@ -770,7 +844,7 @@ if (-not $load) {
             try { Invoke-El $dev } catch {}
         }
         Start-Sleep -Milliseconds 600
-        $load = Find-Named $ext @('Load unpacked', 'আনপ্যাক')
+        $load = Find-Named $ext @('Load unpacked')
     }
 }
 if (-not $load) { Write-Output 'FAIL load button'; exit 0 }
@@ -782,13 +856,18 @@ def _window_text(hwnd) -> str:
     import ctypes
     from ctypes import wintypes
     user32 = ctypes.windll.user32
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
     buf = ctypes.create_unicode_buffer(500)
     user32.GetWindowTextW(hwnd, buf, 500)
     return buf.value
 
 def _window_class(hwnd) -> str:
     import ctypes
+    from ctypes import wintypes
     user32 = ctypes.windll.user32
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
     buf = ctypes.create_unicode_buffer(160)
     user32.GetClassNameW(hwnd, buf, 160)
     return buf.value
@@ -805,8 +884,15 @@ def _submit_extension_folder(ext_dir: str) -> bool:
     user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, ctypes.c_void_p]
     user32.SendMessageW.restype = ctypes.c_ssize_t
     user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
     user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.EnumWindows.argtypes = [ctypes.c_void_p, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.EnumChildWindows.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.LPARAM]
+    user32.EnumChildWindows.restype = wintypes.BOOL
     user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
     user32.mouse_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_ulong]
     user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_ulong]
@@ -816,13 +902,17 @@ def _submit_extension_folder(ext_dir: str) -> bool:
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def enum_top(hwnd, _lparam):
-            if user32.IsWindowVisible(hwnd):
-                title = _window_text(hwnd).lower()
-                if "extension directory" in title or "এক্সটেনশন ডিরেক্টরি" in title:
-                    found.append(hwnd)
+            try:
+                if user32.IsWindowVisible(hwnd):
+                    title = _window_text(hwnd).lower()
+                    if "extension directory" in title or "select" in title:
+                        found.append(hwnd)
+            except Exception:
+                pass
             return True
 
-        user32.EnumWindows(enum_top, 0)
+        cb = enum_top
+        user32.EnumWindows(cb, 0)
         return found[0] if found else None
 
     def click_hwnd(hwnd):
@@ -864,9 +954,9 @@ def _submit_extension_folder(ext_dir: str) -> bool:
             edits.append((rect.top, hwnd))
         elif cls == "Button":
             label = _window_text(hwnd).replace("&", "").strip().lower()
-            if "select folder" in label or "ফোল্ডার নির্বাচন" in label:
+            if "select folder" in label or "select" in label:
                 select_btn = hwnd
-            elif label in ("cancel", "বাতিল"):
+            elif label in ("cancel",):
                 cancel_btn = hwnd
         return True
 
@@ -922,7 +1012,7 @@ def _install_into_open_profile(browser_exe: str, profile_dir: str, ext_dir: str)
     """
     subprocess.Popen(
         [browser_exe, f"--profile-directory={profile_dir}", "chrome://extensions"],
-        creationflags=0x08000000,
+        creationflags=get_creation_flags(),
     )
     script_path = os.path.join(get_app_data_dir(), "load_unpacked.ps1")
     try:
@@ -936,7 +1026,7 @@ def _install_into_open_profile(browser_exe: str, profile_dir: str, ext_dir: str)
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", script_path, "-Folder", ext_dir,
             ],
-            capture_output=True, text=True, timeout=30, creationflags=0x08000000,
+            capture_output=True, text=True, timeout=30, creationflags=get_creation_flags(),
         )
     except Exception:
         return False
@@ -1010,7 +1100,7 @@ def _launch_branded_chrome(browser_exe: str, ext_dir: str, restart_running: bool
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=0x08000000,
+            creationflags=get_creation_flags(),
         )
     except Exception as exc:
         _last_launch_error = str(exc)

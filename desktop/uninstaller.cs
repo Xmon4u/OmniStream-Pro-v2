@@ -45,6 +45,8 @@ namespace OmniStreamUninstaller
                 // 1. Terminate running processes
                 KillProcess("OmniStream_Pro");
                 KillProcess("OmniStream_Pro_Setup");
+                KillProcess("N_m3u8DL-RE");
+                KillProcess("ffmpeg");
 
                 // 2. Remove Desktop Shortcut
                 string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -96,7 +98,7 @@ namespace OmniStreamUninstaller
                 }
 
                 // 6. Schedule self-deletion of installDir via background command
-                string cmdArgs = string.Format("/c timeout /t 1 /nobreak > nul & if exist \"{0}\" rmdir /s /q \"{0}\"", installDir);
+                string cmdArgs = string.Format("/c ping 127.0.0.1 -n 3 > nul & if exist \"{0}\" rd /s /q \"{0}\"", installDir);
                 ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", cmdArgs)
                 {
                     CreateNoWindow = true,

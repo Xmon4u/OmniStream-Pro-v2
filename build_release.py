@@ -15,11 +15,11 @@ DESKTOP_DIR   = os.path.join(ROOT_DIR, "desktop")
 EXTENSION_DIR = os.path.join(ROOT_DIR, "extension")
 RELEASE_DIR   = os.path.join(ROOT_DIR, "release_output")
 
-VERSION = "v2.3.0"
+VERSION = "v2.4.0"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 
-TEST_RELEASE_DIR = os.path.join(os.path.dirname(ROOT_DIR), "OmniStream_Pro_v2.3.0_Test_Release")
+TEST_RELEASE_DIR = os.path.join(os.path.dirname(ROOT_DIR), f"OmniStream_Pro_{VERSION}_Test_Release")
 
 def package_extension(zip_path: str):
     print(f"\n[1/5] Packaging Chrome Extension into {os.path.basename(zip_path)}...")
@@ -87,11 +87,12 @@ def main():
     print(f"  OmniStream Pro {VERSION} - Automated Release Builder")
     print("=" * 65)
 
-    try:
-        subprocess.run(["taskkill", "/F", "/IM", EXE_NAME], capture_output=True, creationflags=0x08000000)
-        subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro_Setup.exe"], capture_output=True, creationflags=0x08000000)
-    except Exception:
-        pass
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", EXE_NAME], capture_output=True, creationflags=0x08000000)
+            subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro_Setup.exe"], capture_output=True, creationflags=0x08000000)
+        except Exception:
+            pass
 
     # Clean old release outputs
     print("\n[Cleaning] Wiping old build files...")
@@ -122,7 +123,8 @@ def main():
         shutil.copy2(dl_engine_src, dl_engine_dst)
         print(f"\n[5/5] Copied Downloader engine (N_m3u8DL-RE.exe) to release folder.")
 
-    # Copy all assets to OmniStream_Pro_v2.3.0_Test_Release
+    # Copy all assets to TEST_RELEASE_DIR
+    os.makedirs(TEST_RELEASE_DIR, exist_ok=True)
     print(f"\n[Sync] Copying all freshly built assets to {TEST_RELEASE_DIR}...")
     assets = [
         ("OmniStream_Pro_Setup.exe", setup_path),
@@ -171,6 +173,12 @@ Verified Fixes in this Build:
    - Relative tracks correctly resolved via --base-url.
    - Safe intermediate file cleanup: never touches user Desktop files.
    - Immediate sub-process termination (taskkill) on Stop/Cancel.
+
+5. Multi-Track Resilience & Accurate Error Diagnosis:
+   - Concurrency tuned to 16 threads per stream to avoid CDN rate-limiting/socket exhaustion.
+   - Segment retry count increased to 15 with 30s timeout for robust network recovery.
+   - Progress lines (e.g. '401/403 segs' or '403 KB/s') isolated so they never falsely trigger 'HTTP 401/403 Forbidden'.
+   - Downloader errors faithfully reported with exact failure details.
 """
     with open(os.path.join(TEST_RELEASE_DIR, "TESTING_GUIDE.txt"), "w", encoding="utf-8") as f:
         f.write(guide_content)

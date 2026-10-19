@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.3.0 - High Performance Multi-Stream Engine
+OmniStream Pro v2.4.0 - High Performance Multi-Stream Engine
 Captures HLS (.m3u8), DASH (.mpd), and direct video/audio media streams.
 Concurrent multi-audio track preservation and lossless MKV multiplexing via N_m3u8DL-RE and FFmpeg.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -22,6 +22,38 @@ DEFAULT_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 DEFAULT_SAVE_DIR = os.path.join(os.environ.get("USERPROFILE", "C:\\"), "Desktop")
+
+
+def get_creation_flags() -> int:
+    """Return CREATE_NO_WINDOW on Windows, 0 on other platforms."""
+    return 0x08000000 if sys.platform == "win32" else 0
+
+
+def safe_kill_process_tree(proc: Optional[subprocess.Popen]):
+    """Terminate a process and all its child processes safely across platforms."""
+    if not proc or proc.poll() is not None:
+        return
+    try:
+        pid = proc.pid
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                creationflags=0x08000000
+            )
+        else:
+            import signal
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except Exception:
+                proc.kill()
+        proc.poll()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
 
 
 def _format_eta(seconds: Optional[float]) -> str:
@@ -81,6 +113,26 @@ def _parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
 
     pct_match = re.search(r'(\d+(?:\.\d+)?)\s*%', clean)
     if not pct_match:
+        seg_match = re.search(r'(\d+)\s*(?:segs|segments)', clean, re.IGNORECASE)
+        if seg_match or "live" in cl_low:
+            speed_match = re.search(r'(\d+(?:\.\d+)?)\s*([KMGT]i?B(?:ps|/s)|Bps|B/s)', clean, re.IGNORECASE)
+            speed_bps = None
+            if speed_match:
+                val = float(speed_match.group(1))
+                raw_unit = speed_match.group(2).upper().replace('IB', 'B').replace('PS', '/S')
+                mult = {'B/S': 1, 'KB/S': 1024, 'MB/S': 1024**2, 'GB/S': 1024**3, 'TB/S': 1024**4}.get(raw_unit, 1024**2)
+                speed_bps = val * mult
+            segs_num = seg_match.group(1) if seg_match else "0"
+            return {
+                "pct": 50.0,
+                "speed_bps": speed_bps,
+                "speed": (speed_bps / (1024 * 1024)) if speed_bps else 0.0,
+                "eta_sec": None,
+                "size": f"{segs_num} segs (Live)",
+                "track": "main",
+                "status": "Recording Live Stream...",
+                "raw": clean,
+            }
         return None
 
     pct = max(0.0, min(100.0, float(pct_match.group(1))))
@@ -199,15 +251,11 @@ class OmniStreamEngine:
     def abort(self):
         """Safely terminate any running download and multiplex process."""
         self._is_aborted = True
-        if self.current_process and self.current_process.poll() is None:
+        if self.current_process:
+            safe_kill_process_tree(self.current_process)
             try:
-                if sys.platform == "win32":
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(self.current_process.pid)],
-                        capture_output=True, creationflags=0x08000000
-                    )
                 self.current_process.terminate()
-                time.sleep(0.3)
+                time.sleep(0.2)
                 if self.current_process.poll() is None:
                     self.current_process.kill()
             except Exception:
@@ -215,7 +263,7 @@ class OmniStreamEngine:
 
     @staticmethod
     def cleanup_intermediate_files(save_dir: str, save_name: str, final_file: str,
-                                    log_callback=None) -> None:
+                                    log_callback=None, temp_dir: Optional[str] = None) -> None:
         """Delete intermediate video/audio segment files after successful mux.
 
         N_m3u8DL-RE leaves behind per-track files like:
@@ -282,21 +330,69 @@ class OmniStreamEngine:
             _log(f"  [Cleanup] Directory scan error: {e}")
             return
 
-        # Remove the dedicated temp folder if present
-        try:
-            for entry in os.listdir(save_dir):
-                if entry.startswith(".omnistream_tmp_"):
-                    tmp_path = os.path.join(save_dir, entry)
-                    if os.path.isdir(tmp_path):
-                        shutil.rmtree(tmp_path, ignore_errors=True)
-                        removed.append(entry + "/")
-        except Exception:
-            pass
+        # Remove only the dedicated temp folder for this download
+        if temp_dir and os.path.isdir(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                removed.append(os.path.basename(temp_dir) + "/")
+            except Exception:
+                pass
+        else:
+            try:
+                pid_prefix = f".omnistream_tmp_{os.getpid()}_"
+                for entry in os.listdir(save_dir):
+                    if entry.startswith(pid_prefix):
+                        tmp_path = os.path.join(save_dir, entry)
+                        if os.path.isdir(tmp_path):
+                            shutil.rmtree(tmp_path, ignore_errors=True)
+                            removed.append(entry + "/")
+            except Exception:
+                pass
 
         if removed:
             _log(f"  [Cleanup] Cleaned {len(removed)} intermediate track file(s).")
         if errors:
             _log(f"  [Cleanup] Notice: Could not remove {len(errors)} file(s).")
+
+    @staticmethod
+    def check_drm_protection(filepath_or_content: str) -> Optional[str]:
+        """Inspect M3U8 playlist or MPD manifest content for digital rights management (DRM).
+        Returns the detected DRM scheme name ('SAMPLE-AES', 'Widevine', 'PlayReady', 'FairPlay', 'ContentProtection')
+        or None if no DRM was detected."""
+        if not filepath_or_content:
+            return None
+        content = ""
+        if os.path.exists(filepath_or_content):
+            try:
+                with open(filepath_or_content, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read(100000)
+            except Exception:
+                return None
+        else:
+            content = str(filepath_or_content)[:100000]
+
+        cl = content.lower()
+        # 1. HLS DRM (Check specific key formats first, then generic SAMPLE-AES)
+        if 'keyformat="com.widevine.alpha"' in cl or ("widevine" in cl and "keyformat" in cl):
+            return "Widevine"
+        if 'keyformat="com.microsoft.playready"' in cl or ("playready" in cl and "keyformat" in cl):
+            return "PlayReady"
+        if 'keyformat="com.apple.streamingkeydelivery"' in cl or ("fairplay" in cl and "keyformat" in cl):
+            return "FairPlay"
+        if "method=sample-aes" in cl or "method=sample-aes-ctr" in cl:
+            return "SAMPLE-AES"
+
+        # 2. DASH DRM (MPD)
+        if "<contentprotection" in cl:
+            if "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed" in cl:
+                return "Widevine"
+            if "9a04f079-9840-4286-ab92-e65be0885f95" in cl:
+                return "PlayReady"
+            if "94ce86fb-07ff-4f43-adb8-93d2fa968ca2" in cl:
+                return "FairPlay"
+            return "ContentProtection"
+
+        return None
 
     @staticmethod
     def has_subtitle_tracks(filepath_or_content: str) -> bool:
@@ -445,7 +541,13 @@ class OmniStreamEngine:
         if any(x in content for x in ["Only Valid Users", "403 Forbidden", "Access Denied"]) or \
            "<html" in content.lower():
             raise RuntimeError(
-                "Session expired or access denied by remote host. Please copy a fresh stream link or cURL command."
+                "Remote stream token expired (HTTP 403 Forbidden). Please capture a fresh link from your browser."
+            )
+
+        drm_scheme = self.check_drm_protection(local_path)
+        if drm_scheme:
+            raise RuntimeError(
+                f"This stream is DRM-protected and not supported ({drm_scheme} DRM Protected Stream)."
             )
 
         # Normalize master playlist: make any relative stream / audio / subtitle URLs absolute
@@ -573,7 +675,7 @@ class OmniStreamEngine:
 
         sep = "━" * 60
         log(sep)
-        log("  OmniStream Pro v2.3.0  •  High-Speed Multi-Audio Engine")
+        log("  OmniStream Pro v2.4.0  •  High-Speed Multi-Audio Engine")
         log(sep)
 
         # Step 1: Verify binaries
@@ -641,14 +743,16 @@ class OmniStreamEngine:
 
         # Step 3: Fetch playlist (for HLS/DASH)
         log("[3/4] Fetching stream playlist...")
-        temp_dir = os.path.join(save_dir, f".omnistream_tmp_{os.getpid()}_{int(time.time())}")
+        isolated_temp = os.path.join(save_dir, f".omnistream_tmp_{os.getpid()}_{int(time.time()*1000)}")
+        os.makedirs(isolated_temp, exist_ok=True)
+        temp_dir = isolated_temp
         playlist_downloaded = False
         try:
             target_source = self.fetch_master_playlist(info, temp_dir)
             log(f"  Playlist cached ({os.path.getsize(target_source):,} bytes).")
             playlist_downloaded = True
         except Exception as exc:
-            if "aborted" in str(exc).lower():
+            if "aborted" in str(exc).lower() or "drm" in str(exc).lower():
                 raise
             log(f"  Notice: Direct stream URL mode ({exc}).")
             target_source = info["url"]
@@ -682,14 +786,14 @@ class OmniStreamEngine:
             "-mt",                  # concurrent multi-track downloads
             "--save-dir", save_dir,
             "--save-name", save_name,
+            "--tmp-dir", isolated_temp,
             "-M", "format=mkv:muxer=ffmpeg",
             "--ffmpeg-binary-path", ffmpeg_path,
-            "--thread-count", "32",
-            "--download-retry-count", "3",
-            "--http-request-timeout", "15",
+            "--thread-count", "16",
+            "--download-retry-count", "15",
+            "--http-request-timeout", "30",
             "--disable-update-check",
             "--no-log",
-            "--check-segments-count", "false",
             "-H", f"Referer: {info['referer']}",
             "-H", f"Origin: {info['origin']}",
             "-H", f"User-Agent: {info['user_agent']}",
@@ -724,7 +828,7 @@ class OmniStreamEngine:
             if h_name.lower() not in skip_headers and h_val:
                 cmd.extend(["-H", f"{h_name}: {h_val}"])
 
-        log("[4/4] Starting concurrent download with 32 parallel threads...")
+        log("[4/4] Starting concurrent multi-track download (16 parallel threads)...")
         log(sep)
 
         startupinfo = None
@@ -775,7 +879,7 @@ class OmniStreamEngine:
                 log("[Aborted] Download cancelled by user.")
                 break
 
-            chunk = self.current_process.stdout.read(4096)
+            chunk = self.current_process.stdout.read(8192)
             if not chunk:
                 break
             buf += chunk
@@ -793,17 +897,24 @@ class OmniStreamEngine:
                     continue
 
                 clean_line = _strip_ansi(line)
-
-                cl_low = clean_line.lower()
-                if any(w in cl_low for w in (
-                    "error", "fail", "403", "401", "exception",
-                    "forbidden", "unauthorized", "unhandled", "segment",
-                )):
-                    recent_error_lines.append(clean_line)
-                    if len(recent_error_lines) > 10:
-                        recent_error_lines.pop(0)
-
                 parsed = _parse_progress_line(line)
+
+                # Record error lines: ONLY if line is NOT a progress update
+                # and contains genuine failure/error indicators
+                if not parsed:
+                    cl_low = clean_line.lower()
+                    # Check for genuine error keywords; avoid treating plain segment/speed numbers (e.g. 401/403) as errors
+                    is_http_err = (
+                        "forbidden" in cl_low or "unauthorized" in cl_low
+                        or bool(re.search(r'\b(?:http\s*|status\s*)?(?:401|403)\b.*(?:forbidden|unauthorized|error)', cl_low))
+                    )
+                    is_fatal_err = any(w in cl_low for w in (
+                        "error", "exception", "unhandled", "fail"
+                    ))
+                    if (is_http_err or is_fatal_err) and not (clean_line.startswith("--") or "usage:" in cl_low or "description:" in cl_low or "0 error" in cl_low):
+                        recent_error_lines.append(clean_line)
+                        if len(recent_error_lines) > 15:
+                            recent_error_lines.pop(0)
                 now = time.time()
                 if parsed:
                     raw_pct   = parsed["pct"]
@@ -858,7 +969,7 @@ class OmniStreamEngine:
                         elapsed = max(0.001, now - progress_started)
                         last_eta_sec = (elapsed / last_pct) * (100.0 - last_pct)
 
-                    if progress_callback and (now - last_progress_update >= 0.10):
+                    if progress_callback and (now - last_progress_update >= 0.15):
                         msg = _build_progress_message(
                             last_pct,
                             speed_bps=last_speed_bps,
@@ -918,18 +1029,38 @@ class OmniStreamEngine:
                 save_name=save_name,
                 final_file=final_mkv,
                 log_callback=log,
+                temp_dir=isolated_temp,
             )
             if progress_callback:
                 progress_callback(100.0, "Download and mux complete!")
             return final_mkv
         else:
+            # Clean isolated temp folder on failed download
+            if os.path.exists(isolated_temp):
+                try:
+                    shutil.rmtree(isolated_temp, ignore_errors=True)
+                except Exception:
+                    pass
+
             err_reason = ""
             fix_hint = "If the session or token expired, please open the video again in Chrome and capture a fresh link via the OmniStream extension."
             if recent_error_lines:
                 combined = " ".join(recent_error_lines).lower()
-                if "403" in combined or "forbidden" in combined or "unauthorized" in combined:
-                    err_reason = "Remote stream token expired (HTTP 403 Forbidden)."
-                    fix_hint = "Your stream token has expired. Please re-open the video in Chrome, wait for it to start playing, then capture the link again via the OmniStream extension."
+                if "drm" in combined or "widevine" in combined or "playready" in combined or "sample-aes" in combined or "fairplay" in combined or "contentprotection" in combined:
+                    err_reason = "This stream is DRM-protected and not supported."
+                    fix_hint = "This stream is protected by digital rights management (DRM) encryption. OmniStream does not support DRM bypass."
+                elif ("403" in combined or "401" in combined) and any(w in combined for w in ("forbidden", "unauthorized", "status", "http", "token", "response")):
+                    err_reason = "Remote stream token expired (HTTP 401/403 Forbidden)."
+                    fix_hint = "Your stream token or session has expired. Please re-open the video in Chrome and capture a fresh link via the OmniStream extension."
+                elif "404" in combined or "not found" in combined:
+                    err_reason = "Stream file not found on server (HTTP 404 Not Found)."
+                    fix_hint = "The video file was removed or the URL has expired. Please capture a fresh link from your browser."
+                elif "timeout" in combined or "timed out" in combined:
+                    err_reason = "Server did not respond (network request timed out)."
+                    fix_hint = "Please check your internet connection or try again in a few moments."
+                elif "ffmpeg" in combined:
+                    err_reason = "FFmpeg processing or multiplexing error."
+                    fix_hint = "Ensure FFmpeg is installed properly and sufficient free disk space is available."
                 elif "first segment" in combined or "download first" in combined:
                     # N_m3u8DL-RE: 'Download first segment failed'
                     err_reason = recent_error_lines[-1]
@@ -940,7 +1071,7 @@ class OmniStreamEngine:
                     )
                 elif "unhandled exception" in combined:
                     err_reason = recent_error_lines[-1]
-                    fix_hint = "An internal downloader error occurred. Try re-capturing the stream link from Chrome."
+                    fix_hint = "Internal downloader error occurred. Try re-capturing a fresh stream link from Chrome."
                 else:
                     err_reason = recent_error_lines[-1]
 
@@ -1020,14 +1151,16 @@ class OmniStreamEngine:
 
         # Step 3: Fetch playlist
         log("[3/4] Fetching stream playlist to locate subtitle tracks...")
-        temp_dir = os.path.join(save_dir, f".omnistream_tmp_{os.getpid()}_{int(time.time())}")
+        isolated_temp = os.path.join(save_dir, f".omnistream_tmp_{os.getpid()}_{int(time.time()*1000)}")
+        os.makedirs(isolated_temp, exist_ok=True)
+        temp_dir = isolated_temp
         playlist_downloaded = False
         try:
             target_source = self.fetch_master_playlist(info, temp_dir)
             log(f"  Playlist cached ({os.path.getsize(target_source):,} bytes).")
             playlist_downloaded = True
         except Exception as exc:
-            if "aborted" in str(exc).lower():
+            if "aborted" in str(exc).lower() or "drm" in str(exc).lower():
                 raise
             log(f"  Notice: Direct stream URL mode ({exc}).")
             target_source = info["url"]
@@ -1056,8 +1189,8 @@ class OmniStreamEngine:
             "--save-dir", save_dir,
             "--save-name", save_name,
             "--thread-count", "16",
-            "--download-retry-count", "3",
-            "--http-request-timeout", "15",
+            "--download-retry-count", "15",
+            "--http-request-timeout", "30",
             "--disable-update-check",
             "--no-log",
             "-H", f"Referer: {info['referer']}",
@@ -1114,7 +1247,7 @@ class OmniStreamEngine:
                 log("[Aborted] Subtitle download cancelled by user.")
                 break
 
-            chunk = self.current_process.stdout.read(4096)
+            chunk = self.current_process.stdout.read(8192)
             if not chunk:
                 break
             buf += chunk
@@ -1130,19 +1263,27 @@ class OmniStreamEngine:
                 if not line:
                     continue
                 clean_line = _strip_ansi(line)
-                cl_low = clean_line.lower()
-
-                if any(w in cl_low for w in ("error", "fail", "403", "401", "exception", "forbidden", "unhandled", "segment")):
-                    recent_error_lines.append(clean_line)
-                    if len(recent_error_lines) > 10:
-                        recent_error_lines.pop(0)
-
                 parsed = _parse_progress_line(line)
+
+                # Record error lines: ONLY if line is NOT a progress update
+                if not parsed:
+                    cl_low = clean_line.lower()
+                    is_http_err = (
+                        "forbidden" in cl_low or "unauthorized" in cl_low
+                        or bool(re.search(r'\b(?:http\s*|status\s*)?(?:401|403)\b.*(?:forbidden|unauthorized|error)', cl_low))
+                    )
+                    is_fatal_err = any(w in cl_low for w in (
+                        "error", "fail", "exception", "unhandled", "segment"
+                    ))
+                    if (is_http_err or is_fatal_err) and not (clean_line.startswith("--") or "usage:" in cl_low or "description:" in cl_low or "0 error" in cl_low):
+                        recent_error_lines.append(clean_line)
+                        if len(recent_error_lines) > 15:
+                            recent_error_lines.pop(0)
                 now = time.time()
                 if parsed:
                     raw_pct = parsed["pct"]
                     last_pct = max(last_pct, raw_pct)
-                    if progress_callback and (now - last_progress_update >= 0.15):
+                    if progress_callback and (now - last_progress_update >= 0.20):
                         msg = _build_progress_message(
                             last_pct,
                             speed_bps=parsed.get("speed_bps"),
@@ -1198,12 +1339,12 @@ class OmniStreamEngine:
             combined = " ".join(recent_error_lines).lower()
             if "no stream found" in combined or "no subtitle" in combined:
                 err_reason = "No subtitle tracks found in this stream."
-            elif "403" in combined or "forbidden" in combined:
+            elif ("403" in combined or "forbidden" in combined) and any(w in combined for w in ("forbidden", "unauthorized", "status", "http", "token")):
                 err_reason = "Remote stream token expired (HTTP 403 Forbidden)."
             elif "first segment" in combined:
                 err_reason = "The stream server rejected the first segment. Try re-capturing a fresh link."
             else:
-                err_reason = "No subtitle tracks found in this stream."
+                err_reason = recent_error_lines[-1]
 
         if rc == 0 and not saved_subs:
             raise RuntimeError(

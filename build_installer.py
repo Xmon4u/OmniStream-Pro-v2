@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.3.0 - Windows Installer (.exe) Compiler
+OmniStream Pro v2.4.0 - Windows Installer (.exe) Compiler
 Compiles installer.py into OmniStream_Pro_Setup.exe using PyInstaller.
 
 IMPORTANT: Never bundle desktop/dist or desktop/build. Nested PyInstaller
@@ -93,7 +93,7 @@ def _stage_payload():
 
 def build():
     print("=" * 65)
-    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.3.0 Windows Installer)...")
+    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.4.0 Windows Installer)...")
     print("=" * 65)
 
     stage_desktop = _stage_payload()
@@ -118,6 +118,8 @@ def build():
         "--hidden-import", "extension_manager",
         "--hidden-import", "ui_icons",
         "--hidden-import", "window_chrome",
+        "--hidden-import", "PIL",
+        "--hidden-import", "PIL._tkinter_finder",
         "--hidden-import", "webbrowser",
         "--hidden-import", "glob",
         "--hidden-import", "json",
@@ -127,6 +129,7 @@ def build():
         "--hidden-import", "http.server",
         "--hidden-import", "socketserver",
         "--collect-all", "customtkinter",
+        "--collect-all", "PIL",
         *add_data_args,
         "installer.py",
     ]
@@ -152,10 +155,11 @@ def build():
     release_out = os.path.join(ROOT_DIR, "release_output")
     os.makedirs(release_out, exist_ok=True)
     out_path = os.path.join(release_out, f"{SETUP_NAME}.exe")
-    try:
-        subprocess.run(["taskkill", "/F", "/IM", f"{SETUP_NAME}.exe"], capture_output=True, creationflags=0x08000000)
-    except Exception:
-        pass
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", f"{SETUP_NAME}.exe"], capture_output=True, creationflags=0x08000000)
+        except Exception:
+            pass
     import time
     for _ in range(5):
         try:

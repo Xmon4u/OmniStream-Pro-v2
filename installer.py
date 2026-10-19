@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.3.0 — Professional Windows Setup Installer
+OmniStream Pro v2.4.0 — Professional Windows Setup Installer
 Installs OmniStream Pro, deploys the Chrome extension, checks extension status,
 creates Desktop and Start Menu shortcuts, and launches the app.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -29,60 +29,89 @@ DESKTOP_DIR = os.path.join(INSTALLER_DIR, "desktop")
 sys.path.insert(0, DESKTOP_DIR)
 sys.path.insert(0, INSTALLER_DIR)
 
-from extension_manager import (
-    get_app_data_dir,
-    get_deployed_extension_dir,
-    deploy_extension_files,
-    is_extension_installed,
-    mark_extension_installed,
-    invalidate_extension_cache,
-    open_chrome_extensions,
-    open_extension_folder,
-    launch_browser_with_extension,
-    is_chrome_running
-)
-from ui_icons import apply_window_icon, build_icon_set
+try:
+    from desktop.extension_manager import (
+        get_app_data_dir,
+        get_deployed_extension_dir,
+        deploy_extension_files,
+        is_extension_installed,
+        mark_extension_installed,
+        invalidate_extension_cache,
+        open_chrome_extensions,
+        open_extension_folder,
+        launch_browser_with_extension,
+        is_chrome_running
+    )
+    from desktop.ui_icons import apply_window_icon, build_icon_set
+except ImportError:
+    from extension_manager import (
+        get_app_data_dir,
+        get_deployed_extension_dir,
+        deploy_extension_files,
+        is_extension_installed,
+        mark_extension_installed,
+        invalidate_extension_cache,
+        open_chrome_extensions,
+        open_extension_folder,
+        launch_browser_with_extension,
+        is_chrome_running
+    )
+    from ui_icons import apply_window_icon, build_icon_set
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-BG_ROOT        = "#080c14"
-BG_CARD        = "#101827"
-BG_CARD2       = "#0f172a"
-BG_INPUT       = "#060911"
-ACCENT_PRIMARY = "#6366f1"
-ACCENT_HOVER   = "#4f46e5"
-ACCENT_CYAN    = "#06b6d4"
+BG_ROOT        = "#0d1117"
+BG_CARD        = "#161b22"
+BG_CARD2       = "#21262d"
+BG_INPUT       = "#090d13"
+ACCENT_PRIMARY = "#2563eb"
+ACCENT_HOVER   = "#1d4ed8"
+ACCENT_CYAN    = "#38bdf8"
 ACCENT_EMERALD = "#10b981"
-ACCENT_GLOW    = "#38bdf8"
-BORDER_MAIN    = "#1e293b"
-BORDER_SUB     = "#162032"
-TEXT_TITLE     = "#f8fafc"
-TEXT_BODY      = "#94a3b8"
-TEXT_MUTED     = "#64748b"
+ACCENT_GLOW    = "#60a5fa"
+BORDER_MAIN    = "#30363d"
+BORDER_SUB     = "#21262d"
+TEXT_TITLE     = "#f0f6fc"
+TEXT_BODY      = "#8b949e"
+TEXT_MUTED     = "#6e7681"
 FONT_MAIN      = "Segoe UI"
 FONT_CODE      = "Cascadia Code"
 
 
 def create_windows_shortcut(target_exe: str, shortcut_path: str, icon_path: str = ""):
-    """Create a native Windows .lnk shortcut using PowerShell WScript.Shell."""
+    """Create a native Windows .lnk shortcut using PowerShell WScript.Shell safely,
+    supporting paths with spaces, single quotes, and Bengali/non-ASCII Unicode characters."""
+    if sys.platform != "win32":
+        return False
     try:
+        import base64
+        clean_sc = shortcut_path.replace("'", "''")
+        clean_target = target_exe.replace("'", "''")
+        clean_work = os.path.dirname(target_exe).replace("'", "''")
         ps_cmd = (
             f"$ws = New-Object -ComObject WScript.Shell; "
-            f"$s = $ws.CreateShortcut('{shortcut_path}'); "
-            f"$s.TargetPath = '{target_exe}'; "
-            f"$s.WorkingDirectory = '{os.path.dirname(target_exe)}'; "
+            f"$s = $ws.CreateShortcut('{clean_sc}'); "
+            f"$s.TargetPath = '{clean_target}'; "
+            f"$s.WorkingDirectory = '{clean_work}'; "
         )
         if icon_path and os.path.exists(icon_path):
-            ps_cmd += f"$s.IconLocation = '{icon_path}'; "
+            clean_icon = icon_path.replace("'", "''")
+            ps_cmd += f"$s.IconLocation = '{clean_icon}'; "
         ps_cmd += "$s.Save()"
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], check=True, creationflags=0x08000000)
+        creationflags = 0x08000000 if sys.platform == "win32" else 0
+        encoded_cmd = base64.b64encode(ps_cmd.encode("utf-16le")).decode("ascii")
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_cmd],
+            check=True,
+            creationflags=creationflags
+        )
         return True
     except Exception:
         return False
 
 
-def register_windows_uninstaller(target_dir: str, version: str = "2.3.0") -> bool:
+def register_windows_uninstaller(target_dir: str, version: str = "2.4.0") -> bool:
     """Register OmniStream Pro in Windows Registry so it appears in Control Panel and Settings."""
     try:
         import winreg
@@ -168,7 +197,7 @@ class OmniStreamInstaller(ctk.CTk):
         ctk.CTkLabel(header, text="", image=self.icons["logo_sm"]).place(x=16, y=16)
 
         ctk.CTkLabel(
-            header, text="OmniStream Pro v2.3.0 Setup",
+            header, text="OmniStream Pro v2.4.0 Setup",
             font=ctk.CTkFont(family=FONT_MAIN, size=18, weight="bold"),
             text_color=TEXT_TITLE
         ).place(x=78, y=16)
@@ -290,6 +319,13 @@ class OmniStreamInstaller(ctk.CTk):
             target_dir = self.install_dir
             os.makedirs(target_dir, exist_ok=True)
 
+            # Terminate running app instances to avoid Windows file locks (PermissionError)
+            if sys.platform == "win32":
+                try:
+                    subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro.exe"], capture_output=True, creationflags=0x08000000)
+                except Exception:
+                    pass
+
             # 1. Copy desktop application files
             self.status_lbl.configure(text="Installing application engine...")
             self.pbar.set(0.3)
@@ -322,8 +358,11 @@ class OmniStreamInstaller(ctk.CTk):
                 for b in os.listdir(src_bin):
                     s = os.path.join(src_bin, b)
                     d = os.path.join(dst_bin, b)
-                    if os.path.isfile(s) and not os.path.exists(d):
-                        shutil.copy2(s, d)
+                    if os.path.isfile(s):
+                        try:
+                            shutil.copy2(s, d)
+                        except Exception:
+                            pass
 
             # Copy compiled executable if present
             target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
@@ -401,7 +440,7 @@ class OmniStreamInstaller(ctk.CTk):
             self.status_lbl.configure(text="Registering Windows uninstaller...")
             self.pbar.set(0.9)
             self.update_idletasks()
-            register_windows_uninstaller(target_dir, version="2.3.0")
+            register_windows_uninstaller(target_dir, version="2.4.0")
 
             # 5. Check Extension Status
             self.pbar.set(1.0)
@@ -471,20 +510,21 @@ class OmniStreamInstaller(ctk.CTk):
 
                 def _bg():
                     ok = launch_browser_with_extension()
-                    if ok:
-                        self.after(0, lambda: _update_status(
-                            "Chrome launched. Use that window for streaming."
-                        ))
-                        if btn:
-                            self.after(0, lambda: btn.configure(
-                                text="Extension active", image=self.icons["check"], fg_color="#065f46", state="disabled"
-                            ))
-                    else:
-                        self.after(0, lambda: _update_status(
-                            "Auto-launch failed. Use the buttons below to set it up."
-                        ))
-                        if btn:
-                            self.after(0, lambda: btn.configure(state="normal"))
+                    def _update_ui():
+                        try:
+                            if ok:
+                                _update_status("Chrome launched. Use that window for streaming.")
+                                if btn:
+                                    btn.configure(
+                                        text="Extension active", image=self.icons["check"], fg_color="#065f46", state="disabled"
+                                    )
+                            else:
+                                _update_status("Auto-launch failed. Use the buttons below to set it up.")
+                                if btn:
+                                    btn.configure(state="normal")
+                        except Exception:
+                            pass
+                    self.after(0, _update_ui)
                 threading.Thread(target=_bg, daemon=True).start()
 
             launch_btn = ctk.CTkButton(

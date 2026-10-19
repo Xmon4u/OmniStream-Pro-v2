@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0 - PyInstaller Standalone Windows Executable Builder
+OmniStream Pro v2.4.0 - PyInstaller Standalone Windows Executable Builder
 Author: XMON4U (https://github.com/Xmon4u)
 """
 
@@ -14,7 +14,7 @@ EXE_NAME    = "OmniStream_Pro"
 
 def build():
     print("=" * 65)
-    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.3.0 Standalone Executable)...")
+    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.4.0 Standalone Executable)...")
     print("=" * 65)
 
     add_data_args = [
@@ -48,6 +48,11 @@ def build():
         "--hidden-import", "window_chrome",
         "--hidden-import", "extension_manager",
         "--hidden-import", "netflix_resolver",
+        "--hidden-import", "core_engine",
+        "--hidden-import", "bridge_server",
+        "--hidden-import", "setup_dependencies",
+        "--hidden-import", "PIL",
+        "--hidden-import", "PIL._tkinter_finder",
         "--hidden-import", "webbrowser",
         "--hidden-import", "glob",
         "--hidden-import", "json",
@@ -57,6 +62,7 @@ def build():
         "--hidden-import", "http.server",
         "--hidden-import", "socketserver",
         "--collect-all", "customtkinter",
+        "--collect-all", "PIL",
         *add_data_args,
         "main_gui.py",
     ]

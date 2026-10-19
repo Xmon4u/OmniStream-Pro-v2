@@ -48,3 +48,5 @@ desktop/bin/Logs/
 
 desktop/hls_smoke/
 scratch/
+extension/bridge_token.json
+.vscode/

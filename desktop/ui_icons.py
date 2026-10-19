@@ -237,9 +237,15 @@ def build_icon_set(base_dir):
 
     logo_path = os.path.join(base_dir, "app_icon.png")
     if os.path.isfile(logo_path):
-        logo = Image.open(logo_path).convert("RGBA")
-        icons["logo"] = _ctk(logo, 48)
-        icons["logo_sm"] = _ctk(logo, 36)
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+            icons["logo"] = _ctk(logo, 48)
+            icons["logo_sm"] = _ctk(logo, 36)
+        except Exception:
+            pass
+    if "logo_sm" not in icons:
+        icons["logo"] = _ctk(icon_stream(48), 48)
+        icons["logo_sm"] = _ctk(icon_stream(36), 36)
     return icons
 
 

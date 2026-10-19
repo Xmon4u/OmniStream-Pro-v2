@@ -1,4 +1,4 @@
-:root {
+:root, body.theme-cyber {
   --bg: #080c14;
   --header: #0b1220;
   --card: #0f172a;
@@ -6,9 +6,23 @@
   --text: #f1f5f9;
   --muted: #94a3b8;
   --faint: #64748b;
-  --accent: #6366f1;
-  --cyan: #7dd3fc;
+  --accent: #2563eb;
+  --cyan: #38bdf8;
   --green: #34d399;
+  --font: "Segoe UI", sans-serif;
+}
+
+body.theme-black {
+  --bg: #000000;
+  --header: #09090b;
+  --card: #0c0d10;
+  --line: #222228;
+  --text: #ffffff;
+  --muted: #a1a1aa;
+  --faint: #71717a;
+  --accent: #6366f1;
+  --cyan: #818cf8;
+  --green: #10b981;
   --font: "Segoe UI", sans-serif;
 }
 
@@ -20,6 +34,7 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: 12px;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .app { display: flex; flex-direction: column; }
@@ -48,6 +63,34 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.theme-select-container {
+  display: flex;
+  align-items: center;
+}
+
+.theme-dropdown {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 6px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.theme-dropdown:hover {
+  border-color: var(--accent);
+}
+
+.theme-dropdown option {
+  background: var(--bg);
+  color: var(--text);
 }
 
 .bridge {

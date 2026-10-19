@@ -199,7 +199,7 @@ def ensure_dependencies(
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 # FFmpeg zip has nested dirs like ffmpeg-master.../bin/ffmpeg.exe
                 for file_info in zip_ref.infolist():
-                    fname = file_info.filename.lower()
+                    fname = file_info.filename.lower().replace("\\", "/")
                     if fname.endswith("/ffmpeg.exe") or fname == "ffmpeg.exe":
                         file_info.filename = "ffmpeg.exe"
                         zip_ref.extract(file_info, bin_dir)
