@@ -237,11 +237,16 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (event.data && event.data.target === 'OMNISTREAM_GODMODE_INJECT' && event.data.action === 'FORCE_SCAN') {
-      nudgePlayers();
-      deepDOMScan();
-      setTimeout(deepDOMScan, 800);
-      setTimeout(deepDOMScan, 2000);
+    if (event.data && event.data.target === 'OMNISTREAM_GODMODE_INJECT') {
+      if (event.data.action === 'CLEAR_CAPTURED') {
+        capturedUrls.clear();
+      }
+      if (event.data.action === 'FORCE_SCAN') {
+        nudgePlayers();
+        deepDOMScan();
+        setTimeout(deepDOMScan, 800);
+        setTimeout(deepDOMScan, 2000);
+      }
     }
   });
 

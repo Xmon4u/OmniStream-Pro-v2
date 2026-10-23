@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.4.0 — Comprehensive Self-Test Suite
+OmniStream Pro v2.5.0 — Comprehensive Self-Test Suite
 ======================================================
 Covers: Module imports, engine methods, progress parsing, subtitle engine,
         N_m3u8DL-RE binary flags, GUI source analysis, extension integrity,
@@ -58,7 +58,7 @@ def load_bg_helpers():
     ok("popup has Subtitles 1-click button", "sendSubtitlesToDesktop" in popup_js)
     ok("popup has no Clear button",        "clearDetectedBtn"  not in popup_html)
     man = json.load(open(os.path.join(EXT, "manifest.json"), encoding="utf-8"))
-    ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0", "2.4.0"))
+    ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0", "2.4.0", "2.5.0"))
     ok("manifest webRequest",      "webRequest" in man.get("permissions", []))
     ok("manifest host localhost",  any("127.0.0.1" in h for h in man.get("host_permissions", [])))
     ok("godmode FORCE_SCAN",       "FORCE_SCAN" in open(os.path.join(EXT, "godmode.js"), encoding="utf-8").read())
@@ -259,7 +259,7 @@ def test_gui_declutter():
     ok("GUI: Start Download",                   "Start Download"          in gui)
     ok("GUI: Download All queue",               "Download All"            in gui)
     ok("GUI: progress animation tick",          "_tick_progress_animation" in gui)
-    ok("GUI: footer version v2.4.0",            "v2.4.0" in gui or "v2.3.0" in gui or "v2.2.0" in gui or "v2.1.0" in gui)
+    ok("GUI: footer version v2.5.0",            "v2.5.0" in gui or "v2.4.0" in gui or "v2.3.0" in gui or "v2.2.0" in gui or "v2.1.0" in gui)
     ok("GUI: concurrent: no global flag",       "self.is_downloading = False" not in gui)
     ok("GUI: concurrent: _active_downloads",    "_active_downloads"       in gui)
     ok("GUI: concurrent: per-item cancel",      "_cancel_item"            in gui)
@@ -361,7 +361,7 @@ def test_direct_download_smoke():
     try:
         info = {
             "url": "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_92x30dp.png",
-            "user_agent": "OmniStreamPro-SelfTest/2.4.0",
+            "user_agent": "OmniStreamPro-SelfTest/2.5.0",
             "referer":    "https://www.google.com/",
             "origin":     "https://www.google.com",
             "headers":    {},
@@ -537,9 +537,9 @@ def test_release_binaries_optional():
     out     = os.path.join(ROOT, "release_output")
     portable= os.path.join(out, "OmniStream_Pro.exe")
     setup   = os.path.join(out, "OmniStream_Pro_Setup.exe")
-    zip_v   = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.4.0.zip")
+    zip_v   = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.5.0.zip")
     if not os.path.isfile(zip_v):
-        zip_v = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.3.0.zip")
+        zip_v = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.4.0.zip")
     magic   = b"MEI\x0c\x0b\x0a\x0b\x0e"
 
     if os.path.isfile(portable):
@@ -651,7 +651,7 @@ def test_security_drm_platform():
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 60)
-    print("  OmniStream Pro v2.4.0 — Self-Test Suite")
+    print("  OmniStream Pro v2.5.0 — Self-Test Suite")
     print("=" * 60)
     print()
 

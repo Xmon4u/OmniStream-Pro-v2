@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.4.0 - Windows Installer (.exe) Compiler
+OmniStream Pro v2.5.0 - Windows Installer (.exe) Compiler
 Compiles installer.py into OmniStream_Pro_Setup.exe using PyInstaller.
 
 IMPORTANT: Never bundle desktop/dist or desktop/build. Nested PyInstaller
@@ -93,7 +93,7 @@ def _stage_payload():
 
 def build():
     print("=" * 65)
-    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.4.0 Windows Installer)...")
+    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.5.0 Windows Installer)...")
     print("=" * 65)
 
     stage_desktop = _stage_payload()

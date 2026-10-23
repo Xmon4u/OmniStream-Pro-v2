@@ -20,6 +20,7 @@ desktop/bin/*.zip
 bin/*.exe
 bin/*.zip
 release_output/
+*Test_Release/
 *.exe
 *.zip
 

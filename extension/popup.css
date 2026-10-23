@@ -168,7 +168,7 @@ body {
 }
 
 .scan-btn {
-  flex: none;
+  flex: 1;
   height: 30px;
   border: 1px solid #3730a3;
   border-radius: 8px;
@@ -179,14 +179,81 @@ body {
   font-weight: 700;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 6px;
   cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.scan-btn:hover {
+  filter: brightness(1.12);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
+}
+
+.scan-btn:active {
+  transform: translateY(1px);
 }
 
 .scan-btn.scanning {
   opacity: 0.75;
   cursor: wait;
+}
+
+.refresh-btn {
+  flex: 1;
+  height: 30px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #b45309, #d97706);
+  color: #fffbeb;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+body.theme-black .refresh-btn {
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: linear-gradient(135deg, #92400e, #b45309);
+}
+
+.refresh-btn:hover {
+  filter: brightness(1.12);
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.35);
+}
+
+.refresh-btn:active {
+  transform: translateY(1px);
+}
+
+.refresh-btn.refreshing {
+  opacity: 0.75;
+  cursor: wait;
+}
+
+.refresh-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  transform-origin: center;
+}
+
+.refresh-btn.refreshing .refresh-icon {
+  animation: omni-spin 0.75s linear infinite;
+}
+
+@keyframes omni-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .scan-note {
@@ -214,14 +281,20 @@ body {
   background: transparent;
   color: var(--faint);
   font: inherit;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0;
   text-transform: none;
   font-weight: 600;
   cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
 }
 
-.text-btn:hover { color: #fb7185; }
+.text-btn:hover {
+  color: #fb7185;
+  background: rgba(251, 113, 133, 0.1);
+}
 
 .list { display: flex; flex-direction: column; gap: 8px; }
 

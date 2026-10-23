@@ -706,7 +706,7 @@ class OmniStreamApp(ctk.CTk):
         self.header_title.pack(side="left")
 
         self.header_version = ctk.CTkLabel(
-            title_box, text=" v2.4.0 ",
+            title_box, text=" v2.5.0 ",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             fg_color=BG_CARD2, text_color=TEXT_MUTED,
             corner_radius=4, padx=5, pady=1
@@ -1568,7 +1568,7 @@ class OmniStreamApp(ctk.CTk):
 
         ctk.CTkButton(
             footer,
-            text="OmniStream Pro v2.4.0  •  Developed by XMON4U  •  GitHub Repository",
+            text="OmniStream Pro v2.5.0  •  Developed by XMON4U  •  GitHub Repository",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED, fg_color="transparent",
             hover_color=BG_CARD, cursor="hand2",

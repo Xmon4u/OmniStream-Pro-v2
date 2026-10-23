@@ -416,6 +416,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     tabMediaMap.set(tabId, []);
     chrome.storage.local.remove([`omni_tab_${tabId}`], () => {
       updateBadge(tabId);
+      if (tabId) {
+        chrome.tabs.sendMessage(tabId, { action: 'CLEAR_GODMODE_CAPTURED' }, () => {
+          void chrome.runtime.lastError;
+        });
+      }
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (message.action === 'CLEAR_AND_REFRESH_TAB') {
+    const tabId = message.tabId;
+    tabMediaMap.set(tabId, []);
+    chrome.storage.local.remove([`omni_tab_${tabId}`], () => {
+      updateBadge(tabId);
+      if (tabId) {
+        chrome.tabs.sendMessage(tabId, { action: 'CLEAR_GODMODE_CAPTURED' }, () => {
+          void chrome.runtime.lastError;
+        });
+        chrome.tabs.reload(tabId, { bypassCache: false }, () => {
+          void chrome.runtime.lastError;
+        });
+      }
       sendResponse({ success: true });
     });
     return true;

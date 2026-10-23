@@ -1,3 +1,37 @@
+## OmniStream Pro v2.5.0 — Intelligent "Clear & Refresh" Sniffer, GraphQL Season Resolver & Synchronized Suite
+
+Release notes for the desktop app + Chrome extension suite.
+
+---
+
+### ✨ What's new in v2.5.0
+
+#### 🔄 1-Click "Clear & Refresh" Stream Sniffer Engine
+- **Dedicated Clear & Refresh Button** — Added a prominent, amber-gradient **Clear & Refresh** action button side-by-side with God Mode scan in the browser extension.
+- **Deep Cache Flush** — Completely clears background memory (`tabMediaMap`), Chrome local storage (`omni_tab_${tabId}`), and extension badges on demand.
+- **In-Page URL Cache Reset** — Automatically flushes God Mode's in-memory `capturedUrls` set so new streams from consecutive videos or episodes are never blocked.
+- **Automated Tab Reload & Rescan** — Reloads the active browser tab, waits for player initialization, and automatically runs a fresh God Mode deep scan to isolate and display only the current video's files.
+- **Dedicated List Clear** — Added a quick "Clear" text button in the Player header to clear streams without reloading if desired.
+
+#### 🎬 Enhanced Netflix Season & Episode Resolution
+- **GraphQL SeasonEdge Support** — Upgraded `netflix_resolver.py` to count GraphQL `SeasonEdge` array nodes, ensuring 100% accurate Season (`S01`, `S02`, etc.) and Episode (`E01`, `E02`) detection across all Netflix TV series.
+- **Accurate Target VideoId Mapping** — Eliminates false positives from HTML `<link>` tags and anchors directly onto the video JSON node.
+- **Custom User Title Protection** — Preserves manual user-specified titles and seasons in the desktop UI while automatically resolving unlabelled streams.
+
+#### 🔗 Synchronized Desktop App & Chrome Extension Integration
+- **Zero-Fluctuation Localhost Bridge** — Hardened token pairing between `desktop/bridge_server.py` and `extension/background.js` with instant authentication.
+- **Synchronized Deployment** — Automatically keeps `%LOCALAPPDATA%\OmniStreamPro\extension` and repository extension sources synchronized.
+- **Universal v2.5.0 Binaries** — Freshly compiled standalone executable (`OmniStream_Pro.exe`) and setup installer (`OmniStream_Pro_Setup.exe`) with the v2.5.0 extension bundled inside.
+
+#### 📦 Release Artifacts for v2.5.0
+1. `OmniStream_Pro_Setup.exe` — Full Windows setup installer with shortcut creation and uninstaller registry
+2. `OmniStream_Pro.exe` — Standalone portable Windows executable (ready-to-run, zero install)
+3. `OmniStream-Pro-Chrome-Extension-v2.5.0.zip` — Chrome/Edge browser extension package (Manifest V3)
+4. `N_m3u8DL-RE.exe` — Pre-bundled high-speed HLS/DASH downloader engine
+5. `uninstall.exe` — Native Windows uninstaller binary
+
+---
+
 ## OmniStream Pro v2.4.0 — High-Resilience Multi-Audio Engine & System-Wide Reliability Update
 
 Release notes for the desktop app + Chrome extension suite.

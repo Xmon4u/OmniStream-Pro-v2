@@ -160,7 +160,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             response = {
                 "status": "ok",
                 "app": "OmniStream Pro",
-                "version": "2.4.0",
+                "version": "2.5.0",
                 "bridge": "active",
                 "port": BRIDGE_PORT,
                 "authenticated": self._is_authenticated(),

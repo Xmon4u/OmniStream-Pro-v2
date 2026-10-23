@@ -13,6 +13,9 @@ const toastEl = $('toast');
 const modeNormalBtn = $('modeNormalBtn');
 const modeSubMergeBtn = $('modeSubMergeBtn');
 const modeNetflixBtn = $('modeNetflixBtn');
+const clearRefreshBtn = $('clearRefreshBtn');
+const clearRefreshLabel = $('clearRefreshLabel');
+const clearOnlyBtn = $('clearOnlyBtn');
 const themeSelectorEl = $('themeSelector');
 let currentDownloadMode = 'normal';
 let currentTheme = 'cyber';
@@ -150,6 +153,9 @@ async function init() {
   if (modeSubMergeBtn) modeSubMergeBtn.onclick = () => setMode('sub_merge', true);
   if (modeNetflixBtn) modeNetflixBtn.onclick = () => setMode('netflix_rename', true);
 
+  if (clearRefreshBtn) clearRefreshBtn.onclick = clearAndRefreshTab;
+  if (clearOnlyBtn) clearOnlyBtn.onclick = clearOnlyStreams;
+
   runGodScan(false);
   checkBridge();
 }
@@ -219,9 +225,14 @@ function checkBridge() {
   });
 }
 
-function renderDetected() {
+function renderDetected(isRefreshing = false) {
+  if (isRefreshing) {
+    detectedListEl.innerHTML = '<div class="empty"><svg class="play-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:omni-spin 0.85s linear infinite;margin:0 auto 8px;display:block;"><path d="M21 2v6h-6"/><path d="M21 13a9 9 0 1 1-3-7.7L21 8"/></svg><strong>Refreshing page...</strong><span>Old files cleared. Reloading page to sniff new streams...</span></div>';
+    return;
+  }
+
   if (!detectedStreams.length) {
-    detectedListEl.innerHTML = '<div class="empty"><svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5-4.5-2.5z" fill="#64748b" stroke="none"/></svg><strong>No stream yet</strong><span>Play the video, then tap <strong>God Mode scan</strong>. Download appears when a playlist is found.</span></div>';
+    detectedListEl.innerHTML = '<div class="empty"><svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5-4.5-2.5z" fill="#64748b" stroke="none"/></svg><strong>No stream yet</strong><span>Play the video, then tap <strong>God Mode scan</strong> or <strong>Clear & Refresh</strong>. Download appears when a playlist is found.</span></div>';
     return;
   }
 
@@ -345,6 +356,71 @@ function sendSubtitlesToDesktop(item, btn) {
 }
 
 godScanBtn.addEventListener('click', () => runGodScan(true));
+
+function clearAndRefreshTab() {
+  if (!currentTabId || (clearRefreshBtn && clearRefreshBtn.classList.contains('refreshing'))) return;
+
+  if (clearRefreshBtn) clearRefreshBtn.classList.add('refreshing');
+  if (clearRefreshLabel) clearRefreshLabel.textContent = 'Refreshing...';
+
+  // Immediately wipe detected list in UI & show refreshing animation
+  detectedStreams = [];
+  renderDetected(true);
+
+  chrome.runtime.sendMessage({ action: 'CLEAR_TAB_MEDIA', tabId: currentTabId }, () => {
+    const isWebUrl = currentTabUrl && /^https?:\/\//i.test(currentTabUrl);
+    if (!isWebUrl) {
+      if (clearRefreshBtn) clearRefreshBtn.classList.remove('refreshing');
+      if (clearRefreshLabel) clearRefreshLabel.textContent = 'Clear & Refresh';
+      showToast('Stream list cleared');
+      renderDetected(false);
+      return;
+    }
+
+    let finished = false;
+    const cleanup = () => {
+      if (finished) return;
+      finished = true;
+      try { chrome.tabs.onUpdated.removeListener(onUpdatedListener); } catch (e) {}
+      clearTimeout(safetyTimer);
+      if (clearRefreshBtn) clearRefreshBtn.classList.remove('refreshing');
+      if (clearRefreshLabel) clearRefreshLabel.textContent = 'Clear & Refresh';
+      showToast('Cleared & refreshed tab');
+      // Automatically trigger God Mode scan to find new streams from reloaded player
+      setTimeout(() => {
+        runGodScan(false);
+      }, 500);
+    };
+
+    const onUpdatedListener = (tabId, changeInfo) => {
+      if (tabId === currentTabId && changeInfo.status === 'complete') {
+        cleanup();
+      }
+    };
+
+    try { chrome.tabs.onUpdated.addListener(onUpdatedListener); } catch (e) {}
+
+    // Safety fallback in case status complete takes longer or page streams continuously
+    const safetyTimer = setTimeout(() => {
+      cleanup();
+    }, 4500);
+
+    chrome.tabs.reload(currentTabId, { bypassCache: false }, () => {
+      if (chrome.runtime.lastError) {
+        cleanup();
+      }
+    });
+  });
+}
+
+function clearOnlyStreams() {
+  if (!currentTabId) return;
+  detectedStreams = [];
+  renderDetected(false);
+  chrome.runtime.sendMessage({ action: 'CLEAR_TAB_MEDIA', tabId: currentTabId }, () => {
+    showToast('Stream list cleared');
+  });
+}
 
 chrome.storage.onChanged.addListener((changes) => {
   if (currentTabId && changes['omni_tab_' + currentTabId]) loadDetectedStreams();

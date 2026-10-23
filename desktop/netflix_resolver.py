@@ -225,26 +225,39 @@ def resolve_netflix_title(
                 title = cand
 
         # ── Step B: Detect if the original nid is an episode in embedded JSON ─
-        if nid in page:
-            idx = page.find(nid)
+        # Find the videoId JSON occurrence for accurate season/episode metadata
+        m_vid = re.search(r'"videoId"\s*:\s*' + re.escape(nid), page)
+        idx = m_vid.start() if m_vid else (page.find(nid) if nid in page else -1)
+
+        if idx != -1:
             forward = page[idx: min(len(page), idx + 800)]
-            back = page[max(0, idx - 2500): idx]
+            back = page[max(0, idx - 15000): idx]
 
             # Extract episode number from forward JSON
-            ep_num_m = re.search(r'"number":\s*(\d+)', forward)
+            ep_num_m = re.search(r'"number"\s*:\s*(\d+)', forward)
             ep_num = int(ep_num_m.group(1)) if ep_num_m else None
 
-            # Extract episode title from forward JSON ("title":"La Dolce Emily")
+            # Extract episode title from forward JSON ("title":"Chapter One...")
             ep_title = ""
-            ep_title_m = re.search(r'"title":\s*"([^"]+)"', forward)
+            ep_title_m = re.search(r'"title"\s*:\s*"([^"]+)"', forward)
             if ep_title_m:
                 raw_ep = ep_title_m.group(1).replace('\\"', '"').strip()
+                raw_ep = re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m.group(1), 16)), raw_ep)
                 if raw_ep and not re.match(r'^Season\s*\d+$', raw_ep, re.I):
                     ep_title = sanitize_filename(raw_ep)
 
-            # Look backwards for the season number in "Season 4"
+            # Look backwards for the season number:
+            # 1. Direct text e.g. "Season 2"
             s_nums = re.findall(r'Season\s+(\d+)', back)
             season_num = int(s_nums[-1]) if s_nums else None
+
+            # 2. Modern Netflix GraphQL edges structure: count SeasonEdge before this episode
+            if not season_num:
+                seasons_start = back.rfind('"seasons"')
+                if seasons_start != -1:
+                    edges = re.findall(r'SeasonEdge', back[seasons_start:])
+                    if edges:
+                        season_num = len(edges)
 
             if season_num and ep_num:
                 if ep_title:

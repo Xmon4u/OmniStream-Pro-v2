@@ -15,7 +15,7 @@ DESKTOP_DIR   = os.path.join(ROOT_DIR, "desktop")
 EXTENSION_DIR = os.path.join(ROOT_DIR, "extension")
 RELEASE_DIR   = os.path.join(ROOT_DIR, "release_output")
 
-VERSION = "v2.4.0"
+VERSION = "v2.5.0"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 
@@ -118,9 +118,25 @@ def main():
 
     # 5. Copy downloader engine binary (N_m3u8DL-RE.exe)
     dl_engine_src = os.path.join(DESKTOP_DIR, "bin", "N_m3u8DL-RE.exe")
+    if not os.path.exists(dl_engine_src):
+        appdata_bin = os.path.join(os.environ.get("LOCALAPPDATA", ""), "OmniStreamPro", "bin", "N_m3u8DL-RE.exe")
+        if os.path.exists(appdata_bin):
+            dl_engine_src = appdata_bin
+        else:
+            which_bin = shutil.which("N_m3u8DL-RE.exe")
+            if which_bin:
+                dl_engine_src = which_bin
+
     dl_engine_dst = os.path.join(RELEASE_DIR, "N_m3u8DL-RE.exe")
     if os.path.exists(dl_engine_src):
         shutil.copy2(dl_engine_src, dl_engine_dst)
+        os.makedirs(os.path.join(DESKTOP_DIR, "bin"), exist_ok=True)
+        desktop_bin_path = os.path.join(DESKTOP_DIR, "bin", "N_m3u8DL-RE.exe")
+        if not os.path.exists(desktop_bin_path):
+            try:
+                shutil.copy2(dl_engine_src, desktop_bin_path)
+            except Exception:
+                pass
         print(f"\n[5/5] Copied Downloader engine (N_m3u8DL-RE.exe) to release folder.")
 
     # Copy all assets to TEST_RELEASE_DIR
@@ -134,11 +150,14 @@ def main():
         ("uninstall.exe", uninst_path),
     ]
     for name, src in assets:
-        dst = os.path.join(TEST_RELEASE_DIR, name)
-        shutil.copy2(src, dst)
-        sz = os.path.getsize(dst)
-        sz_str = f"{sz/(1024*1024):.1f} MB" if sz > 1024*1024 else f"{sz/1024:.0f} KB"
-        print(f"  -> {name} ({sz_str})")
+        if os.path.exists(src):
+            dst = os.path.join(TEST_RELEASE_DIR, name)
+            shutil.copy2(src, dst)
+            sz = os.path.getsize(dst)
+            sz_str = f"{sz/(1024*1024):.1f} MB" if sz > 1024*1024 else f"{sz/1024:.0f} KB"
+            print(f"  -> {name} ({sz_str})")
+        else:
+            print(f"  -> {name} (Skipped, file not found: {src})")
 
     # Generate TESTING_GUIDE.txt
     guide_content = f"""================================================================================

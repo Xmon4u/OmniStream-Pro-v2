@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.4.0 - High Performance Multi-Stream Engine
+OmniStream Pro v2.5.0 - High Performance Multi-Stream Engine
 Captures HLS (.m3u8), DASH (.mpd), and direct video/audio media streams.
 Concurrent multi-audio track preservation and lossless MKV multiplexing via N_m3u8DL-RE and FFmpeg.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -675,7 +675,7 @@ class OmniStreamEngine:
 
         sep = "━" * 60
         log(sep)
-        log("  OmniStream Pro v2.4.0  •  High-Speed Multi-Audio Engine")
+        log("  OmniStream Pro v2.5.0  •  High-Speed Multi-Audio Engine")
         log(sep)
 
         # Step 1: Verify binaries

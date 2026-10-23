@@ -31,6 +31,15 @@ window.addEventListener('message', (event) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'CLEAR_GODMODE_CAPTURED') {
+    window.postMessage({
+      target: 'OMNISTREAM_GODMODE_INJECT',
+      action: 'CLEAR_CAPTURED'
+    }, '*');
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (message.action === 'TRIGGER_GOD_MODE_SCAN') {
     window.postMessage({
       target: 'OMNISTREAM_GODMODE_INJECT',
