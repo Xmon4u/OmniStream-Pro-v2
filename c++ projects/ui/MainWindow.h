@@ -205,6 +205,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
     void onPasteClicked();
@@ -217,6 +218,8 @@ private slots:
     void onDownloadAllClicked();
     void onClearQueueClicked();
     void onClearLogsClicked();
+    void onFullViewClicked();
+    void onThemeChanged(int index);
     void onDownloadModeChanged(int modeIdx);
     void setDownloadMode(const QString& modeStr);
     void handleLogMessage(const QString& msg);
@@ -225,7 +228,7 @@ private slots:
 
 private:
     void setupUI();
-    void applyStyleSheet();
+    void applyStyleSheet(int themeIdx = 0);
     void startDownloadEngine(bool subtitleOnly);
     void addQueueItem(const DownloadOptions& opts);
 
@@ -249,10 +252,12 @@ private:
     QWidget* m_bannerWidget = nullptr;
 
     // Card 1: Stream Source
+    QWidget* m_card1 = nullptr;
     QPlainTextEdit* m_editUrl = nullptr;
     QPushButton* m_btnPaste = nullptr;
 
     // Card 2: Configuration Options
+    QWidget* m_card2 = nullptr;
     QLineEdit* m_editTitle = nullptr;
     QComboBox* m_comboRes = nullptr;
     QLineEdit* m_editDir = nullptr;
@@ -271,17 +276,20 @@ private:
     int m_selectedMode = 0;
 
     // Action Buttons
+    QWidget* m_actionWidget = nullptr;
     QPushButton* m_btnStart = nullptr;
     QPushButton* m_btnSubs = nullptr;
     QPushButton* m_btnStop = nullptr;
 
     // Card 3: Progress Card
+    QWidget* m_card3 = nullptr;
     QLabel* m_lblProgTitle = nullptr;
     QLabel* m_lblProgStatus = nullptr;
     QLabel* m_lblProgPct = nullptr;
     QProgressBar* m_progBar = nullptr;
     QLabel* m_lblProgSize = nullptr;
     QLabel* m_lblProgSpeed = nullptr;
+    bool m_isFullView = false;
 
     // Card 4: Tab Container & Views
     QPushButton* m_btnTabQueue = nullptr;

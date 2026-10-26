@@ -108,10 +108,11 @@ def extract_tmdb_id(text: str) -> Optional[str]:
       - 'https://www.themoviedb.org/tv/82596' -> '82596'
       - 'tmdb_id=939243' -> '939243'
       - 'tmdb-939243' -> '939243'
+      - '939243' (direct integer string) -> '939243'
     """
     if not text:
         return None
-    raw = str(text)
+    raw = str(text).strip()
     m_url = re.search(r'themoviedb\.org/(?:movie|tv)/(\d+)', raw, re.IGNORECASE)
     if m_url:
         return m_url.group(1)
@@ -119,6 +120,14 @@ def extract_tmdb_id(text: str) -> Optional[str]:
     if m_param:
         return m_param.group(1)
     return None
+
+
+GENERIC_STREAM_NAMES = {
+    "master", "playlist", "manifest", "index", "stream", "chunklist",
+    "video", "player", "output", "segment", "media", "play", "hls", "dash",
+    "main", "prog_index", "video_1080p", "video_720p", "video_480p",
+    "audio_en", "audio_hin", "audio", "subtitle"
+}
 
 
 def clean_show_title(raw_title: str) -> Tuple[str, str]:
@@ -143,7 +152,10 @@ def clean_show_title(raw_title: str) -> Tuple[str, str]:
         if m2:
             ep_tag = f"S{int(m2.group(1)):02d}E{int(m2.group(2)):02d}"
             t = t[:m2.start()].strip()
-    return t.rstrip(" -:_"), ep_tag
+    cleaned = t.rstrip(" -:_")
+    if cleaned.lower() in GENERIC_STREAM_NAMES:
+        return "", ep_tag
+    return cleaned, ep_tag
 
 
 def fetch_imdb_metadata(title: str, year: Optional[str] = None) -> Optional[dict]:
@@ -157,6 +169,8 @@ def fetch_imdb_metadata(title: str, year: Optional[str] = None) -> Optional[dict
         clean_title, _ = clean_show_title(title)
         if not clean_title:
             clean_title = title.strip()
+        if clean_title.lower() in GENERIC_STREAM_NAMES:
+            return None
         slug = urllib.parse.quote(clean_title.lower().replace(" ", "_"))
         url = f"https://v3.sg.media-imdb.com/suggestion/x/{slug}.json"
         req = urllib.request.Request(url, headers={
@@ -559,8 +573,16 @@ def resolve_media_details(
 
     # Extract clean IDs from any provided arguments
     clean_nf = extract_netflix_id(netflix_id) or extract_netflix_id(title) or extract_netflix_id(raw_input)
-    clean_im = extract_imdb_id(imdb_id) or extract_imdb_id(netflix_id) or extract_imdb_id(title) or extract_imdb_id(raw_input)
-    clean_tm = extract_tmdb_id(tmdb_id) or extract_tmdb_id(netflix_id) or extract_tmdb_id(title) or extract_tmdb_id(raw_input)
+    clean_im = extract_imdb_id(imdb_id) or extract_imdb_id(title) or extract_imdb_id(raw_input)
+    clean_tm = None
+    if tmdb_id:
+        s = str(tmdb_id).strip()
+        if s.isdigit() and 3 <= len(s) <= 9:
+            clean_tm = s
+        else:
+            clean_tm = extract_tmdb_id(s)
+    if not clean_tm:
+        clean_tm = extract_tmdb_id(title) or extract_tmdb_id(raw_input)
 
     # If a free-text title was passed in netflix_id or raw_input, preserve it as title
     if not clean_nf and not title:
@@ -674,7 +696,7 @@ def resolve_media_id_rename(
             return result
 
     elif mode == "imdb_rename":
-        direct_imdb = extract_imdb_id(imdb_id) or extract_imdb_id(netflix_id) or extract_imdb_id(title) or extract_imdb_id(raw_input)
+        direct_imdb = extract_imdb_id(imdb_id) or extract_imdb_id(title) or extract_imdb_id(raw_input)
         if direct_imdb:
             details = resolve_media_details(title=title, raw_input=raw_input, imdb_id=direct_imdb, log_callback=_log)
             if details and details.get("episode_tag"):
@@ -694,7 +716,16 @@ def resolve_media_id_rename(
             return result
 
     elif mode == "tmdb_rename":
-        direct_tmdb = extract_tmdb_id(tmdb_id) or extract_tmdb_id(netflix_id) or extract_tmdb_id(title) or extract_tmdb_id(raw_input)
+        direct_tmdb = None
+        if tmdb_id:
+            s = str(tmdb_id).strip()
+            if s.isdigit() and 3 <= len(s) <= 9:
+                direct_tmdb = s
+            else:
+                direct_tmdb = extract_tmdb_id(s)
+        if not direct_tmdb:
+            direct_tmdb = extract_tmdb_id(title) or extract_tmdb_id(raw_input)
+
         if direct_tmdb:
             details = resolve_media_details(title=title, raw_input=raw_input, tmdb_id=direct_tmdb, log_callback=_log)
             if details and details.get("episode_tag"):

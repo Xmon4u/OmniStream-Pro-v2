@@ -2,8 +2,22 @@
 #include "http_client.hpp"
 #include <iomanip>
 #include <sstream>
+#include <unordered_set>
 
 namespace OmniStream {
+
+static bool IsGenericStreamName(const std::string& str) {
+    if (str.empty()) return true;
+    std::string s = str;
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    static const std::unordered_set<std::string> generic = {
+        "master", "playlist", "manifest", "index", "stream", "chunklist",
+        "video", "player", "output", "segment", "media", "play", "hls", "dash",
+        "main", "prog_index", "video_1080p", "video_720p", "video_480p",
+        "audio_en", "audio_hin", "audio", "subtitle"
+    };
+    return generic.find(s) != generic.end();
+}
 
 static std::string UrlEncodeSlug(const std::string& value) {
     std::ostringstream escaped;
@@ -61,13 +75,21 @@ std::string NetflixResolver::ExtractImdbId(const std::string& input) {
 
 std::string NetflixResolver::ExtractTmdbId(const std::string& input) {
     if (input.empty()) return "";
-    // 1. URL pattern
+    // 1. Direct numeric string (3 to 9 digits)
+    std::string trimmed = input;
+    trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
+    trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
+    if (!trimmed.empty() && trimmed.size() >= 3 && trimmed.size() <= 9 &&
+        trimmed.find_first_not_of("0123456789") == std::string::npos) {
+        return trimmed;
+    }
+    // 2. URL pattern
     std::regex regUrl(R"(themoviedb\.org\/(?:movie|tv)\/(\d+))", std::regex::icase);
     std::smatch m;
     if (std::regex_search(input, m, regUrl)) {
         return m[1].str();
     }
-    // 2. Parameter pattern
+    // 3. Parameter pattern
     std::regex regParam(R"((?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+))", std::regex::icase);
     if (std::regex_search(input, m, regParam)) {
         return m[1].str();
@@ -293,7 +315,7 @@ std::string NetflixResolver::ResolveMediaRename(
         }
 
         // Online lookup
-        std::string searchTitle = customTitle;
+        std::string searchTitle = IsGenericStreamName(customTitle) ? "" : customTitle;
         if (searchTitle.empty()) {
             std::string nid = ExtractNetflixId(inputText);
             if (!nid.empty()) {
@@ -328,7 +350,7 @@ std::string NetflixResolver::ResolveMediaRename(
         std::string iid = !imdbId.empty() ? imdbId : ExtractImdbId(inputText);
         if (iid.empty()) iid = ExtractImdbId(customTitle);
 
-        std::string searchTitle = customTitle;
+        std::string searchTitle = IsGenericStreamName(customTitle) ? "" : customTitle;
         if (searchTitle.empty()) {
             std::string nid = ExtractNetflixId(inputText);
             if (!nid.empty()) {

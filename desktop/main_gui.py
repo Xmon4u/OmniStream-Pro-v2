@@ -2153,13 +2153,22 @@ class OmniStreamApp(ctk.CTk):
         # Sanitize custom title: remove any stream extensions e.g. .m3u8, .mpd, .mp4
         cleaned_custom = re.sub(r'\.(m3u8|mpd|mp4|webm|mkv|m4s)(\?.*)?$', '', custom_title.strip(), flags=re.IGNORECASE).strip()
 
+        GENERIC_STREAM_NAMES = {
+            "master", "playlist", "manifest", "index", "stream", "chunklist",
+            "video", "player", "output", "segment", "media", "play", "hls", "dash",
+            "main", "prog_index", "video_1080p", "video_720p", "video_480p",
+            "audio_en", "audio_hin", "audio", "subtitle"
+        }
+        if cleaned_custom.lower() in GENERIC_STREAM_NAMES:
+            cleaned_custom = ""
+
         detected_nid = netflix_id or extract_netflix_id(cleaned_custom) or extract_netflix_id(raw_input)
         detected_imdb = imdb_id or extract_imdb_id(cleaned_custom) or extract_imdb_id(raw_input)
         detected_tmdb = tmdb_id or extract_tmdb_id(cleaned_custom) or extract_tmdb_id(raw_input)
 
         is_user_explicit_title = bool(
             cleaned_custom and not cleaned_custom.isdigit() and not cleaned_custom.lower().startswith("tt")
-            and cleaned_custom.lower() not in ("video", "player")
+            and cleaned_custom.lower() not in GENERIC_STREAM_NAMES
         )
 
         if cleaned_custom:
@@ -3051,7 +3060,7 @@ class OmniStreamApp(ctk.CTk):
                 )
 
                 # Post-download rename step
-                if is_rename_mode and saved_out and os.path.exists(saved_out) and not item.get("user_specified_title"):
+                if is_rename_mode and saved_out and os.path.exists(saved_out):
                     target_rename = target_id_rename or item.get("resolved_target")
                     if not target_rename:
                         target_rename = resolve_media_id_rename(

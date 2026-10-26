@@ -130,7 +130,8 @@ void MainWindow::paintEvent(QPaintEvent *event) {
     painter.drawRoundedRect(rect().adjusted(2, 2, -3, -3), 16, 16);
 
     // 2. Window Body Background
-    painter.setBrush(QColor("#0d1117"));
+    QColor bodyBg = (m_comboTheme && m_comboTheme->currentIndex() == 1) ? QColor("#05080f") : QColor("#0d1117");
+    painter.setBrush(bodyBg);
     painter.setPen(Qt::NoPen);
     painter.drawRoundedRect(r, 16, 16);
 
@@ -184,6 +185,15 @@ void MainWindow::changeEvent(QEvent *event) {
     QMainWindow::changeEvent(event);
 }
 
+void MainWindow::keyPressEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Escape && m_isFullView) {
+        onFullViewClicked();
+        event->accept();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
 void MainWindow::setupUI() {
     auto *centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
@@ -217,6 +227,7 @@ void MainWindow::setupUI() {
     m_comboTheme->setObjectName("comboTheme");
     m_comboTheme->addItem("Cyber Slate");
     m_comboTheme->addItem("Midnight Black");
+    connect(m_comboTheme, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onThemeChanged);
     headerLayout->addWidget(m_comboTheme);
 
     m_lblStatusBadge = new QLabel("\u25CF Ready", this);
@@ -264,9 +275,9 @@ void MainWindow::setupUI() {
     rootLayout->addWidget(m_bannerWidget);
 
     // ── 3. Card 1: Stream Source ──────────────────────────────────────────────
-    auto *card1 = new QWidget(this);
-    card1->setObjectName("cardWidget");
-    auto *card1Layout = new QVBoxLayout(card1);
+    m_card1 = new QWidget(this);
+    m_card1->setObjectName("cardWidget");
+    auto *card1Layout = new QVBoxLayout(m_card1);
     card1Layout->setContentsMargins(18, 10, 18, 12);
     card1Layout->setSpacing(8);
 
@@ -291,12 +302,12 @@ void MainWindow::setupUI() {
     m_editUrl->setPlaceholderText("Paste stream URL or Chrome cURL command here...");
     m_editUrl->setFixedHeight(46);
     card1Layout->addWidget(m_editUrl);
-    rootLayout->addWidget(card1);
+    rootLayout->addWidget(m_card1);
 
     // ── 4. Card 2: Configuration ──────────────────────────────────────────────
-    auto *card2 = new QWidget(this);
-    card2->setObjectName("cardWidget");
-    auto *card2Layout = new QGridLayout(card2);
+    m_card2 = new QWidget(this);
+    m_card2->setObjectName("cardWidget");
+    auto *card2Layout = new QGridLayout(m_card2);
     card2Layout->setContentsMargins(18, 12, 18, 12);
     card2Layout->setHorizontalSpacing(16);
     card2Layout->setVerticalSpacing(10);
@@ -410,10 +421,12 @@ void MainWindow::setupUI() {
     card2Layout->addWidget(lblSubLang, 3, 2);
     card2Layout->addWidget(m_comboSubLang, 3, 3);
 
-    rootLayout->addWidget(card2);
+    rootLayout->addWidget(m_card2);
 
     // ── 5. Action Buttons ─────────────────────────────────────────────────────
-    auto *actionLayout = new QHBoxLayout();
+    m_actionWidget = new QWidget(this);
+    auto *actionLayout = new QHBoxLayout(m_actionWidget);
+    actionLayout->setContentsMargins(0, 0, 0, 0);
     actionLayout->setSpacing(10);
 
     m_btnStart = new QPushButton(" Start Download", this);
@@ -436,12 +449,12 @@ void MainWindow::setupUI() {
     actionLayout->addWidget(m_btnStop);
 
     actionLayout->addStretch();
-    rootLayout->addLayout(actionLayout);
+    rootLayout->addWidget(m_actionWidget);
 
     // ── 6. Card 3: Progress Card ──────────────────────────────────────────────
-    auto *card3 = new QWidget(this);
-    card3->setObjectName("cardWidget");
-    auto *card3Layout = new QVBoxLayout(card3);
+    m_card3 = new QWidget(this);
+    m_card3->setObjectName("cardWidget");
+    auto *card3Layout = new QVBoxLayout(m_card3);
     card3Layout->setContentsMargins(18, 10, 18, 10);
     card3Layout->setSpacing(5);
 
@@ -480,7 +493,7 @@ void MainWindow::setupUI() {
     progFooter->addWidget(m_lblProgSpeed);
     card3Layout->addLayout(progFooter);
 
-    rootLayout->addWidget(card3);
+    rootLayout->addWidget(m_card3);
 
     // ── 7. Card 4: Tab Container & Views ──────────────────────────────────────
     auto *card4 = new QWidget(this);
@@ -537,6 +550,7 @@ void MainWindow::setupUI() {
 
     m_btnFullView = new QPushButton("Full View \u2197", this);
     m_btnFullView->setObjectName("btnToolbar");
+    connect(m_btnFullView, &QPushButton::clicked, this, &MainWindow::onFullViewClicked);
     queueToolbar->addWidget(m_btnFullView);
 
     queueToolbar->addStretch();
@@ -613,9 +627,13 @@ void MainWindow::setupUI() {
 
     footerLayout->addStretch();
 
-    m_lblFooterAuthor = new QLabel("OmniStream Pro v2.6.0  \u2022  Developed by XMON4U  \u2022  GitHub Repository", this);
+    m_lblFooterAuthor = new QLabel(
+        "OmniStream Pro v2.6.0  \u2022  Developed by XMON4U  \u2022  <a href=\"https://github.com/Xmon4u/OmniStream-Pro-v2\" style=\"color: #58a6ff; text-decoration: none;\">GitHub Repository</a>",
+        this);
     m_lblFooterAuthor->setObjectName("lblFooterAuthor");
     m_lblFooterAuthor->setCursor(Qt::PointingHandCursor);
+    m_lblFooterAuthor->setOpenExternalLinks(true);
+    m_lblFooterAuthor->setTextFormat(Qt::RichText);
     footerLayout->addWidget(m_lblFooterAuthor);
 
     rootLayout->addWidget(footerWidget);
@@ -625,8 +643,17 @@ void MainWindow::setupUI() {
     handleLogMessage("WinHTTP Asynchronous Streaming Pipeline Initialized.");
 }
 
-void MainWindow::applyStyleSheet() {
-    setStyleSheet(R"(
+void MainWindow::applyStyleSheet(int themeIdx) {
+    bool midnight = (themeIdx == 1);
+    QString cardBg = midnight ? "#090d14" : "#161b22";
+    QString cardBorder = midnight ? "#1e293b" : "#30363d";
+    QString inputBg = midnight ? "#020408" : "#090d13";
+    QString inputBorder = midnight ? "#1a2234" : "#21262d";
+    QString termBg = midnight ? "#000000" : "#05070a";
+    QString tableBg = midnight ? "#020408" : "#090d13";
+    QString tableHeader = midnight ? "#090d14" : "#161b22";
+
+    QString qss = QString(R"(
         QWidget {
             background-color: transparent;
             color: #f0f6fc;
@@ -683,8 +710,8 @@ void MainWindow::applyStyleSheet() {
             font-weight: 500;
         }
         #cardWidget {
-            background-color: #161b22;
-            border: 1px solid #30363d;
+            background-color: %1;
+            border: 1px solid %2;
             border-radius: 12px;
         }
         #cardWidget:hover {
@@ -705,8 +732,8 @@ void MainWindow::applyStyleSheet() {
             color: #8b949e;
         }
         #inputField, #editUrl {
-            background-color: #090d13;
-            border: 1px solid #21262d;
+            background-color: %3;
+            border: 1px solid %4;
             border-radius: 8px;
             color: #f0f6fc;
             padding: 5px 10px;
@@ -714,11 +741,11 @@ void MainWindow::applyStyleSheet() {
         }
         #inputField:focus, #editUrl:focus {
             border: 1px solid #38bdf8;
-            background-color: #070d14;
+            background-color: %3;
         }
         #inputCombo {
-            background-color: #090d13;
-            border: 1px solid #21262d;
+            background-color: %3;
+            border: 1px solid %4;
             border-radius: 8px;
             color: #f0f6fc;
             padding: 4px 10px;
@@ -728,8 +755,8 @@ void MainWindow::applyStyleSheet() {
             border: 1px solid #38bdf8;
         }
         #inputCombo QAbstractItemView {
-            background-color: #161b22;
-            border: 1px solid #30363d;
+            background-color: %1;
+            border: 1px solid %2;
             selection-background-color: #2563eb;
             color: #f0f6fc;
         }
@@ -904,25 +931,25 @@ void MainWindow::applyStyleSheet() {
             color: #4b5563;
         }
         #editTerminal {
-            background-color: #05070a;
-            border: 1px solid #21262d;
+            background-color: %5;
+            border: 1px solid %4;
             border-radius: 8px;
             color: #79c0ff;
             font-family: 'Consolas', monospace;
             font-size: 11px;
         }
         #tableQueue {
-            background-color: #090d13;
-            border: 1px solid #21262d;
+            background-color: %6;
+            border: 1px solid %4;
             border-radius: 8px;
             color: #f0f6fc;
-            gridline-color: #21262d;
+            gridline-color: %4;
         }
         #tableQueue QHeaderView::section {
-            background-color: #161b22;
+            background-color: %7;
             color: #8b949e;
             font-weight: bold;
-            border: 1px solid #21262d;
+            border: 1px solid %4;
             padding: 4px;
         }
         #lblFooterBridge {
@@ -934,7 +961,26 @@ void MainWindow::applyStyleSheet() {
             color: #6e7681;
             font-size: 11px;
         }
-    )");
+    )").arg(cardBg, cardBorder, inputBg, inputBorder, termBg).arg(tableBg, tableHeader);
+    setStyleSheet(qss);
+}
+
+void MainWindow::onFullViewClicked() {
+    m_isFullView = !m_isFullView;
+    if (m_bannerWidget) m_bannerWidget->setVisible(!m_isFullView);
+    if (m_card1) m_card1->setVisible(!m_isFullView);
+    if (m_card2) m_card2->setVisible(!m_isFullView);
+    if (m_actionWidget) m_actionWidget->setVisible(!m_isFullView);
+    if (m_card3) m_card3->setVisible(!m_isFullView);
+
+    if (m_btnFullView) {
+        m_btnFullView->setText(m_isFullView ? "\u2190 Back to Dashboard" : "Full View \u2197");
+    }
+}
+
+void MainWindow::onThemeChanged(int index) {
+    applyStyleSheet(index);
+    update();
 }
 
 void MainWindow::onPasteClicked() {

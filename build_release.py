@@ -19,7 +19,7 @@ VERSION = "v2.6.0"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 
-TEST_RELEASE_DIR = os.path.join(os.path.dirname(ROOT_DIR), f"OmniStream_Pro_{VERSION}_Test_Release")
+TEST_RELEASE_DIR = os.path.join(ROOT_DIR, "Release Test")
 
 def package_extension(zip_path: str):
     print(f"\n[1/5] Packaging Chrome Extension into {os.path.basename(zip_path)}...")
@@ -139,7 +139,7 @@ def main():
                 pass
         print(f"\n[5/5] Copied Downloader engine (N_m3u8DL-RE.exe) to release folder.")
 
-    # Copy all assets to TEST_RELEASE_DIR
+    # Do not wipe entire TEST_RELEASE_DIR to avoid deleting source checkouts
     os.makedirs(TEST_RELEASE_DIR, exist_ok=True)
     print(f"\n[Sync] Copying all freshly built assets to {TEST_RELEASE_DIR}...")
     assets = [
@@ -159,47 +159,61 @@ def main():
         else:
             print(f"  -> {name} (Skipped, file not found: {src})")
 
-    # Generate TESTING_GUIDE.txt
-    guide_content = f"""================================================================================
-  OmniStream Pro {VERSION} — Fresh Pre-Release Test Package
-================================================================================
+    # Sync source modules for complete code inspection
+    for src_rel, dst_rel in [("c++ projects", "C++_Engine"), ("desktop", "Desktop"), ("extension", "Extension")]:
+        src_path = os.path.join(ROOT_DIR, src_rel)
+        dst_path = os.path.join(TEST_RELEASE_DIR, dst_rel)
+        if os.path.exists(src_path):
+            shutil.copytree(src_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.obj", "*.tlog", "*.log", ".vs", "__pycache__", "dist", "build"))
+            print(f"  -> Synced {src_rel} -> {dst_rel}")
 
-Files in this folder (All freshly built with recent fixes):
-1. OmniStream_Pro_Setup.exe                   — Full Windows Installer
-2. OmniStream_Pro.exe                         — Standalone Portable Application
-3. {ZIP_NAME}  — Chrome Extension Package
-4. N_m3u8DL-RE.exe                            — Downloader Engine Binary
-5. uninstall.exe                              — Native Uninstaller
+    # Copy root doc files
+    for root_doc in ["README.md", "RELEASE_NOTES.md", "LICENSE", "requirements.txt", "Start_OmniStream_Pro.bat"]:
+        src_doc = os.path.join(ROOT_DIR, root_doc)
+        if os.path.exists(src_doc):
+            shutil.copy2(src_doc, os.path.join(TEST_RELEASE_DIR, root_doc))
 
-Verified Fixes in this Build:
------------------------------
-1. Window Maximize & Fullscreen ("Not Responding" Freeze Fixed):
-   - Eliminated infinite configure loop and Win32 WNDPROC deadlock.
-   - Window now cleanly maximizes across the full work area with instant response.
-   - Flattens corners when maximized, cleanly restores rounded borders when unmaximized.
+    guide_content = f"""# OmniStream Pro {VERSION} — Release Test & Quality Verification
 
-2. Full View Queue Manager & UI Expansion (User Requested):
-   - Added 'Full View ↗' button right next to 'Clear All' in the queue toolbar.
-   - One-click transition to full-screen queue page with massive scrollable area for dozens of downloads.
-   - Prominent '← Back to Dashboard' button (and Escape key) to return immediately to the main screen.
-   - Top dashboard cards compacted, increasing normal view queue height by 2.5x.
+## \u09aa\u09cd\u09b0\u09a4\u09bf\u099f\u09bf \u09ab\u09be\u0987\u09b2\u09c7\u09b0 \u09ac\u09bf\u09ac\u09b0\u09a3:
+1. **OmniStream_Pro_Setup.exe** — \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 Windows \u0987\u09a8\u09b8\u09cd\u099f\u09b2\u09be\u09b0 (Auto-detection, Start Menu \u0993 Desktop shortcut \u09a4\u09c8\u09b0\u09bf \u0995\u09b0\u09c7)।
+2. **OmniStream_Pro.exe** — Standalone Portable Application (\u0987\u09a8\u09b8\u09cd\u099f\u09b2 \u099b\u09be\u09dc\u09be\u0987 \u09b8\u09b0\u09be\u09b8\u09b0\u09bf \u099a\u09be\u09b2\u09be\u09a8\u09cb \u09af\u09be\u09af\u09bc)।
+3. **{ZIP_NAME}** — Chrome / Edge / Brave Extension \u09aa\u09cd\u09af\u09be\u0995\u09c7\u099c।
+4. **N_m3u8DL-RE.exe** — Ultra Fast Core Streaming Download Engine।
+5. **uninstall.exe** — Windows Native Clean Uninstaller।
+6. **C++_Engine/** — MSVC 2022 Native C++ Source & VS Solution।
+7. **Desktop/** — Python + CustomTkinter Desktop GUI & Engine।
+8. **Extension/** — Chrome Extension Manifest v3 Unpacked Source।
 
-3. Complete Thread-Safety & Performance:
-   - All background threads (downloads, auto-setup, heartbeats) now dispatch safely through main thread queue.
-   - Zero Tcl/Tk thread contention or modal blocking.
+## \u0995\u09bf\u09ad\u09be\u09ac\u09c7 \u09aa\u09b0\u09c0\u0995\u09cd\u09b7\u09be \u0995\u09b0\u09ac\u09c7\u09a8 (Step-by-Step Testing Guide):
 
-4. Download Engine & Safety:
-   - Relative tracks correctly resolved via --base-url.
-   - Safe intermediate file cleanup: never touches user Desktop files.
-   - Immediate sub-process termination (taskkill) on Stop/Cancel.
+### \u09a7\u09be\u09aa \u09e7: Chrome Extension \u0987\u09a8\u09b8\u09cd\u099f\u09b2 \u0995\u09b0\u09c1\u09a8
+1. Google Chrome \u09ac\u09cd\u09b0\u09be\u0989\u099c\u09be\u09b0\u09c7 `chrome://extensions/` \u09b2\u09bf\u0996\u09c7 Enter \u099a\u09be\u09aa\u09c1\u09a8।
+2. \u0989\u09aa\u09b0\u09c7 \u09a1\u09be\u09a8\u09c7 **Developer mode** \u0985\u09a8 (ON) \u0995\u09b0\u09c1\u09a8।
+3. **Load unpacked** \u09ac\u09be\u099f\u09a8\u09c7 \u0995\u09cd\u09b2\u09bf\u0995 \u0995\u09b0\u09c7 `Release Test/Extension` \u09ab\u09cb\u09b2\u09cd\u09a1\u09be\u09b0\u099f\u09bf \u09b8\u09c7\u09b2\u09c7\u0995\u09cd\u099f \u0995\u09b0\u09c1\u09a8 (অথবা `{ZIP_NAME}` আনজিপ করে লোড করতে পারেন)।
 
-5. Multi-Track Resilience & Accurate Error Diagnosis:
-   - Concurrency tuned to 16 threads per stream to avoid CDN rate-limiting/socket exhaustion.
-   - Segment retry count increased to 15 with 30s timeout for robust network recovery.
-   - Progress lines (e.g. '401/403 segs' or '403 KB/s') isolated so they never falsely trigger 'HTTP 401/403 Forbidden'.
-   - Downloader errors faithfully reported with exact failure details.
+### \u09a7\u09be\u09aa \u09e8: Downloader Manager \u099a\u09be\u09b2\u09c1 \u0995\u09b0\u09c1\u09a8
+1. `Release Test/OmniStream_Pro.exe` চালু করুন (অথবা `OmniStream_Pro_Setup.exe` দিয়ে ইনস্টল করে ডেস্কটপ আইকন থেকে চালু করুন)।
+2. অ্যাপ চালু হলে সবুজ রঙের **Bridge Active** নোটিশ দেখতে পাবেন (Port 28795)।
+
+### \u09a7\u09be\u09aa \u09e9: 1-Click Stream Capture \u09aa\u09b0\u09c0\u0995\u09cd\u09b7\u09be \u0995\u09b0\u09c1\u09a8
+1. যেকোনো স্ট্রিমিং সাইট বা Netflix ভিডিও প্লে করুন।
+2. ব্রাউজারের Extension আইকনে ক্লিক করুন—দেখা যাবে "App Connected"।
+3. **Send to OmniStream** বাটনে চাপ দিন—ডাউনলোড ম্যানেজারে স্বয়ংক্রিয়ভাবে লিঙ্ক ও আইডি চলে আসবে এবং ডাউনলোড শুরু হবে!
+
+### \u09a7\u09be\u09aa \u09e8: Download Mode (Netflix / IMDb / TMDB) \u09aa\u09b0\u09c0\u0995\u09cd\u09b7\u09be \u0995\u09b0\u09c1\u09a8
+- **Netflix Mode:** ফাইলের নাম হবে `81902147_S01E01.mp4` বা নিদিষ্ট Netflix ID।
+- **IMDb Mode:** স্বয়ংক্রিয়ভাবে IMDb থেকে মুভি টাইটেল ও আইডি নিয়ে `tt18259086_S01E01.mp4` নাম হবে।
+- **TMDB Mode:** স্বয়ংক্রিয়ভাবে TheMovieDB থেকে অফিসিয়াল আইডি নিয়ে `939243_S01E01.mp4` নাম হবে।
+
+### \u09a7\u09be\u09aa \u09eb: Full View \u0993 UI Buttons \u09aa\u09b0\u09c0\u0995\u09cd\u09b7\u09be \u0995\u09b0\u09c1\u09a8
+- **Full View ↗** বাটনে ক্লিক করলে কিউ ম্যানেজার বড় হয়ে পুরো উইন্ডো জুড়ে দেখাবে।
+- **← Back to Dashboard** অথবা **Escape (Esc)** চাপলে পূর্বের ড্যাশবোর্ডে ফিরে আসবে।
+- **Theme Dropdown (Cyber Slate / Midnight Black):** সাথে সাথে ইন্টারফেসের থিম সুইচ হবে।
+- **Download Subtitles:** সাবটাইটেল ফরম্যাট (SRT / VTT) ও ভাষা অনুযায়ী শুধু সাবটাইটেল সেভ হবে।
+- **Stop / Clear Queue / Clear Logs:** তাৎক্ষণিক প্রতিক্রিয়া নিশ্চিত করা হয়েছে।
 """
-    with open(os.path.join(TEST_RELEASE_DIR, "TESTING_GUIDE.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(TEST_RELEASE_DIR, "How_To_Test.md"), "w", encoding="utf-8") as f:
         f.write(guide_content)
 
     print("\n" + "=" * 65)
