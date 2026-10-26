@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0 - Release Builder
+OmniStream Pro v2.6.0 - Release Builder
 Builds the standalone executable (.exe), Setup Installer (.exe), and packages the Chrome Extension (.zip)
 Author: XMON4U (https://github.com/Xmon4u)
 """
@@ -15,7 +15,7 @@ DESKTOP_DIR   = os.path.join(ROOT_DIR, "desktop")
 EXTENSION_DIR = os.path.join(ROOT_DIR, "extension")
 RELEASE_DIR   = os.path.join(ROOT_DIR, "release_output")
 
-VERSION = "v2.5.0"
+VERSION = "v2.6.0"
 EXE_NAME = "OmniStream_Pro.exe"
 ZIP_NAME = f"OmniStream-Pro-Chrome-Extension-{VERSION}.zip"
 

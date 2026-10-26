@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0 - Dependency Manager
+OmniStream Pro v2.6.0 - Dependency Manager
 Automatically detects and installs required streaming and multiplexing binaries
 (N_m3u8DL-RE and FFmpeg) for high-speed multi-audio stream capture.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -17,8 +17,24 @@ from typing import Tuple, Optional, Callable
 N_M3U8_URL = "https://github.com/nilaoda/N_m3u8DL-RE/releases/download/v0.6.0-beta/N_m3u8DL-RE_v0.6.0-beta_win-x64_20260629.zip"
 FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 
-# SSL context that works on fresh Windows installations without updated certificate stores
+# SSL context — prefer verified connections; disable only as a last resort on
+# systems with a broken/outdated Windows certificate store.
 def _make_ssl_ctx():
+    """Return the most secure SSL context available on this machine."""
+    # 1. Try certifi (best — pinned CA bundle)
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        return ctx
+    except Exception:
+        pass
+    # 2. System default (Windows cert store via ssl.create_default_context)
+    try:
+        ctx = ssl.create_default_context()
+        return ctx
+    except Exception:
+        pass
+    # 3. Last resort: unverified — only reached on severely broken environments
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE

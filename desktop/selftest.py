@@ -58,7 +58,7 @@ def load_bg_helpers():
     ok("popup has Subtitles 1-click button", "sendSubtitlesToDesktop" in popup_js)
     ok("popup has no Clear button",        "clearDetectedBtn"  not in popup_html)
     man = json.load(open(os.path.join(EXT, "manifest.json"), encoding="utf-8"))
-    ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0", "2.4.0", "2.5.0"))
+    ok("manifest version",         man.get("version") in ("2.0.2", "2.1.0", "2.2.0", "2.3.0", "2.4.0", "2.5.0", "2.6.0"))
     ok("manifest webRequest",      "webRequest" in man.get("permissions", []))
     ok("manifest host localhost",  any("127.0.0.1" in h for h in man.get("host_permissions", [])))
     ok("godmode FORCE_SCAN",       "FORCE_SCAN" in open(os.path.join(EXT, "godmode.js"), encoding="utf-8").read())
@@ -259,7 +259,7 @@ def test_gui_declutter():
     ok("GUI: Start Download",                   "Start Download"          in gui)
     ok("GUI: Download All queue",               "Download All"            in gui)
     ok("GUI: progress animation tick",          "_tick_progress_animation" in gui)
-    ok("GUI: footer version v2.5.0",            "v2.5.0" in gui or "v2.4.0" in gui or "v2.3.0" in gui or "v2.2.0" in gui or "v2.1.0" in gui)
+    ok("GUI: footer version v2.6.0",            "v2.6.0" in gui or "v2.5.0" in gui or "v2.4.0" in gui or "v2.3.0" in gui or "v2.2.0" in gui or "v2.1.0" in gui)
     ok("GUI: concurrent: no global flag",       "self.is_downloading = False" not in gui)
     ok("GUI: concurrent: _active_downloads",    "_active_downloads"       in gui)
     ok("GUI: concurrent: per-item cancel",      "_cancel_item"            in gui)
@@ -440,7 +440,8 @@ process.exit(fail ? 1 : 0);
 # ─────────────────────────────────────────────────────────────────────────────
 def test_netflix_resolver():
     from netflix_resolver import (
-        extract_netflix_id, resolve_netflix_title,
+        extract_netflix_id, extract_imdb_id, extract_tmdb_id,
+        clean_show_title, resolve_netflix_title, resolve_media_id_rename,
         get_non_conflicting_path, sanitize_filename
     )
 
@@ -453,6 +454,18 @@ def test_netflix_resolver():
     ok("extract ID: regional URL",      extract_netflix_id("https://www.netflix.com/bd-en/watch/81902147") == "81902147")
     ok("extract ID: curl referer",      extract_netflix_id('curl "https://..." -H "Referer: https://www.netflix.com/watch/81902147"') == "81902147")
     ok("extract ID: None for non-NF",   extract_netflix_id("https://random-site.com/video.mp4") is None)
+
+    # IMDb and TMDB ID extraction
+    ok("extract IMDb: url",             extract_imdb_id("https://www.imdb.com/title/tt18259086/")    == "tt18259086")
+    ok("extract IMDb: filename",        extract_imdb_id("tt18259086.mp4")                           == "tt18259086")
+    ok("extract TMDB: movie url",       extract_tmdb_id("https://themoviedb.org/movie/939243")       == "939243")
+    ok("extract TMDB: tv url",          extract_tmdb_id("https://themoviedb.org/tv/82596")           == "82596")
+    ok("extract TMDB: param",           extract_tmdb_id("tmdb_id=939243")                           == "939243")
+
+    # Title and episode cleaning
+    clean_t, ep = clean_show_title("Emily in Paris S04E01 - La Dolce Emily")
+    ok("clean show title: title",       clean_t == "Emily in Paris")
+    ok("clean show title: episode",     ep == "S04E01")
 
     # Non-conflicting path
     with tempfile.TemporaryDirectory(prefix="omni_test_rename_") as tmp_dir:
@@ -476,6 +489,16 @@ def test_netflix_resolver():
     # Live online title resolution (network)
     resolved = resolve_netflix_title("81902147")
     ok("Netflix 81902147 → Sonic the Hedgehog 3 (2024)", resolved == "Sonic the Hedgehog 3 (2024)")
+
+    # Unified ID Rename resolution
+    nf_ren = resolve_media_id_rename("netflix_rename", netflix_id="81902147")
+    ok("Unified Rename: Netflix ID",    nf_ren == "81902147")
+
+    imdb_ren = resolve_media_id_rename("imdb_rename", netflix_id="81902147")
+    ok("Unified Rename: IMDb ID",       imdb_ren == "tt18259086")
+
+    tmdb_ren = resolve_media_id_rename("tmdb_rename", netflix_id="81902147")
+    ok("Unified Rename: TMDB ID",       tmdb_ren == "939243")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -537,9 +560,9 @@ def test_release_binaries_optional():
     out     = os.path.join(ROOT, "release_output")
     portable= os.path.join(out, "OmniStream_Pro.exe")
     setup   = os.path.join(out, "OmniStream_Pro_Setup.exe")
-    zip_v   = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.5.0.zip")
+    zip_v   = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.6.0.zip")
     if not os.path.isfile(zip_v):
-        zip_v = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.4.0.zip")
+        zip_v = os.path.join(out, "OmniStream-Pro-Chrome-Extension-v2.5.0.zip")
     magic   = b"MEI\x0c\x0b\x0a\x0b\x0e"
 
     if os.path.isfile(portable):
@@ -651,7 +674,7 @@ def test_security_drm_platform():
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 60)
-    print("  OmniStream Pro v2.5.0 — Self-Test Suite")
+    print("  OmniStream Pro v2.6.0 — Self-Test Suite")
     print("=" * 60)
     print()
 

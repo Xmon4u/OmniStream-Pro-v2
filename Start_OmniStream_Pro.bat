@@ -1,5 +1,5 @@
 @echo off
-title OmniStream Pro v2.0 - Universal Stream Downloader
+title OmniStream Pro v2.6.0 - Universal Stream Downloader
 cd /d "%~dp0"
 
 if exist "release_output\OmniStream_Pro.exe" (

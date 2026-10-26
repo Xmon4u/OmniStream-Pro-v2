@@ -1,4 +1,4 @@
-// OmniStream Pro v2.0.0 — Background Service Worker
+// OmniStream Pro v2.6.0 — Background Service Worker
 // High performance media sniffer with IDM desktop bridge communication.
 
 const tabMediaMap = new Map(); // tabId -> MediaItem[]
@@ -7,16 +7,20 @@ const BRIDGE_URL = 'http://127.0.0.1:28795';
 let cachedBridgeToken = '';
 async function getBridgeToken() {
   if (cachedBridgeToken) return cachedBridgeToken;
+  // 1. Try bridge_token.json (written by desktop app on startup)
   try {
     const res = await fetch(chrome.runtime.getURL('bridge_token.json'));
     if (res.ok) {
       const data = await res.json();
-      if (data && data.token) {
+      if (data && data.token && !data.token.startsWith('GENERATED_AT_RUNTIME')) {
         cachedBridgeToken = data.token;
+        // Persist to storage so next service worker restart doesn't need to re-read the file
+        chrome.storage.local.set({ bridgeToken: cachedBridgeToken }).catch(() => {});
         return cachedBridgeToken;
       }
     }
   } catch (e) {}
+  // 2. Fallback: chrome.storage.local (survives service worker restarts)
   try {
     const stored = await chrome.storage.local.get('bridgeToken');
     if (stored && stored.bridgeToken) {
@@ -308,8 +312,17 @@ function captureFromRequest(details, extra) {
     mediaItem.title = tab.title || mediaItem.title;
     try { mediaItem.domain = new URL(tab.url || url).hostname; } catch (e) {}
     if (tab.url) {
-      const nMatch = tab.url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i);
+      const nMatch = tab.url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i)
+        || tab.url.match(/(?:watch|title|movie|series)\/(\d{6,10})/i)
+        || tab.url.match(/(?:movieid|titleid|netflix_id)[=:_\-](\d{6,10})/i);
       if (nMatch) mediaItem.netflixId = nMatch[1];
+
+      const imdbMatch = tab.url.match(/\b(tt\d{7,10})\b/i);
+      if (imdbMatch) mediaItem.imdbId = imdbMatch[1].toLowerCase();
+
+      const tmdbMatch = tab.url.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i)
+        || tab.url.match(/(?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+)/i);
+      if (tmdbMatch) mediaItem.tmdbId = tmdbMatch[1];
     }
     persistTab(details.tabId, mediaList);
   });

@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0
+OmniStream Pro v2.6.0
 Universal Multi-Audio HLS/M3U8 Stream Downloader & Multiplexer
 Features: IDM-Style Batch Queue, "Download All", Extension Bridge, and Multi-Audio MKV Muxing.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -41,7 +41,14 @@ from setup_dependencies import ensure_dependencies
 from bridge_server import BridgeServer
 from ui_icons import apply_window_icon, build_icon_set
 from window_chrome import RoundedFrame
-from netflix_resolver import extract_netflix_id, resolve_netflix_title, get_non_conflicting_path
+from netflix_resolver import (
+    extract_netflix_id,
+    extract_imdb_id,
+    extract_tmdb_id,
+    resolve_netflix_title,
+    resolve_media_id_rename,
+    get_non_conflicting_path,
+)
 from extension_manager import (
     deploy_extension_files,
     is_extension_installed,
@@ -443,11 +450,11 @@ class ExtensionSetupDialog(ctk.CTkToplevel):
 
 
 class OmniStreamApp(ctk.CTk):
-    """OmniStream Pro v2.0.0 Main Application Window."""
+    """OmniStream Pro v2.5.0 Main Application Window."""
 
     def __init__(self):
         super().__init__()
-        self.title("OmniStream Pro v2.3 — IDM-Grade Stream Downloader")
+        self.title("OmniStream Pro v2.6.0 — IDM-Grade Stream Downloader")
 
         # Responsive sizing: generous height so Download Queue is large, clear, and spacious
         self.update_idletasks()
@@ -706,7 +713,7 @@ class OmniStreamApp(ctk.CTk):
         self.header_title.pack(side="left")
 
         self.header_version = ctk.CTkLabel(
-            title_box, text=" v2.5.0 ",
+            title_box, text=" v2.6.0 ",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             fg_color=BG_CARD2, text_color=TEXT_MUTED,
             corner_radius=4, padx=5, pady=1
@@ -1115,10 +1122,10 @@ class OmniStreamApp(ctk.CTk):
 
         self.mode_menu = ctk.CTkSegmentedButton(
             mode_box,
-            values=["Normal Mode", "Sub Merge Mode", "Netflix Rename Mode"],
+            values=["Normal Mode", "Sub Merge Mode", "Netflix Rename", "TMDB ID Rename", "IMDb ID Rename"],
             command=self._on_mode_changed,
             height=30,
-            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_MAIN, size=10, weight="bold"),
             selected_color=ACCENT_PRIMARY,
             selected_hover_color=ACCENT_HOVER,
             unselected_color=BG_INPUT,
@@ -1204,7 +1211,31 @@ class OmniStreamApp(ctk.CTk):
 
     def _on_mode_changed(self, value: str):
         val_low = value.lower()
-        if "sub" in val_low or "merge" in val_low:
+        if "tmdb" in val_low:
+            self.download_mode = "tmdb_rename"
+            self.embed_subs_var.set(True)
+            self.mode_hint_lbl.configure(
+                text="TMDB ID Mode: Identifies movie & auto-renames completed file to TMDB ID (e.g. 939243.mkv).",
+                text_color=ACCENT_CYAN
+            )
+            self._log("[Mode] Switched to TMDB ID Rename Mode — will resolve TMDB ID & auto-rename upon download completion.")
+        elif "imdb" in val_low:
+            self.download_mode = "imdb_rename"
+            self.embed_subs_var.set(True)
+            self.mode_hint_lbl.configure(
+                text="IMDb ID Mode: Identifies movie & auto-renames completed file to IMDb ID (e.g. tt18259086.mkv).",
+                text_color=ACCENT_AMBER
+            )
+            self._log("[Mode] Switched to IMDb ID Rename Mode — will resolve IMDb ID & auto-rename upon download completion.")
+        elif "netflix" in val_low:
+            self.download_mode = "netflix_rename"
+            self.embed_subs_var.set(True)
+            self.mode_hint_lbl.configure(
+                text="Netflix Mode: Auto-identifies ID & renames completed file to Netflix ID (e.g. 81902147.mkv).",
+                text_color=ACCENT_CYAN
+            )
+            self._log("[Mode] Switched to Netflix Rename Mode — will detect Netflix ID & auto-rename upon download completion.")
+        elif "sub" in val_low or "merge" in val_low:
             self.download_mode = "sub_merge"
             self.embed_subs_var.set(True)
             self.mode_hint_lbl.configure(
@@ -1212,14 +1243,6 @@ class OmniStreamApp(ctk.CTk):
                 text_color=ACCENT_CYAN
             )
             self._log("[Mode] Switched to Sub Merge Mode — video, all multi-audio tracks, and subtitles will be merged together into MKV.")
-        elif "netflix" in val_low:
-            self.download_mode = "netflix_rename"
-            self.embed_subs_var.set(True)
-            self.mode_hint_lbl.configure(
-                text="Netflix Mode: Auto-identifies ID & renames to official movie/series title with video, multi-audio & subtitles.",
-                text_color=ACCENT_CYAN
-            )
-            self._log("[Mode] Switched to Netflix Rename Mode — will detect Netflix ID & auto-rename upon download completion.")
         else:
             self.download_mode = "normal"
             self.embed_subs_var.set(False)
@@ -1231,8 +1254,12 @@ class OmniStreamApp(ctk.CTk):
 
     def set_download_mode(self, mode: str):
         m = str(mode).lower()
-        if "netflix" in m:
-            display_name = "Netflix Rename Mode"
+        if "tmdb" in m:
+            display_name = "TMDB ID Rename"
+        elif "imdb" in m:
+            display_name = "IMDb ID Rename"
+        elif "netflix" in m:
+            display_name = "Netflix Rename"
         elif "sub" in m or "merge" in m:
             display_name = "Sub Merge Mode"
         else:
@@ -1568,7 +1595,7 @@ class OmniStreamApp(ctk.CTk):
 
         ctk.CTkButton(
             footer,
-            text="OmniStream Pro v2.5.0  •  Developed by XMON4U  •  GitHub Repository",
+            text="OmniStream Pro v2.6.0  •  Developed by XMON4U  •  GitHub Repository",
             font=ctk.CTkFont(family=FONT_MAIN, size=10),
             text_color=TEXT_MUTED, fg_color="transparent",
             hover_color=BG_CARD, cursor="hand2",
@@ -2022,6 +2049,8 @@ class OmniStreamApp(ctk.CTk):
         auto_start = data.get("autoStart", False)
         mode = data.get("mode", "")
         netflix_id = data.get("netflixId", "")
+        imdb_id = data.get("imdbId", "")
+        tmdb_id = data.get("tmdbId", "")
 
         # Check if this is a 1-click subtitle download job from the Chrome extension
         is_sub_job = bool(data.get("isSubtitleJob") or str(data.get("type", "")).lower() == "subtitles")
@@ -2043,11 +2072,15 @@ class OmniStreamApp(ctk.CTk):
             custom_title=title,
             auto_show_tab=True,
             mode=mode,
-            netflix_id=netflix_id
+            netflix_id=netflix_id,
+            imdb_id=imdb_id,
+            tmdb_id=tmdb_id
         )
         self._log(f"\n[Extension Bridge] Received stream: {title or 'Video Stream'}")
-        if item.get("mode") == "netflix_rename":
-            self._log(f"  Mode: Netflix Rename Mode (ID: {item.get('netflix_id') or 'Detecting...'})")
+        if item.get("mode") in ("netflix_rename", "tmdb_rename", "imdb_rename"):
+            mode_lbl = "Netflix Rename" if item["mode"] == "netflix_rename" else ("TMDB ID Rename" if item["mode"] == "tmdb_rename" else "IMDb ID Rename")
+            detected_id = item.get("netflix_id") or item.get("imdb_id") or item.get("tmdb_id") or "Detecting..."
+            self._log(f"  Mode: {mode_lbl} (ID: {detected_id})")
         self._log(f"  Source queued for IDM batch download.")
 
         if auto_start:
@@ -2062,13 +2095,17 @@ class OmniStreamApp(ctk.CTk):
             curl_or_url = it.get("curl") or it.get("url", "")
             mode = it.get("mode", "")
             netflix_id = it.get("netflixId", "")
+            imdb_id = it.get("imdbId", "")
+            tmdb_id = it.get("tmdbId", "")
             if curl_or_url:
                 self._add_to_queue(
                     raw_input=curl_or_url,
                     custom_title=title,
                     auto_show_tab=False,
                     mode=mode,
-                    netflix_id=netflix_id
+                    netflix_id=netflix_id,
+                    imdb_id=imdb_id,
+                    tmdb_id=tmdb_id
                 )
                 added_count += 1
 
@@ -2083,7 +2120,9 @@ class OmniStreamApp(ctk.CTk):
         custom_title: str = "",
         auto_show_tab: bool = False,
         mode: str = "",
-        netflix_id: str = ""
+        netflix_id: str = "",
+        imdb_id: str = "",
+        tmdb_id: str = ""
     ):
         res_raw = self.res_menu.get().lower()
         if "1080p" in res_raw:
@@ -2115,17 +2154,27 @@ class OmniStreamApp(ctk.CTk):
         cleaned_custom = re.sub(r'\.(m3u8|mpd|mp4|webm|mkv|m4s)(\?.*)?$', '', custom_title.strip(), flags=re.IGNORECASE).strip()
 
         detected_nid = netflix_id or extract_netflix_id(cleaned_custom) or extract_netflix_id(raw_input)
-        is_user_explicit_title = bool(cleaned_custom and not cleaned_custom.isdigit() and cleaned_custom.lower() not in ("video", "player"))
+        detected_imdb = imdb_id or extract_imdb_id(cleaned_custom) or extract_imdb_id(raw_input)
+        detected_tmdb = tmdb_id or extract_tmdb_id(cleaned_custom) or extract_tmdb_id(raw_input)
+
+        is_user_explicit_title = bool(
+            cleaned_custom and not cleaned_custom.isdigit() and not cleaned_custom.lower().startswith("tt")
+            and cleaned_custom.lower() not in ("video", "player")
+        )
 
         if cleaned_custom:
             display_title = cleaned_custom
         elif item_mode == "netflix_rename" and detected_nid:
             display_title = f"{detected_nid}"
+        elif item_mode == "imdb_rename" and (detected_imdb or detected_nid):
+            display_title = f"{detected_imdb or detected_nid}"
+        elif item_mode == "tmdb_rename" and (detected_tmdb or detected_nid):
+            display_title = f"{detected_tmdb or detected_nid}"
         else:
             display_title = f"OmniStream_{len(self.queue_items) + 1}"
 
         embed_subs = getattr(self, "embed_subs_var", None)
-        is_sub_mode = item_mode in ("sub_merge", "netflix_rename")
+        is_sub_mode = item_mode in ("sub_merge", "netflix_rename", "tmdb_rename", "imdb_rename")
         include_subs = is_sub_mode or (embed_subs.get() if embed_subs is not None else False)
 
         fmt_raw = self.sub_format_menu.get().upper()
@@ -2160,7 +2209,10 @@ class OmniStreamApp(ctk.CTk):
             "progress_pct": 0.0,
             "progress_text": "Ready in queue",
             "mode": item_mode,
-            "netflix_id": detected_nid if item_mode == "netflix_rename" else None,
+            "netflix_id": detected_nid,
+            "imdb_id": detected_imdb,
+            "tmdb_id": detected_tmdb,
+            "resolved_target": None,
             "resolved_title": None,
         }
         self.queue_items.append(item)
@@ -2239,6 +2291,18 @@ class OmniStreamApp(ctk.CTk):
                     title_row, text=" NETFLIX ",
                     font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
                     fg_color="#881337", text_color="#fecdd3", corner_radius=4, padx=5, pady=1
+                ).pack(side="left", padx=(0, 6))
+            elif item.get("mode") == "tmdb_rename":
+                ctk.CTkLabel(
+                    title_row, text=" TMDB ID ",
+                    font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
+                    fg_color="#0e7490", text_color="#cffafe", corner_radius=4, padx=5, pady=1
+                ).pack(side="left", padx=(0, 6))
+            elif item.get("mode") == "imdb_rename":
+                ctk.CTkLabel(
+                    title_row, text=" IMDB ID ",
+                    font=ctk.CTkFont(family=FONT_MAIN, size=9, weight="bold"),
+                    fg_color="#78350f", text_color="#fef3c7", corner_radius=4, padx=5, pady=1
                 ).pack(side="left", padx=(0, 6))
             elif item.get("mode") == "sub_merge" or item.get("include_subtitles"):
                 ctk.CTkLabel(
@@ -2943,27 +3007,34 @@ class OmniStreamApp(ctk.CTk):
             saved_out = None
             try:
                 item_mode = item.get("mode") or self.download_mode
-                is_netflix_mode = (item_mode == "netflix_rename")
-                netflix_id = None
-                resolved_title = None
+                is_rename_mode = item_mode in ("netflix_rename", "tmdb_rename", "imdb_rename")
+                target_id_rename = None
 
-                if is_netflix_mode:
+                if is_rename_mode:
                     if item.get("user_specified_title"):
-                        self._log(f"\n[Netflix Mode] User custom title preserved: '{item['title']}'")
+                        self._log(f"\n[{item_mode}] User custom title preserved: '{item['title']}'")
                     else:
-                        netflix_id = item.get("netflix_id") or extract_netflix_id(item["title"]) or extract_netflix_id(item["input"])
-                        if netflix_id:
-                            self._log(f"\n[Netflix Mode] Detected Netflix ID: {netflix_id}")
-                            self._log(f"  Searching online for official movie/series title...")
-                            _progress_cb(0.0, "Resolving title…  ·  0% done  ·  100% left")
-                            resolved_title = resolve_netflix_title(netflix_id, log_callback=self._log)
-                            if resolved_title:
-                                item["resolved_title"] = resolved_title
-                                self._log(f"  [Netflix Mode] Identified title: '{resolved_title}'")
-                            else:
-                                self._log(f"  [Netflix Mode] Notice: Could not resolve title online. Original name will be kept.")
+                        mode_label = (
+                            "Netflix Rename" if item_mode == "netflix_rename"
+                            else ("TMDB ID Rename" if item_mode == "tmdb_rename" else "IMDb ID Rename")
+                        )
+                        self._log(f"\n[{mode_label}] Resolving target ID...")
+                        _progress_cb(0.0, f"Resolving {mode_label}…  ·  0% done  ·  100% left")
+                        target_id_rename = resolve_media_id_rename(
+                            mode=item_mode,
+                            netflix_id=item.get("netflix_id"),
+                            title=item.get("title"),
+                            raw_input=item.get("input"),
+                            imdb_id=item.get("imdb_id"),
+                            tmdb_id=item.get("tmdb_id"),
+                            log_callback=self._log
+                        )
+                        if target_id_rename:
+                            item["resolved_target"] = target_id_rename
+                            item["title"] = target_id_rename
+                            self._log(f"  [{mode_label}] Identified target ID: '{target_id_rename}'")
                         else:
-                            self._log(f"\n[Netflix Mode] Notice: No Netflix ID detected in source.")
+                            self._log(f"  [{mode_label}] Notice: Could not resolve target ID online. Original name will be kept.")
 
                 self._log(f"\n[Task] Starting download: {item['title']}")
                 saved_out = engine.run_download(
@@ -2979,27 +3050,36 @@ class OmniStreamApp(ctk.CTk):
                     progress_callback=_progress_cb,
                 )
 
-                # Post-download Netflix rename step
-                if is_netflix_mode and saved_out and os.path.exists(saved_out) and not item.get("user_specified_title"):
-                    target_rename = resolved_title or item.get("resolved_title")
-                    if not target_rename and netflix_id:
-                        target_rename = resolve_netflix_title(netflix_id, log_callback=self._log)
+                # Post-download rename step
+                if is_rename_mode and saved_out and os.path.exists(saved_out) and not item.get("user_specified_title"):
+                    target_rename = target_id_rename or item.get("resolved_target")
+                    if not target_rename:
+                        target_rename = resolve_media_id_rename(
+                            mode=item_mode,
+                            netflix_id=item.get("netflix_id"),
+                            title=item.get("title"),
+                            raw_input=item.get("input"),
+                            imdb_id=item.get("imdb_id"),
+                            tmdb_id=item.get("tmdb_id"),
+                            log_callback=self._log
+                        )
 
                     if target_rename:
                         orig_dir = os.path.dirname(saved_out)
                         orig_ext = os.path.splitext(saved_out)[1]
                         unique_dest = get_non_conflicting_path(orig_dir, f"{target_rename}{orig_ext}")
                         try:
-                            os.rename(saved_out, unique_dest)
-                            self._log(f"\n[Netflix Rename] Auto-renamed successfully:")
-                            self._log(f"  Original : {os.path.basename(saved_out)}")
-                            self._log(f"  Renamed  : {os.path.basename(unique_dest)}")
-                            saved_out = unique_dest
+                            if os.path.abspath(saved_out).lower() != os.path.abspath(unique_dest).lower():
+                                os.rename(saved_out, unique_dest)
+                                self._log(f"\n[Auto-Rename] Renamed successfully:")
+                                self._log(f"  Original : {os.path.basename(saved_out)}")
+                                self._log(f"  Renamed  : {os.path.basename(unique_dest)}")
+                                saved_out = unique_dest
                             item["title"] = target_rename
                         except Exception as ren_exc:
-                            self._log(f"  [Netflix Rename] Warning: Rename failed ({ren_exc}). Original file kept.")
+                            self._log(f"  [Auto-Rename] Warning: Rename failed ({ren_exc}). Original file kept.")
                     else:
-                        self._log(f"\n[Netflix Rename] Original filename preserved: {os.path.basename(saved_out)}")
+                        self._log(f"\n[Auto-Rename] Original filename preserved: {os.path.basename(saved_out)}")
 
                 basename = os.path.basename(saved_out) if saved_out else "output file"
                 _progress_cb(100.0, f"Saved: {basename}")

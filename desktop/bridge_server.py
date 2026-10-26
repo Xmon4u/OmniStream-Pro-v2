@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.0.0 - Extension Localhost Bridge Server
+OmniStream Pro v2.5.0 - Extension Localhost Bridge Server
 Listens on 127.0.0.1:28795 for incoming video stream capture jobs from browser extensions.
 Supports single stream addition, batch multi-link imports, and IDM-style queue synchronization.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -24,12 +24,43 @@ try:
         write_extension_bridge_token,
     )
 except ImportError:
+    # Standalone fallback: generate and persist a real token so the bridge
+    # still authenticates correctly when extension_manager is unavailable.
+    import secrets as _secrets, os as _os
+
+    _FALLBACK_TOKEN_FILE = _os.path.join(
+        _os.environ.get("LOCALAPPDATA", _os.path.expanduser("~")),
+        "OmniStreamPro", "bridge_token.txt"
+    )
+
+    def _load_or_create_token() -> str:
+        try:
+            _os.makedirs(_os.path.dirname(_FALLBACK_TOKEN_FILE), exist_ok=True)
+            if _os.path.isfile(_FALLBACK_TOKEN_FILE):
+                with open(_FALLBACK_TOKEN_FILE, "r", encoding="utf-8") as _f:
+                    _tok = _f.read().strip()
+                    if len(_tok) >= 32:
+                        return _tok
+        except Exception:
+            pass
+        _tok = _secrets.token_hex(24)
+        try:
+            with open(_FALLBACK_TOKEN_FILE, "w", encoding="utf-8") as _f:
+                _f.write(_tok)
+        except Exception:
+            pass
+        return _tok
+
+    _FALLBACK_TOKEN = _load_or_create_token()
+
     def note_extension_heartbeat():
         pass
-    def get_or_create_bridge_token():
-        return "omnistream_local_dev_token"
-    def write_extension_bridge_token():
-        return "omnistream_local_dev_token"
+
+    def get_or_create_bridge_token() -> str:
+        return _FALLBACK_TOKEN
+
+    def write_extension_bridge_token() -> str:
+        return _FALLBACK_TOKEN
 
 BRIDGE_PORT = 28795
 
@@ -160,7 +191,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             response = {
                 "status": "ok",
                 "app": "OmniStream Pro",
-                "version": "2.5.0",
+                "version": "2.6.0",
                 "bridge": "active",
                 "port": BRIDGE_PORT,
                 "authenticated": self._is_authenticated(),
@@ -349,14 +380,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif self.path in ("/mode", "/set_mode"):
             try:
                 raw_mode = str(data.get("mode", "normal")).strip().lower()
-                if "netflix" in raw_mode:
+                if "tmdb" in raw_mode:
+                    new_mode = "tmdb_rename"
+                elif "imdb" in raw_mode:
+                    new_mode = "imdb_rename"
+                elif "netflix" in raw_mode:
                     new_mode = "netflix_rename"
                 elif "sub" in raw_mode or "merge" in raw_mode:
                     new_mode = "sub_merge"
                 elif "normal" in raw_mode:
                     new_mode = "normal"
                 else:
-                    raise ValueError(f"Invalid mode '{raw_mode}'. Permitted: normal, netflix_rename, sub_merge")
+                    raise ValueError(f"Invalid mode '{raw_mode}'. Permitted: normal, netflix_rename, tmdb_rename, imdb_rename, sub_merge")
 
                 if app and hasattr(app, "run_on_main_thread") and hasattr(app, "set_download_mode"):
                     app.run_on_main_thread(lambda: app.set_download_mode(new_mode))

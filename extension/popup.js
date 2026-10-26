@@ -13,6 +13,8 @@ const toastEl = $('toast');
 const modeNormalBtn = $('modeNormalBtn');
 const modeSubMergeBtn = $('modeSubMergeBtn');
 const modeNetflixBtn = $('modeNetflixBtn');
+const modeTmdbBtn = $('modeTmdbBtn');
+const modeImdbBtn = $('modeImdbBtn');
 const clearRefreshBtn = $('clearRefreshBtn');
 const clearRefreshLabel = $('clearRefreshLabel');
 const clearOnlyBtn = $('clearOnlyBtn');
@@ -90,6 +92,10 @@ function audioLabel(item) {
 function setMode(mode, save = true) {
   if (mode === 'netflix_rename') {
     currentDownloadMode = 'netflix_rename';
+  } else if (mode === 'tmdb_rename') {
+    currentDownloadMode = 'tmdb_rename';
+  } else if (mode === 'imdb_rename') {
+    currentDownloadMode = 'imdb_rename';
   } else if (mode === 'sub_merge') {
     currentDownloadMode = 'sub_merge';
   } else {
@@ -98,11 +104,15 @@ function setMode(mode, save = true) {
   if (modeNormalBtn) modeNormalBtn.classList.toggle('active', currentDownloadMode === 'normal');
   if (modeSubMergeBtn) modeSubMergeBtn.classList.toggle('active', currentDownloadMode === 'sub_merge');
   if (modeNetflixBtn) modeNetflixBtn.classList.toggle('active', currentDownloadMode === 'netflix_rename');
+  if (modeTmdbBtn) modeTmdbBtn.classList.toggle('active', currentDownloadMode === 'tmdb_rename');
+  if (modeImdbBtn) modeImdbBtn.classList.toggle('active', currentDownloadMode === 'imdb_rename');
   if (save) {
     chrome.storage.local.set({ omni_download_mode: currentDownloadMode });
     let label = 'Normal Mode';
     if (currentDownloadMode === 'sub_merge') label = 'Sub Merge Mode (Video + Audio + Subs)';
     else if (currentDownloadMode === 'netflix_rename') label = 'Netflix Rename Mode';
+    else if (currentDownloadMode === 'tmdb_rename') label = 'TMDB ID Rename Mode';
+    else if (currentDownloadMode === 'imdb_rename') label = 'IMDb ID Rename Mode';
     showToast(label);
     chrome.runtime.sendMessage({
       action: 'SET_DESKTOP_MODE',
@@ -118,8 +128,26 @@ function extractNetflixId(url) {
   if (m) return m[1];
   const m2 = url.match(/(?:movieid|titleid|netflix_id)[=:_\-](\d{6,10})/i);
   if (m2) return m2[1];
+  const mNetmirror = url.match(/(?:watch|title|movie|series)\/(\d{6,10})/i);
+  if (mNetmirror) return mNetmirror[1];
   const m3 = url.match(/\b(\d{7,9})\b/);
   if (m3) return m3[1];
+  return null;
+}
+
+function extractImdbId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/\b(tt\d{7,10})\b/i);
+  if (m) return m[1].toLowerCase();
+  return null;
+}
+
+function extractTmdbId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+  if (m) return m[1];
+  const m2 = url.match(/(?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+)/i);
+  if (m2) return m2[1];
   return null;
 }
 
@@ -152,6 +180,8 @@ async function init() {
   if (modeNormalBtn) modeNormalBtn.onclick = () => setMode('normal', true);
   if (modeSubMergeBtn) modeSubMergeBtn.onclick = () => setMode('sub_merge', true);
   if (modeNetflixBtn) modeNetflixBtn.onclick = () => setMode('netflix_rename', true);
+  if (modeTmdbBtn) modeTmdbBtn.onclick = () => setMode('tmdb_rename', true);
+  if (modeImdbBtn) modeImdbBtn.onclick = () => setMode('imdb_rename', true);
 
   if (clearRefreshBtn) clearRefreshBtn.onclick = clearAndRefreshTab;
   if (clearOnlyBtn) clearOnlyBtn.onclick = clearOnlyStreams;
@@ -192,6 +222,7 @@ function runGodScan(showFeedback) {
 function loadDetectedStreams() {
   if (!currentTabId) return;
   chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: currentTabId }, (res) => {
+    if (chrome.runtime.lastError) return; // Service worker asleep or extension reloaded
     if (res && res.success) {
       detectedStreams = res.list || [];
       renderDetected();
@@ -201,6 +232,7 @@ function loadDetectedStreams() {
 
 function checkBridge() {
   chrome.runtime.sendMessage({ action: 'CHECK_OMNISTREAM_BRIDGE' }, (res) => {
+    if (chrome.runtime.lastError) return; // Service worker not ready
     const connected = !!(res && res.connected);
     const authed = !!(connected && res.data && res.data.authenticated !== false);
     bridgeStatusEl.classList.toggle('connected', connected && authed);
@@ -247,14 +279,29 @@ function renderDetected(isRefreshing = false) {
       ? `<div class="url" title="${escapeHtml(langs)}">${escapeHtml(langs)}</div>`
       : '';
     const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
-    const netflixPill = (currentDownloadMode === 'netflix_rename' && nid)
-      ? `<span class="kind" style="background:#e50914;color:#fff;border-color:#b91c1c;font-weight:700;">Netflix ID: ${escapeHtml(nid)}</span>`
-      : '';
+    const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
+    const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
+
+    let modePill = '';
+    if (currentDownloadMode === 'netflix_rename') {
+      modePill = nid
+        ? `<span class="kind" style="background:#e50914;color:#fff;border-color:#b91c1c;font-weight:700;">Netflix ID: ${escapeHtml(nid)}</span>`
+        : `<span class="kind" style="background:#881337;color:#fecdd3;font-weight:600;">Netflix Mode</span>`;
+    } else if (currentDownloadMode === 'tmdb_rename') {
+      modePill = tmdbId
+        ? `<span class="kind" style="background:#01b4e4;color:#032541;border-color:#0284c7;font-weight:700;">TMDB ID: ${escapeHtml(tmdbId)}</span>`
+        : `<span class="kind" style="background:#0e7490;color:#cffafe;font-weight:600;">TMDB ID Mode</span>`;
+    } else if (currentDownloadMode === 'imdb_rename') {
+      modePill = imdbId
+        ? `<span class="kind" style="background:#f5c518;color:#000;border-color:#d97706;font-weight:700;">IMDb: ${escapeHtml(imdbId)}</span>`
+        : `<span class="kind" style="background:#78350f;color:#fef3c7;font-weight:600;">IMDb ID Mode</span>`;
+    }
+
     card.innerHTML = `
       <div class="card-top">
         ${playIcon}
         <div class="title" title="${url}">${label}</div>
-        ${netflixPill}
+        ${modePill}
         <span class="kind">${kindLabel(item)} · ${audioLabel(item)}</span>
       </div>
       ${langLine}
@@ -290,6 +337,8 @@ function copyLink(url) {
 
 function sendToDesktop(item, btn) {
   const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
+  const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
+  const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
   const payload = {
     url: item.url,
     title: fileLabel(item.url),
@@ -301,9 +350,15 @@ function sendToDesktop(item, btn) {
     size: item.size || 0,
     type: item.type || 'Stream',
     mode: currentDownloadMode,
-    netflixId: nid || undefined
+    netflixId: nid || undefined,
+    imdbId: imdbId || undefined,
+    tmdbId: tmdbId || undefined
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
+    if (chrome.runtime.lastError) {
+      showToast('Extension error — try again');
+      return;
+    }
     if (res && res.success) {
       showToast('Sent to OmniStream');
       if (btn) {
@@ -323,6 +378,8 @@ function sendToDesktop(item, btn) {
 
 function sendSubtitlesToDesktop(item, btn) {
   const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
+  const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
+  const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
   const payload = {
     url: item.url,
     title: fileLabel(item.url),
@@ -335,9 +392,15 @@ function sendSubtitlesToDesktop(item, btn) {
     type: 'subtitles',
     autoStart: true,
     mode: currentDownloadMode,
-    netflixId: nid || undefined
+    netflixId: nid || undefined,
+    imdbId: imdbId || undefined,
+    tmdbId: tmdbId || undefined
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
+    if (chrome.runtime.lastError) {
+      showToast('Extension error — try again');
+      return;
+    }
     if (res && res.success) {
       showToast('Subtitles sent to OmniStream');
       if (btn) {

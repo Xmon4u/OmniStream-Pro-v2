@@ -1,3 +1,35 @@
+## OmniStream Pro v2.6.0 — Multi-Mode Title Resolver (Netflix, IMDb, TMDB), Native C++ Core & Modern Theme
+
+Release notes for the desktop app + Chrome extension suite.
+
+---
+
+### ✨ What's new in v2.6.0
+
+#### 🎯 Multi-Mode Title Auto-Renamer (Netflix, IMDb, TMDB)
+- **Three Dedicated Media Modes** — Added full support for selecting and switching between **Netflix Mode**, **IMDb Mode**, and **TMDB Mode** (alongside Normal Mode and Sub Merge Mode).
+- **IMDb ID Identification & Online Resolution** — Automatically detects IMDb IDs (`tt1375666`, etc.) from URLs, request headers, cURL queries, or filenames. Queries Wikidata SPARQL & DuckDuckGo/IMDb APIs to resolve the official title, release year, and season/episode tags (e.g. `tt1375666_S02E04` → `Inception (2010) S02E04.mkv`).
+- **TMDB ID Identification & Online Resolution** — Automatically detects TMDB movie and TV IDs (e.g., `movie/939243` or `939243`), resolves title and year online, and applies episode markers accurately.
+- **Bi-Directional Mode Sync** — Mode changes selected in the desktop app immediately reflect in the extension, and mode changes picked in the extension popup automatically sync back to the desktop application via `/set_mode` and `/health` endpoints.
+
+#### 💎 Sleek Modern UI & Glowing Dark Theme Update
+- **Refreshed Visual Aesthetics** — Deep obsidian glassmorphic palette with brand-accented glowing mode buttons (Crimson for Netflix, Cyan/Teal for TMDB, Golden Yellow for IMDb, Emerald for Sub Merge, and Indigo for Normal).
+- **High-DPI Vector Window Controls** — Implemented custom anti-aliased vector `CaptionButton` components in C++ eliminating font and scaling glitches during minimize, maximize/restore, and close operations.
+- **Micro-Animations & Smooth Feedback** — Smooth hover states, glowing borders, active tab elevation, and instant status toasts.
+
+#### ⚡ Native C++ High-Performance Core Engine
+- **Visual Studio 2022 MSVC Build** — Complete native C++17 engine with WinHTTP streaming, Win32 BCrypt AES hardware acceleration, and integrated bridge server.
+- **Automated Self-Test Coverage** — 23 C++ unit & integration tests, 27 live bridge integration tests, and 150+ comprehensive diagnostic tests passing 100%.
+
+#### 📦 Release Artifacts for v2.6.0
+1. `OmniStream_Pro_Setup.exe` — Full Windows setup installer with shortcut creation and uninstaller registry
+2. `OmniStream_Pro.exe` — Standalone portable Windows executable (ready-to-run, zero install)
+3. `OmniStream-Pro-Chrome-Extension-v2.6.0.zip` — Chrome/Edge browser extension package (Manifest V3)
+4. `N_m3u8DL-RE.exe` — Pre-bundled high-speed HLS/DASH downloader engine CLI binary
+5. `uninstall.exe` — Native Windows uninstaller executable with Control Panel integration
+
+---
+
 ## OmniStream Pro v2.5.0 — Intelligent "Clear & Refresh" Sniffer, GraphQL Season Resolver & Synchronized Suite
 
 Release notes for the desktop app + Chrome extension suite.

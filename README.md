@@ -1,4 +1,4 @@
-# OmniStream Pro v2.5.0  Universal Stream Downloader & Extension Suite
+# OmniStream Pro v2.6.0 — Universal Stream Downloader & Extension Suite
 
 <div align="center">
 
@@ -6,11 +6,11 @@
 
 ### Universal Multi-Audio HLS/M3U8 Stream Downloader & Browser Bridge
 
-**High-performance stream download suite with concurrent multi-file downloads, browser extension integration, and real-time progress tracking.**
+**High-performance stream download suite with concurrent multi-file downloads, browser extension integration, multi-mode title resolver (Netflix, IMDb, TMDB), and real-time progress tracking.**
 
-[![Release](https://img.shields.io/badge/Release-v2.5.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
+[![Release](https://img.shields.io/badge/Release-v2.6.0-6366f1?style=for-the-badge&logo=github)](https://github.com/Xmon4u/OmniStream-Pro-v2/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-06b6d4?style=for-the-badge&logo=windows)](https://github.com/Xmon4u/OmniStream-Pro-v2)
-[![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3%20v2.5.0-10b981?style=for-the-badge&logo=googlechrome)](extension)
+[![Extension](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3%20v2.6.0-10b981?style=for-the-badge&logo=googlechrome)](extension)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
 </div>
@@ -19,7 +19,7 @@
 
 ## Overview
 
-**OmniStream Pro v2.5.0** is an all-in-one media downloading suite combining a Windows desktop application and a Chrome/Edge browser extension.
+**OmniStream Pro v2.6.0** is an all-in-one media downloading suite combining a Windows desktop application (with native C++ core and Python engine) and a Chrome/Edge browser extension.
 
 Capture adaptive HLS/M3U8 and DASH video streams, automatically preserve all available multi-language audio tracks, and multiplex them into a single `.mkv` container with no quality loss. Download multiple files simultaneously, each with its own real-time progress bar, speed indicator, and individual cancel button.
 

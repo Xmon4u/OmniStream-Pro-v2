@@ -29,7 +29,7 @@ body.theme-black {
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  width: 340px;
+  width: 360px;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
@@ -124,7 +124,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 3px;
-  gap: 3px;
+  gap: 2px;
 }
 
 .mode-tab {
@@ -133,13 +133,14 @@ body {
   border: none;
   color: var(--muted);
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  padding: 5px 8px;
+  padding: 5px 3px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
   text-align: center;
+  white-space: nowrap;
 }
 
 .mode-tab:hover {
@@ -149,15 +150,32 @@ body {
 .mode-tab.active {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.45);
+  transform: translateY(-0.5px);
 }
 
 .mode-tab.active[data-mode="sub_merge"] {
-  background: #0f766e;
+  background: linear-gradient(135deg, #0f766e, #0d9488);
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.45);
 }
 
 .mode-tab.active[data-mode="netflix_rename"] {
-  background: #e50914;
+  background: linear-gradient(135deg, #b91c1c, #e50914);
+  box-shadow: 0 2px 8px rgba(229, 9, 20, 0.45);
+}
+
+.mode-tab.active[data-mode="tmdb_rename"] {
+  background: linear-gradient(135deg, #0284c7, #01b4e4);
+  color: #032541;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(1, 180, 228, 0.45);
+}
+
+.mode-tab.active[data-mode="imdb_rename"] {
+  background: linear-gradient(135deg, #d97706, #f5c518);
+  color: #111;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(245, 197, 24, 0.45);
 }
 
 .scan-row {

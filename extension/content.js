@@ -1,4 +1,4 @@
-// OmniStream Pro v2.0.0 - Content Script
+// OmniStream Pro v2.6.0 - Content Script
 
 function injectGodModeScript() {
   try {
@@ -25,7 +25,11 @@ window.addEventListener('message', (event) => {
         url: event.data.url,
         mediaType: event.data.mediaType,
         title: event.data.title || document.title
-      }).catch(() => {});
+      }).catch((err) => {
+        if (typeof console !== 'undefined' && console.debug) {
+          console.debug('[OmniStream Pro] Service worker capture delivery note:', err?.message || err);
+        }
+      });
     }
   }
 });

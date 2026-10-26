@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.5.0 - PyInstaller Standalone Windows Executable Builder
+OmniStream Pro v2.6.0 - PyInstaller Standalone Windows Executable Builder
 Author: XMON4U (https://github.com/Xmon4u)
 """
 
@@ -14,7 +14,7 @@ EXE_NAME    = "OmniStream_Pro"
 
 def build():
     print("=" * 65)
-    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.5.0 Standalone Executable)...")
+    print(f"Building {EXE_NAME}.exe (OmniStream Pro v2.6.0 Standalone Executable)...")
     print("=" * 65)
 
     add_data_args = [

@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.5.0 — Professional Windows Setup Installer
+OmniStream Pro v2.6.0 — Professional Windows Setup Installer
 Installs OmniStream Pro, deploys the Chrome extension, checks extension status,
 creates Desktop and Start Menu shortcuts, and launches the app.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -111,7 +111,7 @@ def create_windows_shortcut(target_exe: str, shortcut_path: str, icon_path: str 
         return False
 
 
-def register_windows_uninstaller(target_dir: str, version: str = "2.5.0") -> bool:
+def register_windows_uninstaller(target_dir: str, version: str = "2.6.0") -> bool:
     """Register OmniStream Pro in Windows Registry so it appears in Control Panel and Settings."""
     try:
         import winreg

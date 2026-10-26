@@ -47,7 +47,7 @@ class MockDesktopApp:
 
 def run_test():
     print("=================================================================")
-    print("  OmniStream Pro v2.5.0 — Live Bridge & Extension Integration Test")
+    print("  OmniStream Pro v2.6.0 — Live Bridge & Extension Integration Test")
     print("=================================================================\n")
 
     app = MockDesktopApp()
@@ -116,7 +116,7 @@ def run_test():
         assert_test("Health check response code == 200", st == 200)
         assert_test("Health check status == ok", js.get("status") == "ok")
         assert_test("Health check app == OmniStream Pro", js.get("app") == "OmniStream Pro")
-        assert_test("Health check version == 2.5.0", js.get("version") == "2.5.0")
+        assert_test("Health check version == 2.6.0", js.get("version") == "2.6.0")
         assert_test("Health check authenticated == True", js.get("authenticated") is True)
         assert_test("CORS origin reflected for chrome-extension://", hd.get("Access-Control-Allow-Origin") == "chrome-extension://omnistream-extension-id")
 
@@ -175,6 +175,14 @@ def run_test():
         st6, hd6, js6 = req("/set_mode", method="POST", body={"mode": "netflix_rename"})
         assert_test("/set_mode returns 200", st6 == 200)
         assert_test("App download_mode changed to netflix_rename", app.download_mode == "netflix_rename")
+
+        st6b, hd6b, js6b = req("/set_mode", method="POST", body={"mode": "tmdb_rename"})
+        assert_test("/set_mode tmdb_rename returns 200", st6b == 200)
+        assert_test("App download_mode changed to tmdb_rename", app.download_mode == "tmdb_rename")
+
+        st6c, hd6c, js6c = req("/set_mode", method="POST", body={"mode": "imdb_rename"})
+        assert_test("/set_mode imdb_rename returns 200", st6c == 200)
+        assert_test("App download_mode changed to imdb_rename", app.download_mode == "imdb_rename")
 
         # Test 7: Remote theme toggle (/set_theme)
         st7, hd7, js7 = req("/set_theme", method="POST", body={"theme": "Midnight Black"})

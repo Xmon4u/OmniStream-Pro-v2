@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.5.0 - High Performance Multi-Stream Engine
+OmniStream Pro v2.6.0 - High Performance Multi-Stream Engine
 Captures HLS (.m3u8), DASH (.mpd), and direct video/audio media streams.
 Concurrent multi-audio track preservation and lossless MKV multiplexing via N_m3u8DL-RE and FFmpeg.
 Author: XMON4U (https://github.com/Xmon4u)
@@ -457,10 +457,21 @@ class OmniStreamEngine:
             if url_match:
                 url = url_match.group(0).rstrip('"\'')
 
-        # Fallback defaults for popular stream CDNs if missing
-        referer = headers.get("referer", "https://net52.cc/")
+        # Fallback defaults: derive origin/referer from stream URL domain if not provided
+        default_origin = ""
+        default_referer = ""
+        if url:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                if parsed.scheme and parsed.netloc:
+                    default_origin = f"{parsed.scheme}://{parsed.netloc}"
+                    default_referer = f"{default_origin}/"
+            except Exception:
+                pass
+
+        referer = headers.get("referer", default_referer)
         user_agent = headers.get("user-agent", DEFAULT_UA)
-        origin = headers.get("origin", "https://net52.cc")
+        origin = headers.get("origin", default_origin)
 
         return {
             "url": url,
@@ -664,8 +675,7 @@ class OmniStreamEngine:
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> str:
         """Execute high-speed concurrent multi-audio stream capture and MKV muxing."""
-        if self._is_aborted:
-            raise RuntimeError("Operation aborted by user.")
+        self._is_aborted = False  # Reset abort flag for each new download run
 
         def log(msg: str):
             if log_callback:
@@ -675,7 +685,7 @@ class OmniStreamEngine:
 
         sep = "━" * 60
         log(sep)
-        log("  OmniStream Pro v2.5.0  •  High-Speed Multi-Audio Engine")
+        log("  OmniStream Pro v2.6.0  •  High-Speed Multi-Audio Engine")
         log(sep)
 
         # Step 1: Verify binaries
@@ -1104,8 +1114,8 @@ class OmniStreamEngine:
         Returns:
             List of absolute paths of saved subtitle files.
         """
-        if self._is_aborted:
-            raise RuntimeError("Operation aborted by user.")
+        self._is_aborted = False  # Reset abort flag for each new download run
+
 
         def log(msg: str):
             if log_callback:

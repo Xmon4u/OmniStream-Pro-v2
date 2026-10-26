@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.3 - Netflix Title Resolver & Intelligent Auto-Renamer
+OmniStream Pro v2.6.0 - Multi-Mode Title Resolver (Netflix, IMDb, TMDB)
 Identifies Netflix IDs from stream URLs, cURLs, headers, or filenames,
 looks up the official movie/series name and release year online via multi-layer
 metadata sources (Netflix Title Page, IMDb, DuckDuckGo, Wikipedia), and safely
@@ -15,7 +15,7 @@ import json
 import urllib.request
 import urllib.parse
 import http.client
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 
 # Valid Windows filename characters only (strip \ / : * ? " < > |)
 _INVALID_FILENAME_CHARS = re.compile(r'[\\/*?:"<>|]')
@@ -84,14 +84,80 @@ def extract_netflix_id(text: str) -> Optional[str]:
     return None
 
 
-def fetch_imdb_metadata(title: str) -> Optional[dict]:
+def extract_imdb_id(text: str) -> Optional[str]:
     """
-    Query IMDb's public suggestion endpoint to verify title and get official release year.
-    Returns dict with 'title' and 'year' if found.
+    Extract canonical IMDb ID (tt followed by 7-10 digits) from text, URLs or parameters.
+    Examples:
+      - 'https://www.imdb.com/title/tt18259086/' -> 'tt18259086'
+      - 'imdb=tt18259086' -> 'tt18259086'
+      - 'tt18259086.mp4' -> 'tt18259086'
     """
+    if not text:
+        return None
+    m = re.search(r'\b(tt\d{7,10})\b', str(text), re.IGNORECASE)
+    if m:
+        return m.group(1).lower()
+    return None
+
+
+def extract_tmdb_id(text: str) -> Optional[str]:
+    """
+    Extract TMDB ID from text, URLs or parameters.
+    Examples:
+      - 'https://www.themoviedb.org/movie/939243' -> '939243'
+      - 'https://www.themoviedb.org/tv/82596' -> '82596'
+      - 'tmdb_id=939243' -> '939243'
+      - 'tmdb-939243' -> '939243'
+    """
+    if not text:
+        return None
+    raw = str(text)
+    m_url = re.search(r'themoviedb\.org/(?:movie|tv)/(\d+)', raw, re.IGNORECASE)
+    if m_url:
+        return m_url.group(1)
+    m_param = re.search(r'(?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+)', raw, re.IGNORECASE)
+    if m_param:
+        return m_param.group(1)
+    return None
+
+
+def clean_show_title(raw_title: str) -> Tuple[str, str]:
+    """
+    Separate base show/movie title and episode tag.
+    Example:
+      'Emily in Paris S04E01 - La Dolce Emily' -> ('Emily in Paris', 'S04E01')
+      'Sonic the Hedgehog 3 (2024)' -> ('Sonic the Hedgehog 3', '')
+    """
+    if not raw_title:
+        return "", ""
+    t = re.sub(r'\(.*?\)', '', str(raw_title)).strip()
+    ep_tag = ""
+    # Match SxxExx
+    m = re.search(r'\b(S\d{1,2}E\d{1,2})\b', t, re.IGNORECASE)
+    if m:
+        ep_tag = m.group(1).upper()
+        t = t[:m.start()].strip()
+    else:
+        # Match Season X Episode Y
+        m2 = re.search(r'\bSeason\s*(\d+)\s*(?:Episode|Chapter)\s*(\d+)\b', t, re.IGNORECASE)
+        if m2:
+            ep_tag = f"S{int(m2.group(1)):02d}E{int(m2.group(2)):02d}"
+            t = t[:m2.start()].strip()
+    return t.rstrip(" -:_"), ep_tag
+
+
+def fetch_imdb_metadata(title: str, year: Optional[str] = None) -> Optional[dict]:
+    """
+    Query IMDb's public suggestion endpoint to verify title, get official release year and IMDb ID.
+    Returns dict with 'title', 'year', 'imdb_id', and 'type' if found.
+    """
+    if not title:
+        return None
     try:
-        clean = re.sub(r'\(.*?\)', '', title).strip()
-        slug = urllib.parse.quote(clean.lower().replace(" ", "_"))
+        clean_title, _ = clean_show_title(title)
+        if not clean_title:
+            clean_title = title.strip()
+        slug = urllib.parse.quote(clean_title.lower().replace(" ", "_"))
         url = f"https://v3.sg.media-imdb.com/suggestion/x/{slug}.json"
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -100,16 +166,121 @@ def fetch_imdb_metadata(title: str) -> Optional[dict]:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             entries = data.get("d", [])
+
+            # Pass 1: Exact title match + year match
             for entry in entries:
-                t = entry.get("l")
+                t = entry.get("l", "")
+                y = entry.get("y")
+                imdb_id = entry.get("id", "")
+                if not imdb_id.startswith("tt"):
+                    continue
+                if t.lower() == clean_title.lower():
+                    if year and y and abs(int(y) - int(year)) <= 1:
+                        return {"title": t, "year": str(y), "imdb_id": imdb_id, "type": entry.get("q", "")}
+
+            # Pass 2: Exact title match (regardless of year, e.g. Dark)
+            for entry in entries:
+                t = entry.get("l", "")
+                y = entry.get("y")
+                imdb_id = entry.get("id", "")
+                if not imdb_id.startswith("tt"):
+                    continue
+                if t.lower() == clean_title.lower():
+                    return {"title": t, "year": str(y) if y else "", "imdb_id": imdb_id, "type": entry.get("q", "")}
+
+            # Pass 3: Close title match with year match
+            for entry in entries:
+                t = entry.get("l", "")
                 y = entry.get("y")
                 q = (entry.get("q") or "").lower()
-                # Accept movies, TV series, mini-series, etc.
-                if t and y and (q in ("feature", "tv series", "tv mini-series", "tv movie", "video", "") or not q):
-                    return {"title": t, "year": str(y)}
+                imdb_id = entry.get("id", "")
+                if not imdb_id.startswith("tt"):
+                    continue
+                if q in ("feature", "tv series", "tv mini-series", "tv movie", "video", "") or not q:
+                    if year and y and abs(int(y) - int(year)) <= 1:
+                        return {"title": t, "year": str(y), "imdb_id": imdb_id, "type": q}
+
+            # Pass 4: Fallback to first valid feature / tv series tt entry
+            for entry in entries:
+                imdb_id = entry.get("id", "")
+                q = (entry.get("q") or "").lower()
+                if imdb_id.startswith("tt") and (q in ("feature", "tv series", "tv mini-series", "tv movie") or not q):
+                    return {"title": entry.get("l", clean_title), "year": str(entry.get("y", "")), "imdb_id": imdb_id, "type": q}
     except Exception:
         pass
     return None
+
+
+def fetch_tmdb_id_from_imdb(imdb_id: str) -> Optional[str]:
+    """
+    Query Wikidata SPARQL to map IMDb ID (P345) to TMDB Movie ID (P4947) or TV ID (P4983).
+    Lightning fast and returns canonical IDs with 100% precision.
+    """
+    if not imdb_id or not imdb_id.startswith("tt"):
+        return None
+    try:
+        query = f'''
+        SELECT ?tmdb_m ?tmdb_tv WHERE {{
+          ?item wdt:P345 "{imdb_id}".
+          OPTIONAL {{ ?item wdt:P4947 ?tmdb_m. }}
+          OPTIONAL {{ ?item wdt:P4983 ?tmdb_tv. }}
+        }}
+        '''
+        url = "https://query.wikidata.org/sparql?query=" + urllib.parse.quote(query) + "&format=json"
+        req = urllib.request.Request(url, headers={"User-Agent": "OmniStreamPro/2.5 (dev@omnistream.pro)"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            bindings = data.get("results", {}).get("bindings", [])
+            for b in bindings:
+                if "tmdb_m" in b:
+                    return b["tmdb_m"]["value"]
+                if "tmdb_tv" in b:
+                    return b["tmdb_tv"]["value"]
+    except Exception:
+        pass
+    return None
+
+
+def fetch_tmdb_id_fallback(title: str, year: Optional[str] = None) -> Optional[str]:
+    """
+    Search fallback via DuckDuckGo for TMDB ID.
+    """
+    if not title:
+        return None
+    try:
+        clean_title, _ = clean_show_title(title)
+        url = "https://lite.duckduckgo.com/lite/"
+        q = f'"{clean_title}" {year or ""} site:themoviedb.org'
+        data = urllib.parse.urlencode({"q": q}).encode()
+        req = urllib.request.Request(url, data=data, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            content = resp.read().decode("utf-8", errors="ignore")
+            m = re.findall(r'themoviedb\.org/(?:movie|tv)/(\d+)', content)
+            if m:
+                return m[0]
+    except Exception:
+        pass
+    return None
+
+
+def fetch_tmdb_id(
+    imdb_id: Optional[str] = None,
+    title: Optional[str] = None,
+    year: Optional[str] = None
+) -> Optional[str]:
+    """
+    Multi-layer TMDB ID resolution.
+    1. Direct mapping via IMDb ID on Wikidata (most accurate).
+    2. Fallback search on DuckDuckGo.
+    """
+    if imdb_id:
+        tid = fetch_tmdb_id_from_imdb(imdb_id)
+        if tid:
+            return tid
+    if title:
+        return fetch_tmdb_id_fallback(title, year)
+    return None
+
 
 
 def fetch_wikipedia_year(title: str) -> Optional[str]:
@@ -355,6 +526,196 @@ def resolve_netflix_title(
     _RESOLVED_CACHE[nid] = final_name
     _log(f"  [Netflix Resolver] Successfully identified: '{final_name}'")
     return final_name
+
+
+# Separate cache for unified media ID renames
+_MEDIA_ID_CACHE = {}
+
+
+def resolve_media_details(
+    netflix_id: Optional[str] = None,
+    title: Optional[str] = None,
+    raw_input: Optional[str] = None,
+    imdb_id: Optional[str] = None,
+    tmdb_id: Optional[str] = None,
+    log_callback: Optional[Callable[[str], None]] = None
+) -> dict:
+    """
+    Comprehensive media metadata aggregator.
+    Given any combination of Netflix ID, title, IMDb ID, or TMDB ID,
+    resolves the full metadata:
+    {
+        "title": "Sonic the Hedgehog 3",
+        "year": "2024",
+        "episode_tag": "S01E01",
+        "netflix_id": "81902147",
+        "imdb_id": "tt18259086",
+        "tmdb_id": "939243"
+    }
+    """
+    def _log(msg: str):
+        if log_callback:
+            log_callback(msg)
+
+    # Extract clean IDs from any provided arguments
+    clean_nf = extract_netflix_id(netflix_id) or extract_netflix_id(title) or extract_netflix_id(raw_input)
+    clean_im = extract_imdb_id(imdb_id) or extract_imdb_id(netflix_id) or extract_imdb_id(title) or extract_imdb_id(raw_input)
+    clean_tm = extract_tmdb_id(tmdb_id) or extract_tmdb_id(netflix_id) or extract_tmdb_id(title) or extract_tmdb_id(raw_input)
+
+    # If a free-text title was passed in netflix_id or raw_input, preserve it as title
+    if not clean_nf and not title:
+        candidate_text = netflix_id or raw_input
+        if candidate_text and not str(candidate_text).startswith("http"):
+            title = candidate_text
+
+    # Extract episode tag from any available text
+    ep_from_input = ""
+    for cand_str in (raw_input, title, netflix_id):
+        if cand_str:
+            _, ep = clean_show_title(str(cand_str))
+            if ep:
+                ep_from_input = ep
+                break
+
+    res = {
+        "title": "",
+        "year": "",
+        "episode_tag": ep_from_input,
+        "netflix_id": clean_nf,
+        "imdb_id": clean_im,
+        "tmdb_id": clean_tm
+    }
+
+    # Step 1: If netflix_id is present, resolve via Netflix Resolver
+    if res["netflix_id"]:
+        nid = res["netflix_id"]
+        netflix_full = resolve_netflix_title(nid, log_callback=_log)
+        if netflix_full:
+            y_m = re.search(r'\((\d{4})\)', netflix_full)
+            if y_m:
+                res["year"] = y_m.group(1)
+            clean_t, ep = clean_show_title(netflix_full)
+            res["title"] = clean_t
+            if ep:
+                res["episode_tag"] = ep
+            elif not res["episode_tag"]:
+                m_ep = re.search(r'\b(S\d{1,2}E\d{1,2})\b', netflix_full, re.I)
+                if m_ep:
+                    res["episode_tag"] = m_ep.group(1).upper()
+
+    # Step 2: If title is still missing, use given title or clean from input
+    if not res["title"] and title:
+        clean_t, ep = clean_show_title(title)
+        res["title"] = clean_t
+        if ep and not res["episode_tag"]:
+            res["episode_tag"] = ep
+
+    # Step 3: Resolve IMDb ID if missing
+    if not res["imdb_id"] and res["title"]:
+        _log(f"  [Media Resolver] Querying IMDb metadata for '{res['title']}'...")
+        imdb_data = fetch_imdb_metadata(res["title"], res["year"])
+        if imdb_data:
+            res["imdb_id"] = imdb_data.get("imdb_id")
+            if not res["year"] and imdb_data.get("year"):
+                res["year"] = imdb_data.get("year")
+            if imdb_data.get("title"):
+                res["title"] = imdb_data["title"]
+
+    # Step 4: Resolve TMDB ID if missing
+    if not res["tmdb_id"]:
+        if res["imdb_id"]:
+            _log(f"  [Media Resolver] Mapping IMDb ID '{res['imdb_id']}' to TMDB ID via Wikidata...")
+            res["tmdb_id"] = fetch_tmdb_id_from_imdb(res["imdb_id"])
+        if not res["tmdb_id"] and res["title"]:
+            _log(f"  [Media Resolver] Fallback querying TMDB ID for '{res['title']}'...")
+            res["tmdb_id"] = fetch_tmdb_id_fallback(res["title"], res["year"])
+
+    return res
+
+
+def resolve_media_id_rename(
+    mode: str,
+    netflix_id: Optional[str] = None,
+    title: Optional[str] = None,
+    raw_input: Optional[str] = None,
+    imdb_id: Optional[str] = None,
+    tmdb_id: Optional[str] = None,
+    log_callback: Optional[Callable[[str], None]] = None
+) -> Optional[str]:
+    """
+    Unified ID Rename Resolver.
+    Returns the exact target filename stem (without extension) according to the selected mode:
+      - 'netflix_rename' : returns Netflix ID (e.g. '81902147' or '81902147_S01E01')
+      - 'tmdb_rename'    : returns TMDB ID (e.g. '939243' or '939243_S01E01')
+      - 'imdb_rename'    : returns IMDb ID (e.g. 'tt18259086' or 'tt18259086_S01E01')
+    Returns None if identification fails so original filename is preserved.
+    """
+    def _log(msg: str):
+        if log_callback:
+            log_callback(msg)
+
+    cache_key = (mode, str(netflix_id or ""), str(title or ""), str(imdb_id or ""), str(tmdb_id or ""))
+    if cache_key in _MEDIA_ID_CACHE:
+        cached = _MEDIA_ID_CACHE[cache_key]
+        _log(f"  [Media Resolver] Using cached ID rename for mode '{mode}': '{cached}'")
+        return cached
+
+    ep_suffix = ""
+
+    if mode == "netflix_rename":
+        nid = extract_netflix_id(netflix_id) or extract_netflix_id(title) or extract_netflix_id(raw_input)
+        if nid:
+            details = resolve_media_details(netflix_id=nid, title=title, raw_input=raw_input, log_callback=_log)
+            if details and details.get("episode_tag"):
+                ep_suffix = f"_{details['episode_tag']}"
+            result = f"{nid}{ep_suffix}"
+            _MEDIA_ID_CACHE[cache_key] = result
+            _log(f"  [Netflix Rename] Resolved Netflix ID: '{result}'")
+            return result
+
+    elif mode == "imdb_rename":
+        direct_imdb = extract_imdb_id(imdb_id) or extract_imdb_id(netflix_id) or extract_imdb_id(title) or extract_imdb_id(raw_input)
+        if direct_imdb:
+            details = resolve_media_details(title=title, raw_input=raw_input, imdb_id=direct_imdb, log_callback=_log)
+            if details and details.get("episode_tag"):
+                ep_suffix = f"_{details['episode_tag']}"
+            result = f"{direct_imdb.lower()}{ep_suffix}"
+            _MEDIA_ID_CACHE[cache_key] = result
+            _log(f"  [IMDb Rename] Using extracted IMDb ID: '{result}'")
+            return result
+
+        details = resolve_media_details(netflix_id=netflix_id, title=title, raw_input=raw_input, log_callback=_log)
+        if details and details.get("imdb_id"):
+            if details.get("episode_tag"):
+                ep_suffix = f"_{details['episode_tag']}"
+            result = f"{details['imdb_id']}{ep_suffix}"
+            _MEDIA_ID_CACHE[cache_key] = result
+            _log(f"  [IMDb Rename] Successfully resolved IMDb ID: '{result}' (Movie: {details.get('title')})")
+            return result
+
+    elif mode == "tmdb_rename":
+        direct_tmdb = extract_tmdb_id(tmdb_id) or extract_tmdb_id(netflix_id) or extract_tmdb_id(title) or extract_tmdb_id(raw_input)
+        if direct_tmdb:
+            details = resolve_media_details(title=title, raw_input=raw_input, tmdb_id=direct_tmdb, log_callback=_log)
+            if details and details.get("episode_tag"):
+                ep_suffix = f"_{details['episode_tag']}"
+            result = f"{direct_tmdb}{ep_suffix}"
+            _MEDIA_ID_CACHE[cache_key] = result
+            _log(f"  [TMDB Rename] Using extracted TMDB ID: '{result}'")
+            return result
+
+        details = resolve_media_details(netflix_id=netflix_id, title=title, raw_input=raw_input, log_callback=_log)
+        if details and details.get("tmdb_id"):
+            if details.get("episode_tag"):
+                ep_suffix = f"_{details['episode_tag']}"
+            result = f"{details['tmdb_id']}{ep_suffix}"
+            _MEDIA_ID_CACHE[cache_key] = result
+            _log(f"  [TMDB Rename] Successfully resolved TMDB ID: '{result}' (Movie: {details.get('title')})")
+            return result
+
+    _log(f"  [Media Resolver] Notice: Could not resolve target ID for mode '{mode}'.")
+    return None
+
 
 
 def get_non_conflicting_path(directory: str, filename_with_ext: str) -> str:

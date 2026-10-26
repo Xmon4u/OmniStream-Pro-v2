@@ -1,5 +1,5 @@
 /**
- * OmniStream Pro v2.0.0 — God Mode Media Sniffer & DevTools Protector
+ * OmniStream Pro v2.6.0 — God Mode Media Sniffer & DevTools Protector
  * Injected into the page's MAIN execution world at document_start.
  * Sniffs HLS, DASH, and direct media streams while neutralizing anti-debugging blocks.
  */
@@ -257,10 +257,27 @@
   }
   setTimeout(deepDOMScan, 2000);
 
-  const observer = new MutationObserver(() => deepDOMScan());
+  let observerDebounceTimer = null;
+  const observer = new MutationObserver(() => {
+    if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
+    observerDebounceTimer = setTimeout(() => {
+      deepDOMScan();
+      // Auto-disconnect once enough streams are captured to avoid CPU spikes
+      // on heavy streaming sites (Netflix, YouTube) with thousands of DOM mutations
+      if (capturedUrls.size >= 10) {
+        observer.disconnect();
+      }
+    }, 400);
+  });
   if (document.documentElement) {
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    // Safety: always disconnect after 30s regardless of capture count
+    setTimeout(() => {
+      if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
+      observer.disconnect();
+    }, 30000);
   }
+
 
   function hookPlayers() {
     if (window.Hls && window.Hls.prototype && !window.Hls.prototype.__omniHooked) {
