@@ -167,6 +167,121 @@ def unregister_windows_uninstaller() -> bool:
         return False
 
 
+def perform_installation_headless(target_dir: str = "", create_shortcuts: bool = True, progress_cb=None) -> bool:
+    """Perform complete C++ native engine installation, extension deployment, shortcuts, and registry."""
+    try:
+        if progress_cb:
+            progress_cb("Preparing destination directory...", 0.2)
+        if not target_dir:
+            target_dir = get_app_data_dir()
+        os.makedirs(target_dir, exist_ok=True)
+
+        # Terminate running app instances to avoid Windows file locks (PermissionError)
+        if sys.platform == "win32":
+            try:
+                subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro.exe"], capture_output=True, creationflags=0x08000000)
+            except Exception:
+                pass
+
+        if progress_cb:
+            progress_cb("Installing C++ Native Engine & Qt Runtime...", 0.4)
+
+        # 1. Copy C++ native desktop application files & deployed Qt runtime
+        cpp_src = os.path.join(INSTALLER_DIR, "cpp_app")
+        if os.path.isdir(cpp_src):
+            for item in os.listdir(cpp_src):
+                s = os.path.join(cpp_src, item)
+                d = os.path.join(target_dir, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(s, d)
+        else:
+            # Fallback to local C++ Release folder
+            cpp_local = os.path.join(INSTALLER_DIR, "C++", "vs_project", "Release")
+            if not os.path.isdir(cpp_local):
+                cpp_local = os.path.join(INSTALLER_DIR, "c++ projects", "vs_project", "Release")
+            if not os.path.isdir(cpp_local):
+                cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "C++", "vs_project", "Release")
+            if not os.path.isdir(cpp_local):
+                cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "c++ projects", "vs_project", "Release")
+            if os.path.isdir(cpp_local):
+                for item in os.listdir(cpp_local):
+                    if item.endswith(".pdb") or item.endswith(".obj") or item.endswith(".tlog"):
+                        continue
+                    s = os.path.join(cpp_local, item)
+                    d = os.path.join(target_dir, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(s, d)
+
+        # Copy bin tools (N_m3u8DL-RE.exe / ffmpeg.exe) to target_dir if not already there
+        for tool_name in ["N_m3u8DL-RE.exe", "ffmpeg.exe", "uninstall.exe", "app_icon.ico", "app_icon.png"]:
+            dst = os.path.join(target_dir, tool_name)
+            if not os.path.isfile(dst):
+                cand_paths = [
+                    os.path.join(INSTALLER_DIR, tool_name),
+                    os.path.join(INSTALLER_DIR, "bin", tool_name),
+                    os.path.join(DESKTOP_DIR, "bin", tool_name),
+                    os.path.join(DESKTOP_DIR, tool_name),
+                ]
+                for cp in cand_paths:
+                    if os.path.isfile(cp):
+                        try:
+                            shutil.copy2(cp, dst)
+                            break
+                        except Exception:
+                            pass
+
+        target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
+        target_uninst = os.path.join(target_dir, "uninstall.exe")
+        icon_file = os.path.join(target_dir, "app_icon.ico")
+
+        # 2. Deploy Chrome Extension
+        if progress_cb:
+            progress_cb("Deploying Chrome Extension...", 0.7)
+        deploy_extension_files()
+
+        # 3. Create Shortcuts
+        if progress_cb:
+            progress_cb("Configuring system shortcuts...", 0.85)
+        if create_shortcuts:
+            target_run = target_exe if os.path.exists(target_exe) else sys.executable
+            desktop_folder = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
+            create_windows_shortcut(
+                target_exe=target_run,
+                shortcut_path=os.path.join(desktop_folder, "OmniStream Pro.lnk"),
+                icon_path=icon_file
+            )
+
+            # Start Menu shortcuts
+            appdata_roaming = os.environ.get("APPDATA", "")
+            if appdata_roaming:
+                start_menu_dir = os.path.join(appdata_roaming, "Microsoft", "Windows", "Start Menu", "Programs", "OmniStream Pro")
+                os.makedirs(start_menu_dir, exist_ok=True)
+                create_windows_shortcut(
+                    target_exe=target_run,
+                    shortcut_path=os.path.join(start_menu_dir, "OmniStream Pro.lnk"),
+                    icon_path=icon_file
+                )
+                if os.path.exists(target_uninst):
+                    create_windows_shortcut(
+                        target_exe=target_uninst,
+                        shortcut_path=os.path.join(start_menu_dir, "Uninstall OmniStream Pro.lnk"),
+                        icon_path=icon_file
+                    )
+
+        # 4. Register in Windows Control Panel / Settings
+        if progress_cb:
+            progress_cb("Registering application in Windows Settings...", 0.95)
+        register_windows_uninstaller(target_dir, version="2.6.0")
+        return True
+    except Exception as exc:
+        print(f"Error during installation: {exc}")
+        return False
+
+
 class OmniStreamInstaller(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -314,126 +429,32 @@ class OmniStreamInstaller(ctk.CTk):
 
         self.after(300, self._perform_install_steps)
 
-def perform_installation_headless(target_dir: str = "", create_shortcuts: bool = True) -> bool:
-    """Perform complete C++ native engine installation, extension deployment, shortcuts, and registry."""
-    try:
-        if not target_dir:
-            target_dir = get_app_data_dir()
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Terminate running app instances to avoid Windows file locks (PermissionError)
-        if sys.platform == "win32":
-            try:
-                subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro.exe"], capture_output=True, creationflags=0x08000000)
-            except Exception:
-                pass
-
-        # 1. Copy C++ native desktop application files & deployed Qt runtime
-        cpp_src = os.path.join(INSTALLER_DIR, "cpp_app")
-        if os.path.isdir(cpp_src):
-            for item in os.listdir(cpp_src):
-                s = os.path.join(cpp_src, item)
-                d = os.path.join(target_dir, item)
-                if os.path.isdir(s):
-                    shutil.copytree(s, d, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(s, d)
-        else:
-            # Fallback to local C++ Release folder
-            cpp_local = os.path.join(INSTALLER_DIR, "C++", "vs_project", "Release")
-            if not os.path.isdir(cpp_local):
-                cpp_local = os.path.join(INSTALLER_DIR, "c++ projects", "vs_project", "Release")
-            if not os.path.isdir(cpp_local):
-                cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "C++", "vs_project", "Release")
-            if not os.path.isdir(cpp_local):
-                cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "c++ projects", "vs_project", "Release")
-            if os.path.isdir(cpp_local):
-                for item in os.listdir(cpp_local):
-                    if item.endswith(".pdb") or item.endswith(".obj") or item.endswith(".tlog"):
-                        continue
-                    s = os.path.join(cpp_local, item)
-                    d = os.path.join(target_dir, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(s, d)
-
-        # Copy bin tools (N_m3u8DL-RE.exe / ffmpeg.exe) to target_dir if not already there
-        for tool_name in ["N_m3u8DL-RE.exe", "ffmpeg.exe", "uninstall.exe", "app_icon.ico", "app_icon.png"]:
-            dst = os.path.join(target_dir, tool_name)
-            if not os.path.isfile(dst):
-                cand_paths = [
-                    os.path.join(INSTALLER_DIR, tool_name),
-                    os.path.join(INSTALLER_DIR, "bin", tool_name),
-                    os.path.join(DESKTOP_DIR, "bin", tool_name),
-                    os.path.join(DESKTOP_DIR, tool_name),
-                ]
-                for cp in cand_paths:
-                    if os.path.isfile(cp):
-                        try:
-                            shutil.copy2(cp, dst)
-                            break
-                        except Exception:
-                            pass
-
-        target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
-        target_uninst = os.path.join(target_dir, "uninstall.exe")
-        icon_file = os.path.join(target_dir, "app_icon.ico")
-
-        # 2. Deploy Chrome Extension
-        deploy_extension_files()
-
-        # 3. Create Shortcuts
-        if create_shortcuts:
-            target_run = target_exe if os.path.exists(target_exe) else sys.executable
-            desktop_folder = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
-            create_windows_shortcut(
-                target_exe=target_run,
-                shortcut_path=os.path.join(desktop_folder, "OmniStream Pro.lnk"),
-                icon_path=icon_file
-            )
-
-            # Start Menu shortcuts
-            appdata_roaming = os.environ.get("APPDATA", "")
-            if appdata_roaming:
-                start_menu_dir = os.path.join(appdata_roaming, "Microsoft", "Windows", "Start Menu", "Programs", "OmniStream Pro")
-                os.makedirs(start_menu_dir, exist_ok=True)
-                create_windows_shortcut(
-                    target_exe=target_run,
-                    shortcut_path=os.path.join(start_menu_dir, "OmniStream Pro.lnk"),
-                    icon_path=icon_file
-                )
-                if os.path.exists(target_uninst):
-                    create_windows_shortcut(
-                        target_exe=target_uninst,
-                        shortcut_path=os.path.join(start_menu_dir, "Uninstall OmniStream Pro.lnk"),
-                        icon_path=icon_file
-                    )
-
-        # 4. Register in Windows Control Panel / Settings
-        register_windows_uninstaller(target_dir, version="2.6.0")
-        return True
-    except Exception as exc:
-        print(f"Error during installation: {exc}")
-        return False
-
-
     def _perform_install_steps(self):
         try:
-            self.status_lbl.configure(text="Installing C++ Native Engine & Qt Runtime...")
-            self.pbar.set(0.3)
-            self.update_idletasks()
+            def _progress_update(msg: str, val: float):
+                try:
+                    if hasattr(self, "status_lbl") and self.status_lbl.winfo_exists():
+                        self.status_lbl.configure(text=msg)
+                    if hasattr(self, "pbar") and self.pbar.winfo_exists():
+                        self.pbar.set(val)
+                    self.update()
+                except Exception:
+                    pass
+
+            target_dir = self.install_dir
+            create_sc = bool(self.create_desktop_sc.get())
 
             ok = perform_installation_headless(
-                target_dir=self.install_dir,
-                create_shortcuts=self.create_desktop_sc.get()
+                target_dir=target_dir,
+                create_shortcuts=create_sc,
+                progress_cb=_progress_update
             )
             if not ok:
                 raise RuntimeError("Failed to extract files or register application.")
 
             self.pbar.set(1.0)
             self.status_lbl.configure(text="Finalizing setup...")
-            self.update_idletasks()
+            self.update()
 
             self._show_step_finish(get_deployed_extension_dir())
         except Exception as e:
