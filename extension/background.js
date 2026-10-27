@@ -37,9 +37,22 @@ async function bridgeFetch(path, options = {}) {
   if (token) {
     headers['X-OmniStream-Token'] = token;
   }
-  return fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers })).then(res => {
+  return fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers })).then(async res => {
     if (res.status === 401 || res.status === 403) {
       cachedBridgeToken = '';
+      // Try reloading from bundled/local token file before wiping storage on transient 401
+      try {
+        const fileUrl = chrome.runtime.getURL('bridge_token.json');
+        const fileRes = await fetch(fileUrl);
+        if (fileRes.ok) {
+          const data = await fileRes.json();
+          if (data && data.token && !data.token.startsWith('GENERATED_AT_RUNTIME')) {
+            cachedBridgeToken = data.token;
+            chrome.storage.local.set({ bridgeToken: cachedBridgeToken }).catch(() => {});
+            return res;
+          }
+        }
+      } catch (e) {}
       chrome.storage.local.remove(['bridgeToken']).catch(() => {});
     }
     return res;
@@ -63,6 +76,7 @@ const BLOCK_PATTERNS = [
   '/ads/', 'prebid', 'moatads', 'scorecardresearch'
 ];
 
+// BUG-28: Normalize URL path for deduplication to prevent spamming cards for duplicate manifest polling
 function isDuplicate(list, url) {
   const norm = url.split('?')[0].toLowerCase();
   return list.some(item => item.url === url || item.url.split('?')[0].toLowerCase() === norm);
@@ -289,6 +303,10 @@ function captureFromRequest(details, extra) {
 
   const mime = (extra && extra.mime) || '';
   if (!isMediaStreamUrl(url) && !MEDIA_MIME_TYPES.some((m) => mime.toLowerCase().includes(m))) return;
+
+  // Gate check: ensure this is a playable stream item, not an ad or fragment (BUG-22)
+  const tempItem = { url, mime, type: detectType(url, mime) };
+  if (!isPlaylistItem(tempItem) && !MEDIA_MIME_TYPES.some(m => mime.toLowerCase().includes(m))) return;
 
   if (!tabMediaMap.has(details.tabId)) tabMediaMap.set(details.tabId, []);
   const mediaList = tabMediaMap.get(details.tabId);
@@ -602,10 +620,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Browser download fallback
   if (message.action === 'DOWNLOAD_FILE') {
+    const url = message.url || '';
+    if (/\.(m3u8|mpd|m4s)(\?|$|#)/i.test(url)) {
+      sendResponse({
+        success: false,
+        error: 'Desktop app offline. Browser download only works for direct MP4/media files, not HLS/DASH streams.'
+      });
+      return true;
+    }
     try {
       chrome.downloads.download({
         url: message.url,
-        filename: message.filename || 'stream.m3u8',
+        filename: message.filename || 'media.mp4',
         saveAs: false
       }, (downloadId) => {
         if (chrome.runtime.lastError) {

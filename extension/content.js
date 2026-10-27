@@ -17,20 +17,20 @@ injectGodModeScript();
 
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
+  if (!event.data || typeof event.data !== 'object') return;
+  if (event.data.source !== 'OMNISTREAM_GODMODE') return;
 
-  if (event.data && event.data.source === 'OMNISTREAM_GODMODE') {
-    if (event.data.action === 'MEDIA_DETECTED') {
-      chrome.runtime.sendMessage({
-        action: 'GODMODE_MEDIA_CAPTURED',
-        url: event.data.url,
-        mediaType: event.data.mediaType,
-        title: event.data.title || document.title
-      }).catch((err) => {
-        if (typeof console !== 'undefined' && console.debug) {
-          console.debug('[OmniStream Pro] Service worker capture delivery note:', err?.message || err);
-        }
-      });
-    }
+  if (event.data.action === 'MEDIA_DETECTED' && event.data.url && typeof event.data.url === 'string') {
+    chrome.runtime.sendMessage({
+      action: 'GODMODE_MEDIA_CAPTURED',
+      url: event.data.url,
+      mediaType: event.data.mediaType,
+      title: event.data.title || document.title
+    }).catch((err) => {
+      if (typeof console !== 'undefined' && console.debug) {
+        console.debug('[OmniStream Pro] Service worker capture delivery note:', err?.message || err);
+      }
+    });
   }
 });
 

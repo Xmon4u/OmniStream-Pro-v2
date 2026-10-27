@@ -213,8 +213,8 @@
     document.querySelectorAll('video').forEach((video) => {
       try {
         const src = video.currentSrc || video.src;
-        notifyDetected(src);
-        if (video.paused) {
+        if (src) notifyDetected(src);
+        if (video.paused && video.currentSrc && video.readyState >= 2) {
           const wasMuted = video.muted;
           video.muted = true;
           video.play().then(() => {
@@ -262,9 +262,12 @@
     if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
     observerDebounceTimer = setTimeout(() => {
       deepDOMScan();
-      // Auto-disconnect once enough streams are captured to avoid CPU spikes
-      // on heavy streaming sites (Netflix, YouTube) with thousands of DOM mutations
-      if (capturedUrls.size >= 10) {
+      // Auto-disconnect once enough valid streams are captured (BUG-10)
+      let validStreamCount = 0;
+      for (const u of capturedUrls) {
+        if (isStreamUrl(u)) validStreamCount++;
+      }
+      if (validStreamCount >= 5) {
         observer.disconnect();
       }
     }, 400);
@@ -310,5 +313,15 @@
   }
 
   hookPlayers();
-  setInterval(hookPlayers, 1500);
+  // BUG-17: Limit interval lifecycle and clear once hooked or after 30s timeout
+  const hookInterval = setInterval(() => {
+    hookPlayers();
+    const hlsHooked = !window.Hls || !window.Hls.prototype || window.Hls.prototype.__omniHooked;
+    const shakaHooked = !window.shaka || !window.shaka.Player || window.shaka.Player.__omniHooked;
+    const vjsHooked = !window.videojs || window.__omniVideoJsHooked;
+    if (hlsHooked && shakaHooked && vjsHooked) {
+      clearInterval(hookInterval);
+    }
+  }, 1500);
+  setTimeout(() => clearInterval(hookInterval), 30000);
 })();

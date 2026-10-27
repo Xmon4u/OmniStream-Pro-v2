@@ -30,6 +30,7 @@ struct HlsTrack {
 struct HlsPlaylist {
     bool isMaster = false;
     std::string baseUrl;
+    uint64_t mediaSequence = 0;
     std::vector<HlsTrack> tracks;
     std::vector<HlsSegment> segments;
     std::string initSegmentUrl; // For fMP4 EXT-X-MAP

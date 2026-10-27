@@ -78,11 +78,14 @@ function fileLabel(url) {
 }
 
 function kindLabel(item) {
-  const lo = String(item.type || item.url || '').toLowerCase();
-  if (lo.includes('mpd') || lo.includes('dash')) return 'DASH';
-  if (lo.includes('mp4')) return 'MP4';
-  if (lo.includes('webm')) return 'WEBM';
-  return 'HLS';
+  const mime = String((item && item.mime) || '').toLowerCase();
+  const lo = String((item && (item.type || item.url)) || '').toLowerCase();
+  if (lo.includes('m3u8') || mime.includes('mpegurl') || lo.includes('hls')) return 'HLS';
+  if (lo.includes('mpd') || mime.includes('dash') || lo.includes('dash')) return 'DASH';
+  if (lo.includes('mp4') || mime.includes('mp4')) return 'MP4';
+  if (lo.includes('webm') || mime.includes('webm')) return 'WEBM';
+  if (lo.includes('mkv') || mime.includes('matroska')) return 'MKV';
+  return 'Stream';
 }
 
 function audioLabel(item) {
@@ -286,7 +289,7 @@ function renderDetected(isRefreshing = false) {
   detectedStreams.forEach((item) => {
     const card = document.createElement('article');
     card.className = 'card';
-    const label = escapeHtml(fileLabel(item.url));
+    const label = escapeHtml((item.title && item.title.trim()) || fileLabel(item.url));
     const url = escapeHtml(item.url);
     const langs = (item.audioLanguages || []).join(' · ');
     const langLine = langs
@@ -300,21 +303,23 @@ function renderDetected(isRefreshing = false) {
     if (currentDownloadMode === 'netflix_rename') {
       modePill = nid
         ? `<span class="kind" style="background:#e50914;color:#fff;border-color:#b91c1c;font-weight:700;">NF: ${escapeHtml(nid)}</span>`
-        : `<span class="kind" style="background:#e50914;color:#fff;font-weight:600;">Netflix Mode</span>`;
+        : `<span class="kind" style="background:#e50914;color:#fff;font-weight:600;">Netflix</span>`;
     } else if (currentDownloadMode === 'title_only') {
-      modePill = `<span class="kind" style="background:#0284c7;color:#fff;font-weight:600;">Title Only</span>`;
+      modePill = `<span class="kind" style="background:#0284c7;color:#fff;font-weight:600;">Title</span>`;
     } else if (currentDownloadMode === 'tmdb_rename') {
       modePill = tmdbId
         ? `<span class="kind" style="background:#01b4e4;color:#032541;border-color:#0284c7;font-weight:700;">TMDB: ${escapeHtml(tmdbId)}</span>`
-        : `<span class="kind" style="background:#0e7490;color:#cffafe;font-weight:600;">TMDB Mode</span>`;
+        : `<span class="kind" style="background:#0e7490;color:#cffafe;font-weight:600;">TMDB</span>`;
     } else if (currentDownloadMode === 'imdb_rename') {
       modePill = imdbId
         ? `<span class="kind" style="background:#f5c518;color:#000;border-color:#d97706;font-weight:700;">IMDb: ${escapeHtml(imdbId)}</span>`
-        : `<span class="kind" style="background:#78350f;color:#fef3c7;font-weight:600;">IMDb Mode</span>`;
+        : `<span class="kind" style="background:#78350f;color:#fef3c7;font-weight:600;">IMDb</span>`;
     } else if (currentDownloadMode === 'title_id') {
-      modePill = `<span class="kind" style="background:#8b5cf6;color:#fff;border-color:#7c3aed;font-weight:700;">Title + ID</span>`;
+      modePill = `<span class="kind" style="background:#8b5cf6;color:#fff;border-color:#7c3aed;font-weight:700;">T+ID</span>`;
     } else if (currentDownloadMode === 'sub_merge') {
-      modePill = `<span class="kind" style="background:#059669;color:#fff;font-weight:600;">Sub Merge</span>`;
+      modePill = `<span class="kind" style="background:#059669;color:#fff;font-weight:600;">Subs</span>`;
+    } else {
+      modePill = `<span class="kind" style="background:rgba(99,102,241,0.15);color:#818cf8;border-color:rgba(99,102,241,0.3);font-weight:600;">Normal</span>`;
     }
 
     card.innerHTML = `
@@ -355,7 +360,7 @@ function copyLink(url) {
   });
 }
 
-function sendToDesktop(item, btn) {
+function sendToDesktop(item, btn, doneCallback) {
   let absoluteUrl = item.url;
   try {
     if (absoluteUrl.startsWith('/') || !absoluteUrl.includes('://')) {
@@ -392,6 +397,7 @@ function sendToDesktop(item, btn) {
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (chrome.runtime.lastError) {
       showToast('Extension error — try again');
+      if (doneCallback) doneCallback(false);
       return;
     }
     if (res && res.success) {
@@ -405,8 +411,10 @@ function sendToDesktop(item, btn) {
         }, 2500);
       }
       checkBridge();
+      if (doneCallback) doneCallback(true);
     } else {
       showToast((res && res.error) ? res.error : 'Open the OmniStream app first');
+      if (doneCallback) doneCallback(false);
     }
   });
 }
@@ -468,18 +476,22 @@ function sendSubtitlesToDesktop(item, btn) {
   });
 }
 
-function sendAllToDesktop() {
+async function sendAllToDesktop() {
   if (!detectedStreams || !detectedStreams.length) {
     showToast('No streams detected yet');
     return;
   }
   let count = 0;
   const cards = detectedListEl.querySelectorAll('.card');
-  detectedStreams.forEach((item, idx) => {
+  for (let idx = 0; idx < detectedStreams.length; idx++) {
+    const item = detectedStreams[idx];
     const btn = cards[idx] ? cards[idx].querySelector('.download') : null;
-    sendToDesktop(item, btn);
+    await new Promise(resolve => {
+      sendToDesktop(item, btn, resolve);
+    });
     count++;
-  });
+    await new Promise(r => setTimeout(r, 80));
+  }
   showToast(`Queued ${count} stream(s) to OmniStream`);
 }
 
@@ -495,49 +507,16 @@ function clearAndRefreshTab() {
   detectedStreams = [];
   renderDetected(true);
 
-  chrome.runtime.sendMessage({ action: 'CLEAR_TAB_MEDIA', tabId: currentTabId }, () => {
-    const isWebUrl = currentTabUrl && /^https?:\/\//i.test(currentTabUrl);
-    if (!isWebUrl) {
-      if (clearRefreshBtn) clearRefreshBtn.classList.remove('refreshing');
-      if (clearRefreshLabel) clearRefreshLabel.textContent = 'Clear & Refresh';
-      showToast('Stream list cleared');
-      renderDetected(false);
-      return;
-    }
-
-    let finished = false;
-    const cleanup = () => {
-      if (finished) return;
-      finished = true;
-      try { chrome.tabs.onUpdated.removeListener(onUpdatedListener); } catch (e) {}
-      clearTimeout(safetyTimer);
+  chrome.runtime.sendMessage({ action: 'CLEAR_AND_REFRESH_TAB', tabId: currentTabId }, () => {
+    if (chrome.runtime.lastError) {}
+    setTimeout(() => {
       if (clearRefreshBtn) clearRefreshBtn.classList.remove('refreshing');
       if (clearRefreshLabel) clearRefreshLabel.textContent = 'Clear & Refresh';
       showToast('Cleared & refreshed tab');
-      // Automatically trigger God Mode scan to find new streams from reloaded player
       setTimeout(() => {
         runGodScan(false);
-      }, 500);
-    };
-
-    const onUpdatedListener = (tabId, changeInfo) => {
-      if (tabId === currentTabId && changeInfo.status === 'complete') {
-        cleanup();
-      }
-    };
-
-    try { chrome.tabs.onUpdated.addListener(onUpdatedListener); } catch (e) {}
-
-    // Safety fallback in case status complete takes longer or page streams continuously
-    const safetyTimer = setTimeout(() => {
-      cleanup();
-    }, 4500);
-
-    chrome.tabs.reload(currentTabId, { bypassCache: false }, () => {
-      if (chrome.runtime.lastError) {
-        cleanup();
-      }
-    });
+      }, 1500);
+    }, 1500);
   });
 }
 

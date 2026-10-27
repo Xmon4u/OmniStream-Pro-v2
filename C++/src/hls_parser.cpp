@@ -41,6 +41,13 @@ HlsPlaylist HlsParser::Parse(const std::string& manifestContent, const std::stri
             pendingTrack.name = pendingTrack.resolution.empty() ? ("Bandwidth " + bw) : pendingTrack.resolution;
             hasPendingTrack = true;
         }
+        else if (line.rfind("#EXT-X-MEDIA-SEQUENCE:", 0) == 0) {
+            size_t colon = line.find(':');
+            if (colon != std::string::npos) {
+                std::string seqStr = line.substr(colon + 1);
+                playlist.mediaSequence = std::strtoull(seqStr.c_str(), nullptr, 10);
+            }
+        }
         else if (line.rfind("#EXT-X-MEDIA:", 0) == 0) {
             std::string mediaType = ExtractAttribute(line, "TYPE");
             std::string uri = ExtractAttribute(line, "URI");

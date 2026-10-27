@@ -29,7 +29,8 @@
     "scripting",
     "clipboardWrite",
     "notifications",
-    "alarms"
+    "alarms",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>",

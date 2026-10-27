@@ -6,51 +6,102 @@
 namespace OmniStream {
 
 static std::string ExtractJsonValue(const std::string& json, const std::string& key) {
-    size_t keyPos = json.find("\"" + key + "\"");
-    if (keyPos == std::string::npos) return "";
-
-    size_t colon = json.find(':', keyPos);
-    if (colon == std::string::npos) return "";
-
-    size_t startQuote = json.find('"', colon);
-    if (startQuote == std::string::npos) return "";
-
-    size_t endQuote = startQuote + 1;
-    while (endQuote < json.size()) {
-        if (json[endQuote] == '"' && json[endQuote - 1] != '\\') {
-            break;
-        }
-        endQuote++;
-    }
-    if (endQuote >= json.size()) return "";
-
-    std::string val = json.substr(startQuote + 1, endQuote - startQuote - 1);
-    std::string result;
-    for (size_t i = 0; i < val.size(); ++i) {
-        if (val[i] == '\\' && i + 1 < val.size()) {
-            char next = val[i + 1];
-            if (next == '"' || next == '\\' || next == '/') {
-                result += next;
-                i++;
-                continue;
-            } else if (next == 'n') {
-                result += '\n';
-                i++;
-                continue;
-            } else if (next == 'r') {
-                result += '\r';
-                i++;
-                continue;
-            } else if (next == 't') {
-                result += '\t';
-                i++;
+    std::string needle = "\"" + key + "\"";
+    size_t keyPos = 0;
+    while ((keyPos = json.find(needle, keyPos)) != std::string::npos) {
+        // Ensure this is a key: preceding character should be '{', ',', or whitespace
+        if (keyPos > 0) {
+            size_t prev = keyPos - 1;
+            while (prev > 0 && (json[prev] == ' ' || json[prev] == '\t' || json[prev] == '\r' || json[prev] == '\n')) prev--;
+            if (json[prev] != '{' && json[prev] != ',') {
+                keyPos += needle.size();
                 continue;
             }
         }
-        result += val[i];
+        break;
     }
-    return result;
+    if (keyPos == std::string::npos) return "";
+
+    size_t colon = json.find(':', keyPos + needle.size());
+    if (colon == std::string::npos) return "";
+
+    size_t valStart = colon + 1;
+    while (valStart < json.size() && (json[valStart] == ' ' || json[valStart] == '\t' || json[valStart] == '\r' || json[valStart] == '\n')) {
+        valStart++;
+    }
+    if (valStart >= json.size()) return "";
+
+    if (json[valStart] == '"') {
+        size_t startQuote = valStart;
+        size_t endQuote = startQuote + 1;
+        while (endQuote < json.size()) {
+            if (json[endQuote] == '"' && json[endQuote - 1] != '\\') {
+                break;
+            }
+            endQuote++;
+        }
+        if (endQuote >= json.size()) return "";
+
+        std::string val = json.substr(startQuote + 1, endQuote - startQuote - 1);
+        std::string result;
+        for (size_t i = 0; i < val.size(); ++i) {
+            if (val[i] == '\\' && i + 1 < val.size()) {
+                char next = val[i + 1];
+                if (next == '"' || next == '\\' || next == '/') {
+                    result += next;
+                    i++;
+                    continue;
+                } else if (next == 'n') {
+                    result += '\n';
+                    i++;
+                    continue;
+                } else if (next == 'r') {
+                    result += '\r';
+                    i++;
+                    continue;
+                } else if (next == 't') {
+                    result += '\t';
+                    i++;
+                    continue;
+                }
+            }
+            result += val[i];
+        }
+        return result;
+    }
+
+    if (json[valStart] == '{' || json[valStart] == '[') {
+        char openChar = json[valStart];
+        char closeChar = (openChar == '{') ? '}' : ']';
+        int depth = 0;
+        bool inStr = false;
+        bool esc = false;
+        for (size_t i = valStart; i < json.size(); ++i) {
+            char ch = json[i];
+            if (esc) { esc = false; continue; }
+            if (ch == '\\' && inStr) { esc = true; continue; }
+            if (ch == '"') { inStr = !inStr; continue; }
+            if (!inStr) {
+                if (ch == openChar) depth++;
+                else if (ch == closeChar) {
+                    depth--;
+                    if (depth == 0) {
+                        return json.substr(valStart, i - valStart + 1);
+                    }
+                }
+            }
+        }
+        return "";
+    }
+
+    size_t endVal = valStart;
+    while (endVal < json.size() && json[endVal] != ',' && json[endVal] != '}' && json[endVal] != ']' &&
+           json[endVal] != '\r' && json[endVal] != '\n' && json[endVal] != ' ') {
+        endVal++;
+    }
+    return json.substr(valStart, endVal - valStart);
 }
+
 
 BridgeServer::BridgeServer(int port, const std::string& token)
     : m_port(port), m_token(token) {
@@ -228,7 +279,18 @@ void BridgeServer::ServerThread() {
             continue;
         }
 
-        std::thread(&BridgeServer::HandleClient, this, clientSocket).detach();
+        if (m_activeConnections.load() >= 16) {
+            std::string res = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(clientSocket, res.data(), (int)res.size(), 0);
+            closesocket(clientSocket);
+            continue;
+        }
+
+        m_activeConnections++;
+        std::thread([this, clientSocket]() {
+            HandleClient(clientSocket);
+            m_activeConnections--;
+        }).detach();
     }
 }
 
@@ -254,10 +316,14 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         path = path.substr(0, qPos);
     }
 
+    std::string discardLine;
+    std::getline(reqStream, discardLine);
+
     std::map<std::string, std::string> headers;
     std::string headerLine;
-    while (std::getline(reqStream, headerLine) && headerLine != "\r" && !headerLine.empty()) {
+    while (std::getline(reqStream, headerLine)) {
         if (!headerLine.empty() && headerLine.back() == '\r') headerLine.pop_back();
+        if (headerLine.empty()) break;
         size_t colon = headerLine.find(':');
         if (colon != std::string::npos) {
             std::string k = headerLine.substr(0, colon);
@@ -318,10 +384,11 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         try { expectedLen = std::stoul(headers["content-length"]); } catch (...) {}
     }
     while (body.size() < expectedLen) {
-        int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        char extraBuf[8192];
+        size_t needed = std::min(sizeof(extraBuf), expectedLen - body.size());
+        int n = recv(clientSocket, extraBuf, (int)needed, 0);
         if (n <= 0) break;
-        buffer[n] = '\0';
-        body.append(buffer, n);
+        body.append(extraBuf, n);
     }
 
     // Routes
@@ -348,7 +415,12 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
                        std::string(VERSION) + "\"\n}";
     }
     else if (method == "GET" && path == "/token") {
-        responseBody = "{\n  \"token\": \"" + m_token + "\"\n}";
+        if (clientToken != m_token) {
+            statusCode = 401;
+            responseBody = "{\n  \"error\": \"Unauthorized: valid X-OmniStream-Token required\"\n}";
+        } else {
+            responseBody = "{\n  \"token\": \"" + m_token + "\"\n}";
+        }
     }
     else if (method == "GET" && path == "/queue") {
         responseBody = "{\n  \"success\": true,\n  \"queue\": []\n}";
@@ -534,8 +606,15 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         responseBody = "{\n  \"error\": \"Endpoint not found\"\n}";
     }
 
+    std::string statusMsg = (statusCode == 200) ? "OK" :
+                            (statusCode == 400) ? "Bad Request" :
+                            (statusCode == 401) ? "Unauthorized" :
+                            (statusCode == 403) ? "Forbidden" :
+                            (statusCode == 404) ? "Not Found" :
+                            (statusCode == 500) ? "Internal Server Error" : "OK";
+
     std::ostringstream resStream;
-    resStream << "HTTP/1.1 " << statusCode << " OK\r\n";
+    resStream << "HTTP/1.1 " << statusCode << " " << statusMsg << "\r\n";
     resStream << corsHeader;
     resStream << "Content-Type: application/json; charset=utf-8\r\n";
     resStream << "Content-Length: " << responseBody.size() << "\r\n";

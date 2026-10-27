@@ -139,7 +139,10 @@ int RunSelfTest() {
         HttpResponse healthRes = client.Get("http://127.0.0.1:28796/health");
         test("Bridge GET /health reflects synced mode (imdb_rename)", healthRes.IsSuccess() && healthRes.Text().find("\"mode\": \"imdb_rename\"") != std::string::npos);
 
-        HttpResponse tokRes = client.Get("http://127.0.0.1:28796/token");
+        HttpResponse unauthTok = client.Get("http://127.0.0.1:28796/token");
+        test("Bridge GET /token unauthenticated rejected (401)", unauthTok.statusCode == 401);
+
+        HttpResponse tokRes = client.Get("http://127.0.0.1:28796/token", {{"X-OmniStream-Token", "test_token_123"}});
         test("Bridge GET /token returns token", tokRes.IsSuccess() && tokRes.Text().find("test_token_123") != std::string::npos);
 
         // Test POST /add
@@ -282,8 +285,18 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::cout << Color::Green << "\n [Server Active] OmniStream Bridge Daemon listening on port " << BRIDGE_PORT << "\n" << Color::Reset << std::endl;
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        static BridgeServer* s_activeDaemonServer = &server;
+        SetConsoleCtrlHandler([](DWORD ctrlType) -> BOOL {
+            if (s_activeDaemonServer) {
+                Logger::Info("Shutdown signal received, stopping Bridge Server...");
+                s_activeDaemonServer->Stop();
+            }
+            return TRUE;
+        }, TRUE);
+
+        while (server.IsRunning()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         server.Stop();
         return 0;
@@ -299,7 +312,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Default save directory is user's Desktop
-    if (options.saveDir == ".") {
+    if (options.saveDir.empty() || options.saveDir == ".") {
         const char* userProfile = std::getenv("USERPROFILE");
         if (userProfile) {
             std::filesystem::path desktopPath = std::filesystem::path(userProfile) / "Desktop";

@@ -133,7 +133,8 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
             size_t lastSlash = info.url.find_last_of('/');
             size_t qMark = info.url.find('?');
             if (lastSlash != std::string::npos) {
-                baseName = info.url.substr(lastSlash + 1, qMark == std::string::npos ? qMark : qMark - lastSlash - 1);
+                size_t end = (qMark != std::string::npos && qMark > lastSlash) ? qMark : std::string::npos;
+                baseName = info.url.substr(lastSlash + 1, end == std::string::npos ? end : end - lastSlash - 1);
             }
             if (baseName.empty()) baseName = "OmniStream_Capture";
         }
@@ -318,9 +319,18 @@ bool DownloadEngine::DownloadTrackSegments(
                 const auto& seg = playlist.segments[segIdx];
                 std::string segFilePath = tempDir + "/seg_" + std::to_string(segIdx) + ".ts";
 
-                HttpResponse resp = threadClient.Get(seg.url, info.headers);
-                if (!resp.IsSuccess() || resp.body.empty()) {
-                    continue; // Retry logic can be added here
+                HttpResponse resp;
+                bool segOk = false;
+                for (int retry = 0; retry < 4 && !m_aborted.load(); ++retry) {
+                    resp = threadClient.Get(seg.url, info.headers);
+                    if (resp.IsSuccess() && !resp.body.empty()) {
+                        segOk = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250 * (retry + 1)));
+                }
+                if (!segOk) {
+                    continue;
                 }
 
                 std::vector<uint8_t> finalData = std::move(resp.body);
@@ -331,7 +341,7 @@ bool DownloadEngine::DownloadTrackSegments(
                     if (iv.empty()) {
                         // Default IV is segment sequence number in big-endian (16 bytes)
                         iv.resize(16, 0);
-                        uint64_t seq = segIdx;
+                        uint64_t seq = playlist.mediaSequence + segIdx;
                         for (int b = 15; b >= 8; --b) {
                             iv[b] = static_cast<uint8_t>(seq & 0xFF);
                             seq >>= 8;
@@ -553,17 +563,28 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
     }
 
+    auto escapeHeaderVal = [](const std::string& s) -> std::string {
+        std::string r;
+        r.reserve(s.size());
+        for (char c : s) {
+            if (c == '"') r += "\\\"";
+            else if (c == '\n' || c == '\r') r += ' ';
+            else r += c;
+        }
+        return r;
+    };
+
     if (!info.referer.empty()) {
-        cmd << "-H \"Referer: " << info.referer << "\" ";
+        cmd << "-H \"Referer: " << escapeHeaderVal(info.referer) << "\" ";
     }
     if (!info.origin.empty()) {
-        cmd << "-H \"Origin: " << info.origin << "\" ";
+        cmd << "-H \"Origin: " << escapeHeaderVal(info.origin) << "\" ";
     }
     if (!info.user_agent.empty()) {
-        cmd << "-H \"User-Agent: " << info.user_agent << "\" ";
+        cmd << "-H \"User-Agent: " << escapeHeaderVal(info.user_agent) << "\" ";
     }
     if (!info.cookie.empty()) {
-        cmd << "-H \"Cookie: " << info.cookie << "\" ";
+        cmd << "-H \"Cookie: " << escapeHeaderVal(info.cookie) << "\" ";
     }
 
     // Add custom request headers
@@ -572,7 +593,7 @@ bool DownloadEngine::DownloadWithNM3U8(
         std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
         if (lo != "referer" && lo != "origin" && lo != "user-agent" && lo != "cookie" &&
             lo != "host" && lo != "connection" && lo != "content-length" && lo != "accept-encoding") {
-            cmd << "-H \"" << k << ": " << v << "\" ";
+            cmd << "-H \"" << escapeHeaderVal(k) << ": " << escapeHeaderVal(v) << "\" ";
         }
     }
 
@@ -632,6 +653,16 @@ bool DownloadEngine::DownloadWithNM3U8(
     uint64_t lastReportedBytes = 0;
 
     auto lastProgressCheck = std::chrono::steady_clock::now();
+
+    std::atomic<bool> readLoopDone{ false };
+    std::thread pauseHeartbeat([&]() {
+        while (!readLoopDone.load()) {
+            if (m_paused.load() && options.onProgress) {
+                options.onProgress(lastReportedPct, "Paused", "Paused", lastReportedBytes, lastReportedSize);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    });
 
     while (ReadFile(hStdOutRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
         if (m_aborted.load()) {
@@ -724,9 +755,12 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
     }
 
-    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_TIMEOUT) {
-        TerminateProcess(pi.hProcess, 1);
+    readLoopDone.store(true);
+    if (pauseHeartbeat.joinable()) {
+        pauseHeartbeat.join();
     }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
 
     DWORD exitCode = 1;
     GetExitCodeProcess(pi.hProcess, &exitCode);

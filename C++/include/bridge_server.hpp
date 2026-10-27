@@ -49,6 +49,7 @@ private:
     int m_port;
     std::string m_token;
     std::atomic<bool> m_running{ false };
+    std::atomic<int> m_activeConnections{ 0 };
     SOCKET m_listenSocket = INVALID_SOCKET;
     std::unique_ptr<std::thread> m_workerThread;
     std::function<void(const DownloadOptions& opts)> m_onJobReceived;
