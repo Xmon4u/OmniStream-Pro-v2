@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.5.0 - Extension Localhost Bridge Server
+OmniStream Pro v2.6.0 - Extension Localhost Bridge Server
 Listens on 127.0.0.1:28795 for incoming video stream capture jobs from browser extensions.
 Supports single stream addition, batch multi-link imports, and IDM-style queue synchronization.
 Author: XMON4U (https://github.com/Xmon4u)

@@ -1,6 +1,6 @@
-# OmniStream Pro v2.5.0 — Native C++ Core Engine
+# OmniStream Pro v2.6.0 — Native C++ Core Engine
 
-High-performance, low-level native C++ stream capturing engine and localhost bridge for **OmniStream Pro v2.5.0**.
+High-performance, low-level native C++ stream capturing engine and localhost bridge for **OmniStream Pro v2.6.0**.
 
 Designed for zero external dependencies on Windows—leverages native Windows cryptographic, networking, and asynchronous socket APIs.
 

@@ -1,5 +1,5 @@
 """
-OmniStream Pro v2.5.0 — Comprehensive Self-Test Suite
+OmniStream Pro v2.6.0 — Comprehensive Self-Test Suite
 ======================================================
 Covers: Module imports, engine methods, progress parsing, subtitle engine,
         N_m3u8DL-RE binary flags, GUI source analysis, extension integrity,

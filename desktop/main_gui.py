@@ -450,7 +450,7 @@ class ExtensionSetupDialog(ctk.CTkToplevel):
 
 
 class OmniStreamApp(ctk.CTk):
-    """OmniStream Pro v2.5.0 Main Application Window."""
+    """OmniStream Pro v2.6.0 Main Application Window."""
 
     def __init__(self):
         super().__init__()

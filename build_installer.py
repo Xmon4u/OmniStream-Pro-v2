@@ -109,6 +109,7 @@ def build():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
+        "--clean",
         "--onefile",
         "--windowed",
         "--name", SETUP_NAME,

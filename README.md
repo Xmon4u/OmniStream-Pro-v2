@@ -73,7 +73,7 @@ graph LR
         BridgeServer["HTTP Bridge Server (/add, /batch_add)"]
     end
 
-    subgraph DesktopApp ["OmniStream Pro Desktop v2.5.0"]
+    subgraph DesktopApp ["OmniStream Pro Desktop v2.6.0"]
         GUI["CustomTkinter Dark GUI"]
         QueueMgr["Queue Manager (Download All)"]
         Engine["High-Speed Engine (N_m3u8DL-RE + FFmpeg)"]
@@ -174,7 +174,7 @@ OmniStream_Pro_v2/
 â”‚   â””â”€â”€ app_icon.png
 â”‚
 â”œâ”€â”€ extension/
-â”‚   â”œâ”€â”€ manifest.json            # Chrome MV3 manifest (v2.5.0)
+â”‚   â”œâ”€â”€ manifest.json            # Chrome MV3 manifest (v2.6.0)
 â”‚   â”œâ”€â”€ background.js            # Network sniffer & bridge
 â”‚   â”œâ”€â”€ content.js               # Content script injector
 â”‚   â”œâ”€â”€ godmode.js               # Deep scan + anti-devtools

@@ -1,6 +1,6 @@
 # Asset Attribution & License
 
-## OmniStream Pro v2.5.0 Assets
+## OmniStream Pro v2.6.0 Assets
 
 All icons and graphical assets included in this directory were custom created for **OmniStream Pro**:
 - `app_logo.png` (32x32) — Custom glowing stream waveform icon in Cyber Slate & Sky Cyan.

@@ -170,7 +170,7 @@ def unregister_windows_uninstaller() -> bool:
 class OmniStreamInstaller(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("OmniStream Pro Setup")
+        self.title("OmniStream Pro v2.6.0 Setup")
         self.geometry("640x510")
         self.resizable(False, False)
         self.configure(fg_color=BG_ROOT)
