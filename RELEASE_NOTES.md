@@ -22,11 +22,12 @@ Release notes for the desktop app + Chrome extension suite.
 - **Automated Self-Test Coverage** — 23 C++ unit & integration tests, 27 live bridge integration tests, and 150+ comprehensive diagnostic tests passing 100%.
 
 #### 📦 Release Artifacts for v2.6.0
-1. `OmniStream_Pro_Setup.exe` — Full Windows setup installer with shortcut creation and uninstaller registry
-2. `OmniStream_Pro.exe` — Standalone portable Windows executable (ready-to-run, zero install)
-3. `OmniStream-Pro-Chrome-Extension-v2.6.0.zip` — Chrome/Edge browser extension package (Manifest V3)
-4. `N_m3u8DL-RE.exe` — Pre-bundled high-speed HLS/DASH downloader engine CLI binary
-5. `uninstall.exe` — Native Windows uninstaller executable with Control Panel integration
+1. `OmniStream_Pro_Setup.exe` — Full Windows setup installer (Installs C++ Native Application & Qt6 runtime, creates Desktop & Start Menu shortcuts, registers Windows uninstaller, deploys browser extension)
+2. `OmniStream_Pro_v2.6.0_C++_Portable.zip` — Complete Standalone Portable C++ Suite (Zero install, unpack anywhere and run `OmniStream_Pro.exe` out of the box with bundled Qt6 runtime & downloader engine)
+3. `OmniStream_Pro.exe` — C++ Native Desktop Application Executable (MSVC x64 Native Core Engine)
+4. `OmniStream-Pro-Chrome-Extension-v2.6.0.zip` — Chrome / Edge / Brave browser extension package (Manifest V3)
+5. `N_m3u8DL-RE.exe` — Pre-bundled high-speed HLS/DASH downloader engine CLI binary
+6. `uninstall.exe` — Native Windows uninstaller executable with Control Panel integration
 
 ---
 
