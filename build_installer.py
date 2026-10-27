@@ -59,7 +59,9 @@ def _stage_payload():
     os.makedirs(stage_cpp, exist_ok=True)
 
     # 1. Copy deployed C++ application binaries & Qt runtime
-    cpp_rel = os.path.join(ROOT_DIR, "c++ projects", "vs_project", "Release")
+    cpp_rel = os.path.join(ROOT_DIR, "C++", "vs_project", "Release")
+    if not os.path.isdir(cpp_rel):
+        cpp_rel = os.path.join(ROOT_DIR, "c++ projects", "vs_project", "Release")
     if os.path.isdir(cpp_rel):
         for item in os.listdir(cpp_rel):
             if item.endswith(".pdb") or item.endswith(".obj") or item.endswith(".tlog") or item.endswith(".log"):

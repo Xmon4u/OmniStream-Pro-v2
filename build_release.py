@@ -14,7 +14,7 @@ import subprocess
 import glob
 
 ROOT_DIR       = os.path.dirname(os.path.abspath(__file__))
-CPP_DIR        = os.path.join(ROOT_DIR, "c++ projects")
+CPP_DIR        = os.path.join(ROOT_DIR, "C++") if os.path.exists(os.path.join(ROOT_DIR, "C++")) else os.path.join(ROOT_DIR, "c++ projects")
 CPP_SLN        = os.path.join(CPP_DIR, "vs_project", "OmniStreamProCpp.sln")
 CPP_REL_DIR    = os.path.join(CPP_DIR, "vs_project", "Release")
 CPP_EXE        = os.path.join(CPP_REL_DIR, "OmniStream_Pro.exe")
@@ -292,7 +292,8 @@ def main():
             print(f"  -> {name} (Skipped, file not found: {src})")
 
     # Sync C++ project and extension sources for developer inspection
-    for src_rel, dst_rel in [("c++ projects", "C++_Engine"), ("extension", "Extension")]:
+    cpp_sync_src = "C++" if os.path.exists(os.path.join(ROOT_DIR, "C++")) else "c++ projects"
+    for src_rel, dst_rel in [(cpp_sync_src, "C++_Engine"), ("extension", "Extension")]:
         src_path = os.path.join(ROOT_DIR, src_rel)
         dst_path = os.path.join(TEST_RELEASE_DIR, dst_rel)
         if os.path.exists(src_path):

@@ -34,6 +34,8 @@ Release Test/
 *.lib
 c++ projects/vs_project/
 c++ projects/bin/
+C++/vs_project/
+C++/bin/
 **/vs_project/
 
 # Temporary engine downloads / partial captures

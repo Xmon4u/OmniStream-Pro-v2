@@ -340,7 +340,11 @@ def perform_installation_headless(target_dir: str = "", create_shortcuts: bool =
                     shutil.copy2(s, d)
         else:
             # Fallback to local C++ Release folder
-            cpp_local = os.path.join(INSTALLER_DIR, "c++ projects", "vs_project", "Release")
+            cpp_local = os.path.join(INSTALLER_DIR, "C++", "vs_project", "Release")
+            if not os.path.isdir(cpp_local):
+                cpp_local = os.path.join(INSTALLER_DIR, "c++ projects", "vs_project", "Release")
+            if not os.path.isdir(cpp_local):
+                cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "C++", "vs_project", "Release")
             if not os.path.isdir(cpp_local):
                 cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "c++ projects", "vs_project", "Release")
             if os.path.isdir(cpp_local):
