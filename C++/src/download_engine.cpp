@@ -142,7 +142,19 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
 
     baseName = NetflixResolver::SanitizeFilename(baseName);
 
-    std::filesystem::path dirPath = options.saveDir.empty() ? "." : options.saveDir;
+    std::filesystem::path dirPath;
+    if (!options.saveDir.empty() && options.saveDir != ".") {
+        dirPath = options.saveDir;
+    } else {
+        const char* userProfile = std::getenv("USERPROFILE");
+        if (userProfile) {
+            std::filesystem::path desktop = std::filesystem::path(userProfile) / "Desktop";
+            if (std::filesystem::exists(desktop)) dirPath = desktop;
+            else dirPath = ".";
+        } else {
+            dirPath = ".";
+        }
+    }
     std::filesystem::create_directories(dirPath);
 
     bool isStream = (info.url.find(".m3u8") != std::string::npos ||

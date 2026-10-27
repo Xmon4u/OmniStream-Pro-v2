@@ -381,7 +381,7 @@ function sendToDesktop(item, btn, doneCallback) {
   const tmdbId = item.tmdbId || extractTmdbId(absoluteUrl) || extractTmdbId(currentTabUrl);
   const payload = {
     url: absoluteUrl,
-    title: fileLabel(absoluteUrl),
+    title: (item.title && item.title.trim()) || fileLabel(absoluteUrl),
     curl: curlCmd,
     referer: item.referer || currentTabUrl,
     origin: item.origin || '',
@@ -440,7 +440,7 @@ function sendSubtitlesToDesktop(item, btn) {
   const tmdbId = item.tmdbId || extractTmdbId(absoluteUrl) || extractTmdbId(currentTabUrl);
   const payload = {
     url: absoluteUrl,
-    title: fileLabel(absoluteUrl),
+    title: (item.title && item.title.trim()) || fileLabel(absoluteUrl),
     curl: curlCmd,
     referer: item.referer || currentTabUrl,
     origin: item.origin || '',

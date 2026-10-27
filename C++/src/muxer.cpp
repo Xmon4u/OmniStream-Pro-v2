@@ -40,7 +40,22 @@ bool Muxer::FindFFmpeg(std::string& outPath) {
         }
     }
 
-    // 3. Check PATH via SearchPathW
+    // 3. Check LocalAppData folder
+    const char* localApp = std::getenv("LOCALAPPDATA");
+    if (localApp) {
+        std::filesystem::path p3 = std::filesystem::path(localApp) / "OmniStreamPro" / "bin" / "ffmpeg.exe";
+        if (std::filesystem::exists(p3)) {
+            outPath = p3.string();
+            return true;
+        }
+        std::filesystem::path p4 = std::filesystem::path(localApp) / "OmniStreamPro" / "ffmpeg.exe";
+        if (std::filesystem::exists(p4)) {
+            outPath = p4.string();
+            return true;
+        }
+    }
+
+    // 4. Check PATH via SearchPathW
     wchar_t buffer[MAX_PATH];
     DWORD res = SearchPathW(nullptr, L"ffmpeg.exe", nullptr, MAX_PATH, buffer, nullptr);
     if (res > 0 && res < MAX_PATH) {
