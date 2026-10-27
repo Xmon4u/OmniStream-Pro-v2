@@ -409,43 +409,41 @@ bool DownloadEngine::DownloadWithNM3U8(
 
     std::ostringstream cmd;
     cmd << "\"" << nm3u8Path << "\" \"" << info.url << "\" "
-        << "--auto-select "
+        << "--auto-select --live-perform-as-vod "
         << "--save-dir \"" << saveDir << "\" "
         << "--save-name \"" << saveName << "\" "
         << "--tmp-dir \"" << isolatedTemp << "\" "
-        << "--thread-count 16 --download-retry-count 3 --http-request-timeout 15 "
+        << "--thread-count 16 --download-retry-count 5 --http-request-timeout 20 "
         << "--disable-update-check --no-log --no-ansi-color ";
 
     std::string subFmt = options.subtitleFormat.empty() ? "SRT" : options.subtitleFormat;
 
     if (options.subtitleOnly) {
         cmd << "--sub-only --sub-format " << subFmt << " --auto-subtitle-fix ";
-        if (options.subtitleLanguage.empty() || options.subtitleLanguage == "all") {
-            cmd << "-ss all ";
-        } else {
-            cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all || all ";
+        if (!options.subtitleLanguage.empty() && options.subtitleLanguage != "all") {
+            cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all ";
         }
     } else {
         // Video stream selection
         if (options.resolution == "audio_only") {
             cmd << "-dv all ";
         } else if (options.resolution == "720p") {
-            cmd << "-sv res=\"720|1280\":for=best || best ";
+            cmd << "-sv res=\"720*|1280*\":for=best ";
         } else if (options.resolution == "480p") {
-            cmd << "-sv res=\"480|854\":for=best || best ";
+            cmd << "-sv res=\"480*|854*\":for=best ";
         } else if (options.resolution == "1080p") {
-            cmd << "-sv res=\"1080|1920\":for=best || best ";
+            cmd << "-sv res=\"1080*|1920*\":for=best ";
         } else {
             cmd << "-sv best ";
         }
 
         // Audio selection
         if (options.audioChoice == "dual") {
-            cmd << "-sa lang=\"en|eng|hi|hin\":for=all || all ";
+            cmd << "-sa lang=\"en|eng|hi|hin\":for=all ";
         } else if (options.audioChoice == "en") {
-            cmd << "-sa lang=\"en|eng\":for=best || all ";
+            cmd << "-sa lang=\"en|eng\":for=best ";
         } else if (options.audioChoice == "hi") {
-            cmd << "-sa lang=\"hi|hin\":for=best || all ";
+            cmd << "-sa lang=\"hi|hin\":for=best ";
         } else {
             cmd << "-sa all ";
         }
@@ -453,10 +451,8 @@ bool DownloadEngine::DownloadWithNM3U8(
         // Subtitles inclusion
         if (options.includeSubtitles) {
             cmd << "--sub-format " << subFmt << " --auto-subtitle-fix ";
-            if (options.subtitleLanguage.empty() || options.subtitleLanguage == "all") {
-                cmd << "-ss all ";
-            } else {
-                cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all || all ";
+            if (!options.subtitleLanguage.empty() && options.subtitleLanguage != "all") {
+                cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all ";
             }
         }
 

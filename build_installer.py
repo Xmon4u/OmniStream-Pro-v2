@@ -79,9 +79,10 @@ def _stage_payload():
             os.path.join(DESKTOP_DIR, "bin", tool),
             os.path.join(ROOT_DIR, "release_output", tool),
             os.path.join(ROOT_DIR, "Release Test", tool),
+            shutil.which(tool) or "",
         ]
         for c in cand_list:
-            if os.path.isfile(c):
+            if c and os.path.isfile(c):
                 shutil.copy2(c, os.path.join(stage_cpp, tool))
                 break
 

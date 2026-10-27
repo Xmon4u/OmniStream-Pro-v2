@@ -131,12 +131,17 @@ def build_cpp_executable():
     res_str = result_line[0] if result_line else "All tests passed"
     print(f"  [OK] C++ Self-Tests successful ({res_str}).")
 
-    # Copy Downloader Engine tools to C++ Release directory
-    dl_engine_src = os.path.join(DESKTOP_DIR, "bin", "N_m3u8DL-RE.exe")
-    if not os.path.isfile(dl_engine_src):
-        dl_engine_src = os.path.join(RELEASE_DIR, "N_m3u8DL-RE.exe")
-    if os.path.isfile(dl_engine_src):
-        shutil.copy2(dl_engine_src, os.path.join(CPP_REL_DIR, "N_m3u8DL-RE.exe"))
+    # Copy Downloader Engine tools (N_m3u8DL-RE.exe and ffmpeg.exe) to C++ Release directory
+    for tool in ["N_m3u8DL-RE.exe", "ffmpeg.exe"]:
+        tool_src = os.path.join(DESKTOP_DIR, "bin", tool)
+        if not os.path.isfile(tool_src):
+            tool_src = os.path.join(RELEASE_DIR, tool)
+        if not os.path.isfile(tool_src):
+            which_p = shutil.which(tool)
+            if which_p and os.path.isfile(which_p):
+                tool_src = which_p
+        if tool_src and os.path.isfile(tool_src):
+            shutil.copy2(tool_src, os.path.join(CPP_REL_DIR, tool))
 
     # Copy icons
     icon_ico = os.path.join(CPP_DIR, "app_icon.ico")
@@ -245,23 +250,23 @@ def main():
     size_mb = os.path.getsize(release_exe_path) / (1024 * 1024)
     print(f"  [OK] Copied C++ Native {EXE_NAME} to release folder ({size_mb:.2f} MB).")
 
-    # 4. Copy downloader engine binary (N_m3u8DL-RE.exe)
-    dl_engine_src = os.path.join(CPP_REL_DIR, "N_m3u8DL-RE.exe")
-    if not os.path.exists(dl_engine_src):
-        dl_engine_src = os.path.join(DESKTOP_DIR, "bin", "N_m3u8DL-RE.exe")
-    if not os.path.exists(dl_engine_src):
-        appdata_bin = os.path.join(os.environ.get("LOCALAPPDATA", ""), "OmniStreamPro", "bin", "N_m3u8DL-RE.exe")
-        if os.path.exists(appdata_bin):
-            dl_engine_src = appdata_bin
-        else:
-            which_bin = shutil.which("N_m3u8DL-RE.exe")
-            if which_bin:
-                dl_engine_src = which_bin
+    # 4. Copy downloader engine binaries (N_m3u8DL-RE.exe & ffmpeg.exe)
+    for tool_name in ["N_m3u8DL-RE.exe", "ffmpeg.exe"]:
+        t_src = os.path.join(CPP_REL_DIR, tool_name)
+        if not os.path.exists(t_src):
+            t_src = os.path.join(DESKTOP_DIR, "bin", tool_name)
+        if not os.path.exists(t_src):
+            t_src = os.path.join(os.environ.get("LOCALAPPDATA", ""), "OmniStreamPro", "bin", tool_name)
+        if not os.path.exists(t_src):
+            which_p = shutil.which(tool_name)
+            if which_p and os.path.exists(which_p):
+                t_src = which_p
+        if t_src and os.path.exists(t_src):
+            shutil.copy2(t_src, os.path.join(RELEASE_DIR, tool_name))
+            print(f"  [OK] Copied {tool_name} to release folder.")
 
     dl_engine_dst = os.path.join(RELEASE_DIR, "N_m3u8DL-RE.exe")
-    if os.path.exists(dl_engine_src):
-        shutil.copy2(dl_engine_src, dl_engine_dst)
-        print(f"  [OK] Copied Downloader engine (N_m3u8DL-RE.exe) to release folder.")
+    ffmpeg_dst = os.path.join(RELEASE_DIR, "ffmpeg.exe")
 
     # 5. Package Standalone C++ Portable Suite
     portable_zip_path = os.path.join(RELEASE_DIR, PORTABLE_ZIP)
@@ -279,6 +284,7 @@ def main():
         (PORTABLE_ZIP, portable_zip_path),
         (EXT_ZIP_NAME, ext_zip_path),
         ("N_m3u8DL-RE.exe", dl_engine_dst),
+        ("ffmpeg.exe", ffmpeg_dst),
         ("uninstall.exe", uninst_path),
     ]
     for name, src in assets:
