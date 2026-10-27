@@ -136,6 +136,7 @@ function isPlaylistItem(item) {
   if (/\.(m4s|ts|aac|m4a|vtt|srt|jpg|png|webp|gif)(\?|#|$)/.test(path)) return false;
   if (/(preview|trailer|thumb|sprite|poster|preroll|advert|\/ads\/)/.test(lo)) return false;
   if (/(^|\/)(audio|audios|subtitle|subtitles|caption)\//.test(path)) return false;
+  if (/\/(a|sub|subs)\/\d+\//.test(path)) return false;
 
   const mime = String(item.mime || '').toLowerCase();
   const typeLo = String(item.type || '').toLowerCase();
@@ -310,7 +311,23 @@ function captureFromRequest(details, extra) {
 
   if (!tabMediaMap.has(details.tabId)) tabMediaMap.set(details.tabId, []);
   const mediaList = tabMediaMap.get(details.tabId);
-  if (isDuplicate(mediaList, url)) return;
+  const norm = url.split('?')[0].toLowerCase();
+  const existing = mediaList.find(item => item.url === url || item.url.split('?')[0].toLowerCase() === norm);
+  if (existing) {
+    if (extra && extra.headers && Object.keys(extra.headers).length > 0) {
+      existing.headers = { ...existing.headers, ...extra.headers };
+      if (extra.headers['referer']) existing.referer = extra.headers['referer'];
+      if (extra.headers['origin']) existing.origin = extra.headers['origin'];
+      if (extra.headers['user-agent']) existing.userAgent = extra.headers['user-agent'];
+    }
+    if (extra && extra.curl && extra.curl !== `curl "${url}"`) {
+      existing.curl = extra.curl;
+    }
+    if (extra && extra.mime) existing.mime = extra.mime;
+    if (extra && extra.size) existing.size = extra.size;
+    persistTab(details.tabId, mediaList);
+    return;
+  }
 
   const headersObj = (extra && extra.headers) || {};
   const mediaItem = {

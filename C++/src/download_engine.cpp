@@ -435,18 +435,31 @@ bool DownloadEngine::DownloadHlsStream(const StreamInfo& info, const std::string
     HlsPlaylist master = HlsParser::Parse(masterContent, info.url);
 
     std::string videoUrl = info.url;
+    HttpResponse variantResp;
     if (master.isMaster) {
-        HlsTrack bestVideo = HlsParser::SelectBestVideoTrack(master, options.resolution);
-        if (bestVideo.uri.empty()) {
-            if (options.onLog) options.onLog("No valid video variant found in master playlist.");
+        auto tracks = master.tracks;
+        std::sort(tracks.begin(), tracks.end(), [](const HlsTrack& a, const HlsTrack& b) {
+            return a.bandwidth > b.bandwidth;
+        });
+        bool found = false;
+        for (const auto& trk : tracks) {
+            if (trk.uri.empty()) continue;
+            HttpResponse testResp = client.Get(trk.uri, info.headers);
+            if (testResp.IsSuccess() && !testResp.body.empty()) {
+                videoUrl = trk.uri;
+                variantResp = std::move(testResp);
+                found = true;
+                if (options.onLog) options.onLog("Selected Stream Variant: " + trk.name + " (" + trk.resolution + ")");
+                break;
+            }
+        }
+        if (!found) {
+            if (options.onLog) options.onLog("No reachable video variant found in master playlist.");
             return false;
         }
-        videoUrl = bestVideo.uri;
-        if (options.onLog) options.onLog("Selected Stream Variant: " + bestVideo.name + " (" + bestVideo.resolution + ")");
+    } else {
+        variantResp = client.Get(videoUrl, info.headers);
     }
-
-    // Fetch Variant Media Playlist
-    HttpResponse variantResp = client.Get(videoUrl, info.headers);
     if (!variantResp.IsSuccess()) {
         if (options.onLog) options.onLog("Failed to fetch media playlist.");
         return false;
@@ -508,9 +521,40 @@ bool DownloadEngine::DownloadWithNM3U8(
     std::string isolatedTemp = (outPath.parent_path() / (".omnistream_tmp_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()))).string();
     std::filesystem::create_directories(isolatedTemp);
 
+    std::string targetUrl = info.url;
+    std::string sanitizedPlaylistFile;
+
+    // Pre-flight check: sanitize malformed master playlists (e.g. "https:///" lacking hostname that crashes N_m3u8DL-RE)
+    if (info.url.find(".m3u8") != std::string::npos || info.url.find("m3u8") != std::string::npos) {
+        HttpClient checkClient(info.user_agent);
+        HttpResponse checkResp = checkClient.Get(info.url, info.headers);
+        if (checkResp.IsSuccess()) {
+            std::string content = checkResp.Text();
+            if (content.find("https:////") != std::string::npos || content.find("https:///") != std::string::npos) {
+                std::string origin = CurlParser::ExtractOrigin(info.url);
+                if (origin.empty()) origin = info.origin;
+                if (!origin.empty()) {
+                    size_t p = 0;
+                    while ((p = content.find("https:///", p)) != std::string::npos) {
+                        content.replace(p, 9, origin + "/");
+                        p += origin.size() + 1;
+                    }
+                    sanitizedPlaylistFile = isolatedTemp + "/sanitized_master.m3u8";
+                    std::ofstream f(sanitizedPlaylistFile, std::ios::binary);
+                    if (f.is_open()) {
+                        f << content;
+                        f.close();
+                        targetUrl = sanitizedPlaylistFile;
+                        if (options.onLog) options.onLog("[Engine] Sanitized malformed master playlist URIs (missing CDN hostname fixed).");
+                    }
+                }
+            }
+        }
+    }
+
     std::ostringstream cmd;
     int thCount = options.threadCount > 0 ? options.threadCount : 16;
-    cmd << "\"" << nm3u8Path << "\" \"" << info.url << "\" "
+    cmd << "\"" << nm3u8Path << "\" \"" << targetUrl << "\" "
         << "--auto-select --live-perform-as-vod "
         << "--save-dir \"" << saveDir << "\" "
         << "--save-name \"" << saveName << "\" "
@@ -551,7 +595,7 @@ bool DownloadEngine::DownloadWithNM3U8(
 
         // Audio selection
         if (options.mode == "sub_merge") {
-            cmd << "-sa all ";
+            cmd << "-sa for=best ";
         } else if (options.audioChoice == "dual") {
             cmd << "-sa lang=\"en|eng|hi|hin\":for=all ";
         } else if (options.audioChoice == "en") {
@@ -559,7 +603,8 @@ bool DownloadEngine::DownloadWithNM3U8(
         } else if (options.audioChoice == "hi") {
             cmd << "-sa lang=\"hi|hin\":for=best ";
         } else {
-            cmd << "-sa all ";
+            // Pick best available lossless audio track (avoids crashing if unused multi-language CDN tracks are 404)
+            cmd << "-sa for=best ";
         }
 
         // Subtitles inclusion
