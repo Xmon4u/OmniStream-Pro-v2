@@ -155,7 +155,7 @@ bool DownloadEngine::DownloadDirectStream(const StreamInfo& info, const std::str
         }
 
         if (options.onProgress) {
-            options.onProgress(pct, speedStr, etaStr, downloaded);
+            options.onProgress(pct, speedStr, etaStr, downloaded, FormatBytes(downloaded));
         }
     };
 
@@ -272,7 +272,7 @@ bool DownloadEngine::DownloadTrackSegments(
                 }
 
                 if (options.onProgress) {
-                    options.onProgress(pct, speedStr, etaStr, totalDownloadedBytes.load());
+                    options.onProgress(pct, speedStr, etaStr, totalDownloadedBytes.load(), FormatBytes(totalDownloadedBytes.load()));
                 }
             }
         });
@@ -462,11 +462,18 @@ bool DownloadEngine::DownloadWithNM3U8(
 
     char buffer[4096];
     DWORD bytesRead = 0;
-    std::string lineAccumulator;
+    std::string streamAccumulator;
 
     std::regex pctRegex(R"((\d+(?:\.\d+)?)\s*%)");
-    std::regex speedRegex(R"((\d+(?:\.\d+)?)\s*([KMGT]i?B/s))", std::regex::icase);
+    std::regex sizePairRegex(R"((\d+(?:\.\d+)?\s*[KMGT]i?B)\s*/\s*(\d+(?:\.\d+)?\s*[KMGT]i?B))", std::regex::icase);
+    std::regex speedRegex(R"((\d+(?:\.\d+)?)\s*([KMGT]i?B(?:ps|/s)|Bps|B/s))", std::regex::icase);
     std::regex etaRegex(R"((\d{1,2}:\d{2}(?::\d{2})?))");
+
+    float lastReportedPct = 0.0f;
+    std::string lastReportedSpeed = "0.0 MB/s";
+    std::string lastReportedEta = "--";
+    std::string lastReportedSize = "-- / --";
+    uint64_t lastReportedBytes = 0;
 
     while (ReadFile(hStdOutRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
         if (m_aborted.load()) {
@@ -475,41 +482,74 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
 
         buffer[bytesRead] = '\0';
-        for (DWORD i = 0; i < bytesRead; ++i) {
-            char c = buffer[i];
-            if (c == '\r' || c == '\n') {
-                if (!lineAccumulator.empty()) {
-                    if (options.onLog) {
-                        options.onLog(lineAccumulator);
-                    }
-                    std::smatch mPct;
-                    if (std::regex_search(lineAccumulator, mPct, pctRegex)) {
-                        float pct = std::stof(mPct[1].str());
-                        std::string speedStr = "0.0 MB/s";
-                        std::string etaStr = "--";
+        streamAccumulator.append(buffer, bytesRead);
 
-                        std::smatch mSpeed;
-                        if (std::regex_search(lineAccumulator, mSpeed, speedRegex)) {
-                            speedStr = mSpeed[0].str();
-                        }
-                        std::smatch mEta;
-                        if (std::regex_search(lineAccumulator, mEta, etaRegex)) {
-                            etaStr = mEta[1].str();
-                        }
-
-                        if (options.onProgress) {
-                            options.onProgress(pct, speedStr, etaStr, 0);
-                        }
-                    } else if (lineAccumulator.find("Muxing") != std::string::npos || lineAccumulator.find("merging") != std::string::npos) {
-                        if (options.onProgress) {
-                            options.onProgress(99.0f, "Muxing", "0s", 0);
-                        }
-                    }
-                    lineAccumulator.clear();
-                }
-            } else {
-                lineAccumulator += c;
+        // Forward complete lines to onLog if newlines exist
+        size_t nlPos = std::string::npos;
+        while ((nlPos = streamAccumulator.find('\n')) != std::string::npos) {
+            std::string line = streamAccumulator.substr(0, nlPos);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (options.onLog && !line.empty()) {
+                options.onLog(line);
             }
+            streamAccumulator.erase(0, nlPos + 1);
+        }
+
+        // Search for progress in recent window (since piped N_m3u8DL-RE outputs continuous records without newlines)
+        std::string searchWindow = streamAccumulator;
+        if (searchWindow.size() > 800) {
+            searchWindow = searchWindow.substr(searchWindow.size() - 800);
+        }
+
+        auto pBegin = std::sregex_iterator(searchWindow.begin(), searchWindow.end(), pctRegex);
+        auto pEnd = std::sregex_iterator();
+        std::smatch lastPct;
+        bool foundPct = false;
+        for (std::sregex_iterator it = pBegin; it != pEnd; ++it) {
+            lastPct = *it;
+            foundPct = true;
+        }
+
+        if (foundPct) {
+            float pct = std::stof(lastPct[1].str());
+            std::string sub = searchWindow.substr(lastPct.position(0));
+
+            std::smatch mSize;
+            if (std::regex_search(sub, mSize, sizePairRegex)) {
+                lastReportedSize = mSize[1].str() + " / " + mSize[2].str();
+            }
+
+            std::smatch mSpeed;
+            if (std::regex_search(sub, mSpeed, speedRegex)) {
+                std::string sVal = mSpeed[1].str();
+                std::string rawUnit = mSpeed[2].str();
+                std::string uUpper = rawUnit;
+                std::transform(uUpper.begin(), uUpper.end(), uUpper.begin(), ::toupper);
+                if (uUpper == "MBPS" || uUpper == "MIBPS") rawUnit = "MB/s";
+                else if (uUpper == "KBPS" || uUpper == "KIBPS") rawUnit = "KB/s";
+                else if (uUpper == "GBPS" || uUpper == "GIBPS") rawUnit = "GB/s";
+                else if (uUpper == "BPS") rawUnit = "B/s";
+                lastReportedSpeed = sVal + " " + rawUnit;
+            }
+
+            std::smatch mEta;
+            if (std::regex_search(sub, mEta, etaRegex)) {
+                lastReportedEta = mEta[1].str();
+            }
+
+            lastReportedPct = pct;
+
+            if (options.onProgress) {
+                options.onProgress(lastReportedPct, lastReportedSpeed, lastReportedEta, lastReportedBytes, lastReportedSize);
+            }
+        } else if (searchWindow.find("Muxing") != std::string::npos || searchWindow.find("merging") != std::string::npos) {
+            if (options.onProgress) {
+                options.onProgress(99.0f, "Muxing", "0s", lastReportedBytes, lastReportedSize);
+            }
+        }
+
+        if (streamAccumulator.size() > 8192) {
+            streamAccumulator = streamAccumulator.substr(streamAccumulator.size() - 2048);
         }
     }
 
@@ -532,21 +572,31 @@ bool DownloadEngine::DownloadWithNM3U8(
         std::filesystem::remove_all(isolatedTemp);
     } catch (...) {}
 
-    if (std::filesystem::exists(outputFile) && std::filesystem::file_size(outputFile) > 0) {
+    uint64_t finalSz = 0;
+    if (std::filesystem::exists(outputFile) && (finalSz = std::filesystem::file_size(outputFile)) > 0) {
+        if (options.onProgress) {
+            options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
+        }
         return true;
     }
 
     std::filesystem::path altMkv = outPath.parent_path() / (saveName + ".mkv");
     std::filesystem::path altMp4 = outPath.parent_path() / (saveName + ".mp4");
-    if (std::filesystem::exists(altMkv) && std::filesystem::file_size(altMkv) > 0) {
+    if (std::filesystem::exists(altMkv) && (finalSz = std::filesystem::file_size(altMkv)) > 0) {
         if (altMkv.string() != outputFile) {
             std::filesystem::rename(altMkv, outputFile);
         }
+        if (options.onProgress) {
+            options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
+        }
         return true;
     }
-    if (std::filesystem::exists(altMp4) && std::filesystem::file_size(altMp4) > 0) {
+    if (std::filesystem::exists(altMp4) && (finalSz = std::filesystem::file_size(altMp4)) > 0) {
         if (altMp4.string() != outputFile) {
             std::filesystem::rename(altMp4, outputFile);
+        }
+        if (options.onProgress) {
+            options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
         }
         return true;
     }

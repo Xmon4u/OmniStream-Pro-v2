@@ -552,7 +552,7 @@ void MainWindow::StartDownload(bool subtitleOnly) {
     AddToQueue(inputUrl, m_curTitle, resolution);
 
     HWND hwnd = m_hwnd;
-    options.onProgress = [hwnd](float pct, const std::string& speed, const std::string& eta, uint64_t bytes) {
+    options.onProgress = [hwnd](float pct, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& /*sizeStr*/) {
         auto* payload = new ProgressPayload{ pct, speed, eta, bytes };
         PostMessageW(hwnd, WM_OMNI_PROGRESS, 0, (LPARAM)payload);
     };

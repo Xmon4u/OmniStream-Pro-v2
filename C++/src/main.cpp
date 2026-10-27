@@ -237,7 +237,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Wire terminal progress bar
-    options.onProgress = [](float percent, const std::string& speed, const std::string& eta, uint64_t bytes) {
+    options.onProgress = [](float percent, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& sizeStr) {
         int barWidth = 30;
         int filled = static_cast<int>(barWidth * (percent / 100.0f));
 
@@ -249,7 +249,7 @@ int main(int argc, char* argv[]) {
                   << Color::Bold << std::fixed << std::setprecision(1) << percent << "% " << Color::Reset
                   << "| " << Color::Green << speed << Color::Reset
                   << " | ETA: " << eta
-                  << " | " << FormatBytes(bytes) << "   " << std::flush;
+                  << " | " << (sizeStr.empty() ? FormatBytes(bytes) : sizeStr) << "   " << std::flush;
     };
 
     options.onLog = [](const std::string& msg) {

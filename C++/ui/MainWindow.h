@@ -14,6 +14,16 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QTimer>
+#include <QMenu>
+#include <QAction>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QClipboard>
+#include <QProcess>
+#include <QDir>
+#include <QFileInfo>
 #include <cmath>
 #include <memory>
 #include <atomic>
@@ -196,7 +206,7 @@ public:
 
 signals:
     void logMessageReceived(const QString& msg);
-    void progressUpdated(float pct, const QString& speed, const QString& eta, quint64 bytes);
+    void progressUpdated(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr);
     void downloadCompleted(bool success);
 
 protected:
@@ -223,8 +233,17 @@ private slots:
     void onDownloadModeChanged(int modeIdx);
     void setDownloadMode(const QString& modeStr);
     void handleLogMessage(const QString& msg);
-    void handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes);
+    void handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr);
     void handleDownloadComplete(bool success);
+    void showQueueContextMenu(const QPoint& pos);
+    void playQueueItemFile(int row);
+    void openQueueItemLocation(int row);
+    void renameQueueItemTitle(int row);
+    void copyQueueItemUrl(int row);
+    void copyQueueItemFilePath(int row);
+    void deleteQueueItemFile(int row);
+    void removeQueueItem(int row);
+    void updateQueueStats();
 
 private:
     void setupUI();
@@ -318,7 +337,9 @@ private:
     // Backend Core
     struct QueueEntry {
         DownloadOptions options;
-        QString status; // "Queued", "Downloading", "Done", "Failed"
+        QString status; // "Queued", "Downloading", "Done", "Failed", "Cancelled"
+        QString downloadedSize;
+        QString filePath;
     };
     std::vector<QueueEntry> m_queueItems;
     int m_activeQueueIndex = -1;

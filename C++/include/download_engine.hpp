@@ -23,7 +23,7 @@ struct DownloadOptions {
     std::string imdbId;
     std::string tmdbId;
 
-    std::function<void(float percent, const std::string& speed, const std::string& eta, uint64_t downloadedBytes)> onProgress;
+    std::function<void(float percent, const std::string& speed, const std::string& eta, uint64_t downloadedBytes, const std::string& sizeStr)> onProgress;
     std::function<void(const std::string& message)> onLog;
 };
 

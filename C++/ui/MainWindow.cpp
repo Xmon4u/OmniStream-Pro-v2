@@ -584,6 +584,12 @@ void MainWindow::setupUI() {
     m_tableQueue->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
     m_tableQueue->verticalHeader()->setVisible(false);
     m_tableQueue->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tableQueue->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_tableQueue->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tableQueue, &QTableWidget::customContextMenuRequested, this, &MainWindow::showQueueContextMenu);
+    connect(m_tableQueue, &QTableWidget::cellDoubleClicked, this, [this](int row, int /*col*/) {
+        playQueueItemFile(row);
+    });
     m_tableQueue->setVisible(false);
     queuePageLayout->addWidget(m_tableQueue);
 
@@ -934,6 +940,36 @@ void MainWindow::applyStyleSheet(int themeIdx) {
             border: 1px solid %4;
             padding: 4px;
         }
+        QMenu {
+            background-color: %1;
+            border: 1px solid #38bdf8;
+            border-radius: 8px;
+            padding: 6px;
+            color: #f0f6fc;
+            font-size: 12px;
+        }
+        QMenu::item {
+            background-color: transparent;
+            padding: 6px 24px 6px 12px;
+            border-radius: 5px;
+            margin: 2px 0px;
+        }
+        QMenu::item:selected {
+            background-color: #1e293b;
+            color: #38bdf8;
+        }
+        QMenu::item:disabled {
+            color: #475569;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #334155;
+            margin: 4px 8px;
+        }
+        QInputDialog, QMessageBox {
+            background-color: %1;
+            color: #f0f6fc;
+        }
         #lblFooterBridge {
             color: #10b981;
             font-size: 11px;
@@ -1186,8 +1222,8 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
     auto engine = std::make_shared<DownloadEngine>();
     m_currentEngine = engine;
 
-    options.onProgress = [this](float pct, const std::string& speed, const std::string& eta, uint64_t bytes) {
-        emit progressUpdated(pct, QString::fromStdString(speed), QString::fromStdString(eta), bytes);
+    options.onProgress = [this](float pct, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& sizeStr) {
+        emit progressUpdated(pct, QString::fromStdString(speed), QString::fromStdString(eta), bytes, QString::fromStdString(sizeStr));
     };
 
     options.onLog = [this](const std::string& msg) {
@@ -1255,37 +1291,56 @@ void MainWindow::addQueueItem(const DownloadOptions& opts) {
         }
     }
 
+    updateQueueStats();
+}
+
+void MainWindow::updateQueueStats() {
     int total = static_cast<int>(m_queueItems.size());
     int waiting = 0;
+    int done = 0;
     for (const auto& it : m_queueItems) {
         if (it.status == "Queued") waiting++;
+        else if (it.status == "Done") done++;
     }
     m_btnTabQueue->setText(QString(" Download Queue (%1)").arg(total));
-    m_lblQueueStats->setText(QString("Queue: %1 total \u2022 %2 active \u2022 %3 waiting \u2022 0 done")
-        .arg(total).arg(m_isDownloading.load() ? 1 : 0).arg(waiting));
+    m_lblQueueStats->setText(QString("Queue: %1 total \u2022 %2 active \u2022 %3 waiting \u2022 %4 done")
+        .arg(total).arg(m_isDownloading.load() ? 1 : 0).arg(waiting).arg(done));
 }
 
 void MainWindow::handleLogMessage(const QString& msg) {
     m_editTerminal->appendPlainText(msg);
 }
 
-void MainWindow::handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes) {
+void MainWindow::handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr) {
     m_progBar->setValue(static_cast<int>(pct));
     m_lblProgPct->setText(QString::number(pct, 'f', 1) + "%");
     m_lblProgSpeed->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
-    m_lblProgSize->setText("Downloaded: " + QString::fromStdString(FormatBytes(bytes)));
+
+    QString displaySize = sizeStr;
+    if (displaySize.isEmpty() || displaySize == "-- / --") {
+        if (bytes > 0) {
+            displaySize = QString::fromStdString(FormatBytes(bytes));
+        } else {
+            displaySize = "-- / --";
+        }
+    }
+    m_lblProgSize->setText("Downloaded: " + displaySize);
 
     if (pct >= 100.0f) {
         m_lblProgStatus->setText("Completed \u2014 File saved successfully.");
     } else if (pct > 0.0f) {
-        m_lblProgStatus->setText("Downloading segments \u2022 ETA: " + eta);
+        m_lblProgStatus->setText("Downloading segments \u2022 ETA: " + (eta.isEmpty() ? "--" : eta));
     }
 
     if (m_tableQueue && m_activeQueueIndex >= 0 && m_activeQueueIndex < m_tableQueue->rowCount()) {
         int activeRow = m_activeQueueIndex;
         if (auto *pItem = m_tableQueue->item(activeRow, 2)) pItem->setText(QString::number(pct, 'f', 1) + "%");
         if (auto *sItem = m_tableQueue->item(activeRow, 3)) sItem->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
-        if (auto *szItem = m_tableQueue->item(activeRow, 4)) szItem->setText(QString::fromStdString(FormatBytes(bytes)));
+        if (auto *szItem = m_tableQueue->item(activeRow, 4)) {
+            if (!displaySize.isEmpty() && displaySize != "-- / --") {
+                szItem->setText(displaySize);
+            }
+        }
         if (auto *stItem = m_tableQueue->item(activeRow, 5)) {
             stItem->setText("Downloading");
             stItem->setForeground(QBrush(QColor("#38bdf8")));
@@ -1298,7 +1353,30 @@ void MainWindow::handleDownloadComplete(bool success) {
 
     if (m_activeQueueIndex >= 0 && m_activeQueueIndex < static_cast<int>(m_queueItems.size())) {
         m_queueItems[m_activeQueueIndex].status = success ? "Done" : "Failed";
+
+        // Determine final saved file path
+        std::string sDir = m_queueItems[m_activeQueueIndex].options.saveDir;
+        std::string sName = m_queueItems[m_activeQueueIndex].options.saveName;
+        std::filesystem::path fp = std::filesystem::path(sDir) / (sName + ".mkv");
+        if (!std::filesystem::exists(fp)) {
+            fp = std::filesystem::path(sDir) / (sName + ".mp4");
+        }
+        if (std::filesystem::exists(fp)) {
+            m_queueItems[m_activeQueueIndex].filePath = QString::fromStdWString(fp.wstring());
+            uint64_t fsz = std::filesystem::file_size(fp);
+            m_queueItems[m_activeQueueIndex].downloadedSize = QString::fromStdString(FormatBytes(fsz));
+        }
+
         if (m_tableQueue && m_activeQueueIndex < m_tableQueue->rowCount()) {
+            if (success) {
+                if (auto *pItem = m_tableQueue->item(m_activeQueueIndex, 2)) pItem->setText("100%");
+                if (auto *sItem = m_tableQueue->item(m_activeQueueIndex, 3)) sItem->setText("Done");
+                if (!m_queueItems[m_activeQueueIndex].downloadedSize.isEmpty()) {
+                    if (auto *szItem = m_tableQueue->item(m_activeQueueIndex, 4)) {
+                        szItem->setText(m_queueItems[m_activeQueueIndex].downloadedSize);
+                    }
+                }
+            }
             if (auto *stItem = m_tableQueue->item(m_activeQueueIndex, 5)) {
                 stItem->setText(success ? "Done" : "Failed");
                 stItem->setForeground(QBrush(QColor(success ? "#34d399" : "#f87171")));
@@ -1308,20 +1386,16 @@ void MainWindow::handleDownloadComplete(bool success) {
 
     // Check if there are remaining waiting items in queue
     int nextWaiting = -1;
-    int doneCount = 0;
-    int waitingCount = 0;
     for (size_t i = 0; i < m_queueItems.size(); ++i) {
         if (m_queueItems[i].status == "Queued") {
-            waitingCount++;
-            if (nextWaiting < 0) nextWaiting = static_cast<int>(i);
-        } else if (m_queueItems[i].status == "Done") {
-            doneCount++;
+            nextWaiting = static_cast<int>(i);
+            break;
         }
     }
 
+    updateQueueStats();
+
     if (nextWaiting >= 0) {
-        m_lblQueueStats->setText(QString("Queue: %1 total \u2022 1 active \u2022 %2 waiting \u2022 %3 done")
-            .arg(m_queueItems.size()).arg(waitingCount).arg(doneCount));
         startDownloadEngine(false);
     } else {
         m_btnStart->setEnabled(true);
@@ -1331,16 +1405,237 @@ void MainWindow::handleDownloadComplete(bool success) {
         if (success) {
             m_progBar->setValue(100);
             m_lblProgPct->setText("100%");
-            m_lblProgStatus->setText("Download Completed Successfully! 100% Verified.");
+            m_lblProgSpeed->setText("Complete");
+            m_lblProgStatus->setText("Download finished successfully.");
+            if (m_activeQueueIndex >= 0 && !m_queueItems[m_activeQueueIndex].downloadedSize.isEmpty()) {
+                m_lblProgSize->setText("Downloaded: " + m_queueItems[m_activeQueueIndex].downloadedSize);
+            }
             handleLogMessage("[Engine] 100% Download Completed Successfully.");
         } else {
             m_lblProgStatus->setText("Download finished with warnings or errors.");
             handleLogMessage("[Engine] Download finished.");
         }
-
-        m_lblQueueStats->setText(QString("Queue: %1 total \u2022 0 active \u2022 0 waiting \u2022 %2 done")
-            .arg(m_queueItems.size()).arg(doneCount));
     }
+}
+
+void MainWindow::playQueueItemFile(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    const auto& item = m_queueItems[row];
+
+    QString targetFile = item.filePath;
+    if (targetFile.isEmpty() || !QFile::exists(targetFile)) {
+        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
+        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
+        if (std::filesystem::exists(p1)) targetFile = QString::fromStdWString(p1.wstring());
+        else if (std::filesystem::exists(p2)) targetFile = QString::fromStdWString(p2.wstring());
+    }
+
+    if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(targetFile));
+        handleLogMessage("[Queue] Opening video: " + targetFile);
+    } else {
+        QMessageBox::information(this, "File Not Found",
+            "The media file for this item is not yet downloaded or does not exist on disk:\n" +
+            QString::fromStdString(item.options.saveName));
+    }
+}
+
+void MainWindow::openQueueItemLocation(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    const auto& item = m_queueItems[row];
+
+    QString targetFile = item.filePath;
+    if (targetFile.isEmpty() || !QFile::exists(targetFile)) {
+        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
+        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
+        if (std::filesystem::exists(p1)) targetFile = QString::fromStdWString(p1.wstring());
+        else if (std::filesystem::exists(p2)) targetFile = QString::fromStdWString(p2.wstring());
+    }
+
+    if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
+        QStringList args;
+        args << "/select," << QDir::toNativeSeparators(targetFile);
+        QProcess::startDetached("explorer.exe", args);
+        handleLogMessage("[Queue] Showing in Explorer: " + targetFile);
+    } else {
+        QString dir = QString::fromStdString(item.options.saveDir);
+        if (QDir(dir).exists()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        } else {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QDir::homePath() + "/Desktop"));
+        }
+    }
+}
+
+void MainWindow::renameQueueItemTitle(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    auto& item = m_queueItems[row];
+    QString currentTitle = QString::fromStdString(item.options.saveName);
+
+    bool ok = false;
+    QString newTitle = QInputDialog::getText(
+        this,
+        "Change Item Title",
+        "Enter new title for this item:",
+        QLineEdit::Normal,
+        currentTitle,
+        &ok
+    ).trimmed();
+
+    if (!ok || newTitle.isEmpty() || newTitle == currentTitle) return;
+
+    QString oldFilePath = item.filePath;
+    if (oldFilePath.isEmpty() || !QFile::exists(oldFilePath)) {
+        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
+        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
+        if (std::filesystem::exists(p1)) oldFilePath = QString::fromStdWString(p1.wstring());
+        else if (std::filesystem::exists(p2)) oldFilePath = QString::fromStdWString(p2.wstring());
+    }
+
+    if (!oldFilePath.isEmpty() && QFile::exists(oldFilePath)) {
+        QFileInfo fi(oldFilePath);
+        QString newFilePath = fi.dir().filePath(newTitle + "." + fi.suffix());
+        if (QFile::rename(oldFilePath, newFilePath)) {
+            item.filePath = newFilePath;
+            handleLogMessage("[Rename] Renamed disk file to: " + newTitle + "." + fi.suffix());
+        } else {
+            QMessageBox::warning(this, "Rename Failed", "Could not rename file on disk. It may be in use by another program.");
+        }
+    }
+
+    item.options.saveName = newTitle.toStdString();
+    if (m_tableQueue && row < m_tableQueue->rowCount()) {
+        if (auto *titleItem = m_tableQueue->item(row, 0)) {
+            titleItem->setText(newTitle);
+        }
+    }
+    handleLogMessage("[Rename] Item title updated: " + newTitle);
+}
+
+void MainWindow::copyQueueItemUrl(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    QString url = QString::fromStdString(m_queueItems[row].options.inputText);
+    QGuiApplication::clipboard()->setText(url);
+    handleLogMessage("[Queue] Copied stream URL to clipboard.");
+}
+
+void MainWindow::copyQueueItemFilePath(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    const auto& item = m_queueItems[row];
+    QString path = item.filePath;
+    if (path.isEmpty()) {
+        path = QDir(QString::fromStdString(item.options.saveDir)).filePath(QString::fromStdString(item.options.saveName) + ".mkv");
+    }
+    QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(path));
+    handleLogMessage("[Queue] Copied file path to clipboard: " + path);
+}
+
+void MainWindow::removeQueueItem(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+
+    if (row == m_activeQueueIndex && m_isDownloading.load()) {
+        onStopClicked();
+    }
+
+    m_queueItems.erase(m_queueItems.begin() + row);
+    m_tableQueue->removeRow(row);
+
+    if (m_activeQueueIndex == row) {
+        m_activeQueueIndex = -1;
+    } else if (m_activeQueueIndex > row) {
+        m_activeQueueIndex--;
+    }
+
+    if (m_queueItems.empty()) {
+        m_tableQueue->setVisible(false);
+        m_emptyQueuePlaceholder->setVisible(true);
+    }
+    updateQueueStats();
+    handleLogMessage("[Queue] Item removed from queue.");
+}
+
+void MainWindow::deleteQueueItemFile(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    const auto& item = m_queueItems[row];
+
+    QString targetFile = item.filePath;
+    if (targetFile.isEmpty() || !QFile::exists(targetFile)) {
+        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
+        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
+        if (std::filesystem::exists(p1)) targetFile = QString::fromStdWString(p1.wstring());
+        else if (std::filesystem::exists(p2)) targetFile = QString::fromStdWString(p2.wstring());
+    }
+
+    if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
+        auto res = QMessageBox::question(
+            this,
+            "Delete File Permanently",
+            "Are you sure you want to permanently delete this downloaded file from disk?\n\n" + targetFile,
+            QMessageBox::Yes | QMessageBox::No
+        );
+        if (res == QMessageBox::Yes) {
+            if (QFile::remove(targetFile)) {
+                handleLogMessage("[Queue] Deleted file from disk: " + targetFile);
+            } else {
+                QMessageBox::warning(this, "Delete Failed", "Could not delete file from disk. It may be locked by another program.");
+            }
+        }
+    }
+    removeQueueItem(row);
+}
+
+void MainWindow::showQueueContextMenu(const QPoint& pos) {
+    int row = m_tableQueue->rowAt(pos.y());
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+
+    const auto& item = m_queueItems[row];
+    bool isDone = (item.status == "Done");
+    bool isDownloading = (item.status == "Downloading");
+
+    QMenu menu(this);
+    menu.setObjectName("queueContextMenu");
+
+    QAction *actPlay = menu.addAction("▶  Play / Open Video");
+    QAction *actOpenDir = menu.addAction("📂  Open File Location");
+    menu.addSeparator();
+
+    QAction *actRename = menu.addAction("✏️  Change Title / Rename");
+    menu.addSeparator();
+
+    QAction *actCopyUrl = menu.addAction("🔗  Copy Stream URL");
+    QAction *actCopyPath = menu.addAction("📋  Copy File Path");
+    menu.addSeparator();
+
+    QAction *actStart = nullptr;
+    QAction *actCancel = nullptr;
+    if (!isDownloading && !isDone) {
+        actStart = menu.addAction("▶  Start This Download");
+    } else if (isDownloading) {
+        actCancel = menu.addAction("⏹  Cancel Download");
+    }
+
+    QAction *actRemove = menu.addAction("🗑️  Remove from List");
+    QAction *actDelete = menu.addAction("❌  Delete File from Disk");
+
+    if (!isDone) {
+        actPlay->setEnabled(false);
+    }
+
+    QAction *chosen = menu.exec(m_tableQueue->viewport()->mapToGlobal(pos));
+    if (!chosen) return;
+
+    if (chosen == actPlay) playQueueItemFile(row);
+    else if (chosen == actOpenDir) openQueueItemLocation(row);
+    else if (chosen == actRename) renameQueueItemTitle(row);
+    else if (chosen == actCopyUrl) copyQueueItemUrl(row);
+    else if (chosen == actCopyPath) copyQueueItemFilePath(row);
+    else if (actStart && chosen == actStart) {
+        m_activeQueueIndex = row;
+        startDownloadEngine(false);
+    }
+    else if (actCancel && chosen == actCancel) onStopClicked();
+    else if (chosen == actRemove) removeQueueItem(row);
+    else if (chosen == actDelete) deleteQueueItemFile(row);
 }
 
 } // namespace OmniStream
