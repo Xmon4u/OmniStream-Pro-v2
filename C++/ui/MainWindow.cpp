@@ -1194,32 +1194,32 @@ void MainWindow::onSetupExtensionClicked() {
     vbox->setContentsMargins(24, 20, 24, 20);
     vbox->setSpacing(14);
 
-    auto *lblTitle = new QLabel("\u26A1 Chrome Extension 1-Click Setup", &dlg);
+    auto *lblTitle = new QLabel("\u26A1 Chrome / Edge Extension 1-Click Setup", &dlg);
     lblTitle->setObjectName("title");
     vbox->addWidget(lblTitle);
 
     auto *lblInfo = new QLabel(
-        "ব্রাউজার চালু করা হয়েছে এবং এক্সটেনশন ফোল্ডারটির পাথ স্বয়ংক্রিয়ভাবে ক্লিপবোর্ডে কপি করা হয়েছে!\n\n"
-        "১. ব্রাউজারের উপরে ডানে <b>Developer mode</b> টগল অন করুন।\n"
-        "২. <b>'Load unpacked'</b> বাটনে ক্লিক করুন।\n"
-        "৩. ওপেন হওয়া ডায়লগে ক্লিপবোর্ডে থাকা পাথটি পেস্ট করুন (বা খোলা ফোল্ডারটি সিলেক্ট করুন)।\n\n"
-        "এক্সটেনশন যুক্ত হওয়ার সাথে সাথেই OmniStream Pro নিজে থেকেই কানেক্ট হয়ে যাবে!", &dlg);
+        "Browser launched with the OmniStream Pro extension loaded, and the extension directory path has been automatically copied to your clipboard!\n\n"
+        "1. In your browser (chrome://extensions), toggle <b>Developer mode</b> on at the top right.\n"
+        "2. Click the <b>'Load unpacked'</b> button.\n"
+        "3. Paste the clipboard path into the folder selector (or select the opened folder).\n\n"
+        "Once loaded, OmniStream Pro connects automatically and is ready to capture streams!", &dlg);
     lblInfo->setWordWrap(true);
     vbox->addWidget(lblInfo);
 
     auto *btnBox = new QHBoxLayout();
-    auto *btnOpenFolder = new QPushButton(QString::fromUtf8("📁 ফোল্ডার খুলুন"), &dlg);
+    auto *btnOpenFolder = new QPushButton(QString::fromUtf8("📁 Open Folder"), &dlg);
     connect(btnOpenFolder, &QPushButton::clicked, [&]() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(nativeExtPath));
     });
 
-    auto *btnCopy = new QPushButton(QString::fromUtf8("📋 পাথ কপি করুন"), &dlg);
+    auto *btnCopy = new QPushButton(QString::fromUtf8("📋 Copy Path"), &dlg);
     connect(btnCopy, &QPushButton::clicked, [btnCopy, nativeExtPath]() {
         QGuiApplication::clipboard()->setText(nativeExtPath);
-        btnCopy->setText(QString::fromUtf8("✅ কপি সম্পন্ন!"));
+        btnCopy->setText(QString::fromUtf8("✅ Copied!"));
     });
 
-    auto *btnDone = new QPushButton(QString::fromUtf8("✓ ঠিক আছে"), &dlg);
+    auto *btnDone = new QPushButton(QString::fromUtf8("✓ Got it"), &dlg);
     btnDone->setObjectName("primary");
     connect(btnDone, &QPushButton::clicked, &dlg, &QDialog::accept);
 
