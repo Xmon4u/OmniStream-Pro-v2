@@ -363,6 +363,8 @@ void MainWindow::setupUI() {
 
     m_btnModeNormal = new QPushButton("\u2713 Normal", this);
     m_btnModeNormal->setObjectName("btnModeActive");
+    m_btnModeNetflix = new QPushButton("Netflix Mode", this);
+    m_btnModeNetflix->setObjectName("btnModeInactive");
     m_btnModeTitleOnly = new QPushButton("Title Only", this);
     m_btnModeTitleOnly->setObjectName("btnModeInactive");
     m_btnModeImdb = new QPushButton("IMDb Mode", this);
@@ -375,13 +377,15 @@ void MainWindow::setupUI() {
     m_btnModeSubMerge->setObjectName("btnModeInactive");
 
     connect(m_btnModeNormal, &QPushButton::clicked, [this]() { onDownloadModeChanged(0); });
-    connect(m_btnModeTitleOnly, &QPushButton::clicked, [this]() { onDownloadModeChanged(1); });
-    connect(m_btnModeImdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(2); });
-    connect(m_btnModeTmdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(3); });
-    connect(m_btnModeTitleId, &QPushButton::clicked, [this]() { onDownloadModeChanged(4); });
-    connect(m_btnModeSubMerge, &QPushButton::clicked, [this]() { onDownloadModeChanged(5); });
+    connect(m_btnModeNetflix, &QPushButton::clicked, [this]() { onDownloadModeChanged(1); });
+    connect(m_btnModeTitleOnly, &QPushButton::clicked, [this]() { onDownloadModeChanged(2); });
+    connect(m_btnModeImdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(3); });
+    connect(m_btnModeTmdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(4); });
+    connect(m_btnModeTitleId, &QPushButton::clicked, [this]() { onDownloadModeChanged(5); });
+    connect(m_btnModeSubMerge, &QPushButton::clicked, [this]() { onDownloadModeChanged(6); });
 
     modeLayout->addWidget(m_btnModeNormal);
+    modeLayout->addWidget(m_btnModeNetflix);
     modeLayout->addWidget(m_btnModeTitleOnly);
     modeLayout->addWidget(m_btnModeImdb);
     modeLayout->addWidget(m_btnModeTmdb);
@@ -1048,16 +1052,18 @@ void MainWindow::onBrowseClicked() {
 
 void MainWindow::setDownloadMode(const QString& modeStr) {
     QString m = modeStr.toLower();
-    if (m == "title_only" || m == "title") {
+    if (m.contains("netflix")) {
         onDownloadModeChanged(1);
-    } else if (m.contains("imdb") || m.contains("netflix")) {
+    } else if (m == "title_only" || m == "title") {
         onDownloadModeChanged(2);
-    } else if (m.contains("tmdb")) {
+    } else if (m.contains("imdb")) {
         onDownloadModeChanged(3);
-    } else if (m.contains("title_id") || m.contains("title+id") || m.contains("titleid")) {
+    } else if (m.contains("tmdb")) {
         onDownloadModeChanged(4);
-    } else if (m.contains("sub") || m.contains("merge")) {
+    } else if (m.contains("title_id") || m.contains("title+id") || m.contains("titleid")) {
         onDownloadModeChanged(5);
+    } else if (m.contains("sub") || m.contains("merge")) {
+        onDownloadModeChanged(6);
     } else {
         onDownloadModeChanged(0);
     }
@@ -1065,10 +1071,26 @@ void MainWindow::setDownloadMode(const QString& modeStr) {
 
 void MainWindow::onDownloadModeChanged(int modeIdx) {
     m_selectedMode = modeIdx;
-    QPushButton* btns[] = { m_btnModeNormal, m_btnModeTitleOnly, m_btnModeImdb, m_btnModeTmdb, m_btnModeTitleId, m_btnModeSubMerge };
-    const char* titles[] = { "Normal", "Title Only", "IMDb Mode", "TMDB Mode", "Title + ID", "Sub Merge" };
+    QPushButton* btns[] = { 
+        m_btnModeNormal, 
+        m_btnModeNetflix, 
+        m_btnModeTitleOnly, 
+        m_btnModeImdb, 
+        m_btnModeTmdb, 
+        m_btnModeTitleId, 
+        m_btnModeSubMerge 
+    };
+    const char* titles[] = { 
+        "Normal", 
+        "Netflix Mode", 
+        "Title Only", 
+        "IMDb Mode", 
+        "TMDB Mode", 
+        "Title + ID", 
+        "Sub Merge" 
+    };
 
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         if (!btns[i]) continue;
         if (i == modeIdx) {
             btns[i]->setObjectName("btnModeActive");
@@ -1082,11 +1104,12 @@ void MainWindow::onDownloadModeChanged(int modeIdx) {
     }
 
     std::string modeCode = "normal";
-    if (modeIdx == 1) modeCode = "title_only";
-    else if (modeIdx == 2) modeCode = "imdb_rename";
-    else if (modeIdx == 3) modeCode = "tmdb_rename";
-    else if (modeIdx == 4) modeCode = "title_id";
-    else if (modeIdx == 5) modeCode = "sub_merge";
+    if (modeIdx == 1) modeCode = "netflix_rename";
+    else if (modeIdx == 2) modeCode = "title_only";
+    else if (modeIdx == 3) modeCode = "imdb_rename";
+    else if (modeIdx == 4) modeCode = "tmdb_rename";
+    else if (modeIdx == 5) modeCode = "title_id";
+    else if (modeIdx == 6) modeCode = "sub_merge";
 
     if (m_bridgeServer) {
         m_bridgeServer->SetCurrentMode(modeCode);
@@ -1095,19 +1118,22 @@ void MainWindow::onDownloadModeChanged(int modeIdx) {
     if (modeIdx == 0) {
         handleLogMessage("[Mode] Switched to Normal Mode (Keeps original stream title/filename).");
     } else if (modeIdx == 1) {
-        handleLogMessage("[Mode] Switched to Title Only Mode: Movie Name (2025).mkv / S01E02.mkv.");
+        handleLogMessage("[Mode] Switched to Netflix Mode — Auto-identifies ID & renames to official movie/series title with video, multi-audio & subtitles.");
+        if (m_checkEmbedSubs) m_checkEmbedSubs->setChecked(true);
     } else if (modeIdx == 2) {
-        handleLogMessage("[Mode] Switched to IMDb Mode: tt1234567.mkv / S01E02 tt1234567.mkv.");
-        m_checkEmbedSubs->setChecked(true);
+        handleLogMessage("[Mode] Switched to Title Only Mode: Movie Name (2025).mkv / S01E02.mkv.");
     } else if (modeIdx == 3) {
-        handleLogMessage("[Mode] Switched to TMDB Mode: 8273726.mkv / S01E02 8273726.mkv.");
-        m_checkEmbedSubs->setChecked(true);
+        handleLogMessage("[Mode] Switched to IMDb Mode: tt1234567.mkv / S01E02 tt1234567.mkv.");
+        if (m_checkEmbedSubs) m_checkEmbedSubs->setChecked(true);
     } else if (modeIdx == 4) {
-        handleLogMessage("[Mode] Switched to Title + ID Mode: Movie Name (2025) tt1234567 8273726.mkv.");
-        m_checkEmbedSubs->setChecked(true);
+        handleLogMessage("[Mode] Switched to TMDB Mode: 8273726.mkv / S01E02 8273726.mkv.");
+        if (m_checkEmbedSubs) m_checkEmbedSubs->setChecked(true);
     } else if (modeIdx == 5) {
+        handleLogMessage("[Mode] Switched to Title + ID Mode: Movie Name (2025) tt1234567 8273726.mkv.");
+        if (m_checkEmbedSubs) m_checkEmbedSubs->setChecked(true);
+    } else if (modeIdx == 6) {
         handleLogMessage("[Mode] Switched to Sub Merge Mode (Video + all multi-audio + subtitles merged into MKV).");
-        m_checkEmbedSubs->setChecked(true);
+        if (m_checkEmbedSubs) m_checkEmbedSubs->setChecked(true);
     }
 }
 
@@ -1284,11 +1310,12 @@ void MainWindow::onStartDownloadClicked() {
     options.includeSubtitles = m_checkEmbedSubs ? m_checkEmbedSubs->isChecked() : true;
     options.threadCount = 32;
 
-    if (m_selectedMode == 1) options.mode = "title_only";
-    else if (m_selectedMode == 2) options.mode = "imdb_rename";
-    else if (m_selectedMode == 3) options.mode = "tmdb_rename";
-    else if (m_selectedMode == 4) options.mode = "title_id";
-    else if (m_selectedMode == 5) options.mode = "sub_merge";
+    if (m_selectedMode == 1) options.mode = "netflix_rename";
+    else if (m_selectedMode == 2) options.mode = "title_only";
+    else if (m_selectedMode == 3) options.mode = "imdb_rename";
+    else if (m_selectedMode == 4) options.mode = "tmdb_rename";
+    else if (m_selectedMode == 5) options.mode = "title_id";
+    else if (m_selectedMode == 6) options.mode = "sub_merge";
     else options.mode = "normal";
 
     addQueueItem(options);
@@ -1321,11 +1348,12 @@ void MainWindow::onDownloadSubtitlesClicked() {
     options.includeSubtitles = true;
     options.threadCount = 32;
 
-    if (m_selectedMode == 1) options.mode = "title_only";
-    else if (m_selectedMode == 2) options.mode = "imdb_rename";
-    else if (m_selectedMode == 3) options.mode = "tmdb_rename";
-    else if (m_selectedMode == 4) options.mode = "title_id";
-    else if (m_selectedMode == 5) options.mode = "sub_merge";
+    if (m_selectedMode == 1) options.mode = "netflix_rename";
+    else if (m_selectedMode == 2) options.mode = "title_only";
+    else if (m_selectedMode == 3) options.mode = "imdb_rename";
+    else if (m_selectedMode == 4) options.mode = "tmdb_rename";
+    else if (m_selectedMode == 5) options.mode = "title_id";
+    else if (m_selectedMode == 6) options.mode = "sub_merge";
     else options.mode = "normal";
 
     addQueueItem(options);

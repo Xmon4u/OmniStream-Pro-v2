@@ -943,8 +943,12 @@ std::string NetflixResolver::ResolveMediaRename(
         }
         if (!meta.netflixId.empty()) {
             std::string res = !meta.episodeTag.empty() ? (meta.episodeTag + " " + meta.netflixId) : meta.netflixId;
+            log("[Rename Mode] Netflix Mode (Fallback ID) -> " + res);
             return SanitizeFilename(res);
         }
+        std::string fallback = !customTitle.empty() ? customTitle : "OmniStream_Download";
+        log("[Rename Mode] Netflix Mode (Safe Title Fallback) -> " + fallback);
+        return SanitizeFilename(fallback);
     }
 
     return "";

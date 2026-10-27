@@ -97,6 +97,16 @@ int RunSelfTest() {
     std::string renTitleId = NetflixResolver::ResolveMediaRename("title_id", "stream.m3u8", "Movie Name (2025)", "", "tt1234567", "8273726");
     test("ResolveMediaRename Title + ID Mode (Movie Name (2025) tt1234567 8273726)", renTitleId == "Movie Name (2025) tt1234567 8273726");
 
+    // Netflix Rename Mode Tests
+    std::string renNfMovie = NetflixResolver::ResolveMediaRename("netflix_rename", "stream.m3u8", "", "81902147");
+    test("ResolveMediaRename Netflix Mode Movie (81902147)", !renNfMovie.empty() && renNfMovie.find("Sonic") != std::string::npos);
+
+    std::string renNfTv = NetflixResolver::ResolveMediaRename("netflix_rename", "stream.m3u8", "S01E03", "81902147");
+    test("ResolveMediaRename Netflix Mode TV Series (S01E03 81902147)", renNfTv.find("S01E03") != std::string::npos && renNfTv.find("Sonic") != std::string::npos);
+
+    std::string renNfCustom = NetflixResolver::ResolveMediaRename("netflix_rename", "stream.m3u8", "Custom Movie Title", "");
+    test("ResolveMediaRename Netflix Mode Custom Title Fallback", renNfCustom == "Custom Movie Title");
+
     // Path Reservation Non-Conflict Test (Same folder concurrent download)
     std::string resPath1 = NetflixResolver::ReserveNonConflictingPath("SampleVideo.mkv");
     std::string resPath2 = NetflixResolver::ReserveNonConflictingPath("SampleVideo.mkv");

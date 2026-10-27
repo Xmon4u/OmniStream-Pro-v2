@@ -11,6 +11,7 @@ const godScanBtn = $('godScanBtn');
 const godScanLabel = $('godScanLabel');
 const toastEl = $('toast');
 const modeNormalBtn = $('modeNormalBtn');
+const modeNetflixBtn = $('modeNetflixBtn');
 const modeTitleOnlyBtn = $('modeTitleOnlyBtn');
 const modeImdbBtn = $('modeImdbBtn');
 const modeTmdbBtn = $('modeTmdbBtn');
@@ -92,9 +93,11 @@ function audioLabel(item) {
 }
 
 function setMode(mode, save = true) {
-  if (mode === 'title_only') {
+  if (mode === 'netflix_rename') {
+    currentDownloadMode = 'netflix_rename';
+  } else if (mode === 'title_only') {
     currentDownloadMode = 'title_only';
-  } else if (mode === 'imdb_rename' || mode === 'netflix_rename') {
+  } else if (mode === 'imdb_rename') {
     currentDownloadMode = 'imdb_rename';
   } else if (mode === 'tmdb_rename') {
     currentDownloadMode = 'tmdb_rename';
@@ -106,6 +109,7 @@ function setMode(mode, save = true) {
     currentDownloadMode = 'normal';
   }
   if (modeNormalBtn) modeNormalBtn.classList.toggle('active', currentDownloadMode === 'normal');
+  if (modeNetflixBtn) modeNetflixBtn.classList.toggle('active', currentDownloadMode === 'netflix_rename');
   if (modeTitleOnlyBtn) modeTitleOnlyBtn.classList.toggle('active', currentDownloadMode === 'title_only');
   if (modeImdbBtn) modeImdbBtn.classList.toggle('active', currentDownloadMode === 'imdb_rename');
   if (modeTmdbBtn) modeTmdbBtn.classList.toggle('active', currentDownloadMode === 'tmdb_rename');
@@ -114,7 +118,8 @@ function setMode(mode, save = true) {
   if (save) {
     chrome.storage.local.set({ omni_download_mode: currentDownloadMode });
     let label = 'Normal Mode';
-    if (currentDownloadMode === 'title_only') label = 'Title Only Mode: Movie (Year).mkv';
+    if (currentDownloadMode === 'netflix_rename') label = 'Netflix Mode: Auto-identifies ID & renames';
+    else if (currentDownloadMode === 'title_only') label = 'Title Only Mode: Movie (Year).mkv';
     else if (currentDownloadMode === 'imdb_rename') label = 'IMDb ID Mode: tt1234567.mkv';
     else if (currentDownloadMode === 'tmdb_rename') label = 'TMDB ID Mode: 8273726.mkv';
     else if (currentDownloadMode === 'title_id') label = 'Title + ID Mode: Movie (Year) tt... tmdb.mkv';
@@ -184,6 +189,7 @@ async function init() {
   }
 
   if (modeNormalBtn) modeNormalBtn.onclick = () => setMode('normal', true);
+  if (modeNetflixBtn) modeNetflixBtn.onclick = () => setMode('netflix_rename', true);
   if (modeTitleOnlyBtn) modeTitleOnlyBtn.onclick = () => setMode('title_only', true);
   if (modeImdbBtn) modeImdbBtn.onclick = () => setMode('imdb_rename', true);
   if (modeTmdbBtn) modeTmdbBtn.onclick = () => setMode('tmdb_rename', true);
@@ -291,16 +297,20 @@ function renderDetected(isRefreshing = false) {
     const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
 
     let modePill = '';
-    if (currentDownloadMode === 'title_only') {
+    if (currentDownloadMode === 'netflix_rename') {
+      modePill = nid
+        ? `<span class="kind" style="background:#e50914;color:#fff;border-color:#b91c1c;font-weight:700;">NF: ${escapeHtml(nid)}</span>`
+        : `<span class="kind" style="background:#e50914;color:#fff;font-weight:600;">Netflix Mode</span>`;
+    } else if (currentDownloadMode === 'title_only') {
       modePill = `<span class="kind" style="background:#0284c7;color:#fff;font-weight:600;">Title Only</span>`;
     } else if (currentDownloadMode === 'tmdb_rename') {
       modePill = tmdbId
         ? `<span class="kind" style="background:#01b4e4;color:#032541;border-color:#0284c7;font-weight:700;">TMDB: ${escapeHtml(tmdbId)}</span>`
         : `<span class="kind" style="background:#0e7490;color:#cffafe;font-weight:600;">TMDB Mode</span>`;
-    } else if (currentDownloadMode === 'imdb_rename' || currentDownloadMode === 'netflix_rename') {
+    } else if (currentDownloadMode === 'imdb_rename') {
       modePill = imdbId
         ? `<span class="kind" style="background:#f5c518;color:#000;border-color:#d97706;font-weight:700;">IMDb: ${escapeHtml(imdbId)}</span>`
-        : (nid ? `<span class="kind" style="background:#e50914;color:#fff;font-weight:700;">NF: ${escapeHtml(nid)}</span>` : `<span class="kind" style="background:#78350f;color:#fef3c7;font-weight:600;">IMDb Mode</span>`);
+        : `<span class="kind" style="background:#78350f;color:#fef3c7;font-weight:600;">IMDb Mode</span>`;
     } else if (currentDownloadMode === 'title_id') {
       modePill = `<span class="kind" style="background:#8b5cf6;color:#fff;border-color:#7c3aed;font-weight:700;">Title + ID</span>`;
     } else if (currentDownloadMode === 'sub_merge') {

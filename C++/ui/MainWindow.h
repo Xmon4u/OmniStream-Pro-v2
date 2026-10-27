@@ -276,6 +276,7 @@ private:
 
     // Download Mode Segmented Buttons
     QPushButton* m_btnModeNormal = nullptr;
+    QPushButton* m_btnModeNetflix = nullptr;
     QPushButton* m_btnModeTitleOnly = nullptr;
     QPushButton* m_btnModeImdb = nullptr;
     QPushButton* m_btnModeTmdb = nullptr;
