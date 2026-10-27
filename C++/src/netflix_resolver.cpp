@@ -271,7 +271,17 @@ std::string NetflixResolver::ExtractEpisodeTag(const std::string& input) {
         return ss.str();
     }
 
-    std::regex regFull(R"(\bSeason\s*(\d+)\s*(?:Episode|Chapter)\s*(\d+)\b)", std::regex::icase);
+    std::regex regCross(R"(\b(\d{1,2})x(\d{1,2})\b)", std::regex::icase);
+    if (std::regex_search(input, m, regCross)) {
+        int s = std::stoi(m[1].str());
+        int e = std::stoi(m[2].str());
+        std::ostringstream ss;
+        ss << "S" << std::setw(2) << std::setfill('0') << s
+           << "E" << std::setw(2) << std::setfill('0') << e;
+        return ss.str();
+    }
+
+    std::regex regFull(R"(\bSeason\s*(\d+)\s*(?:Episode|Chapter|Part)\s*(\d+)\b)", std::regex::icase);
     if (std::regex_search(input, m, regFull)) {
         int s = std::stoi(m[1].str());
         int e = std::stoi(m[2].str());
@@ -281,8 +291,17 @@ std::string NetflixResolver::ExtractEpisodeTag(const std::string& input) {
         return ss.str();
     }
 
+    std::regex regEpOnly(R"(\b(?:Episode|Chapter)\s*(\d+)\b)", std::regex::icase);
+    if (std::regex_search(input, m, regEpOnly)) {
+        int e = std::stoi(m[1].str());
+        std::ostringstream ss;
+        ss << "S01E" << std::setw(2) << std::setfill('0') << e;
+        return ss.str();
+    }
+
     return "";
 }
+
 
 std::string NetflixResolver::SanitizeFilename(const std::string& rawName) {
     std::string safe = rawName;
