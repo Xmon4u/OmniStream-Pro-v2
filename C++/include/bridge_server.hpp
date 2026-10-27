@@ -19,12 +19,19 @@ public:
     void SetCurrentMode(const std::string& mode) { m_currentMode = mode; }
     std::string GetCurrentMode() const { return m_currentMode; }
 
+    void SetCurrentTheme(const std::string& theme) { m_currentTheme = theme; }
+    std::string GetCurrentTheme() const { return m_currentTheme; }
+
     void SetOnJobReceived(std::function<void(const DownloadOptions& opts)> callback) {
         m_onJobReceived = callback;
     }
 
     void SetOnModeChanged(std::function<void(const std::string& mode)> callback) {
         m_onModeChanged = callback;
+    }
+
+    void SetOnThemeChanged(std::function<void(const std::string& theme)> callback) {
+        m_onThemeChanged = callback;
     }
 
     void SetOnStartQueue(std::function<void()> callback) {
@@ -46,9 +53,11 @@ private:
     std::unique_ptr<std::thread> m_workerThread;
     std::function<void(const DownloadOptions& opts)> m_onJobReceived;
     std::function<void(const std::string& mode)> m_onModeChanged;
+    std::function<void(const std::string& theme)> m_onThemeChanged;
     std::function<void()> m_onStartQueue;
     std::function<void()> m_onFocus;
     std::string m_currentMode = "normal";
+    std::string m_currentTheme = "Cyber Slate";
 };
 
 } // namespace OmniStream

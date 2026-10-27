@@ -16,14 +16,22 @@ bool Muxer::FindFFmpeg(std::string& outPath) {
             outPath = (appDir / "bin" / "ffmpeg.exe").string();
             return true;
         }
+        if (std::filesystem::exists(appDir / "vs_project" / "Release" / "ffmpeg.exe")) {
+            outPath = (appDir / "vs_project" / "Release" / "ffmpeg.exe").string();
+            return true;
+        }
+        if (std::filesystem::exists(appDir.parent_path() / "bin" / "ffmpeg.exe")) {
+            outPath = (appDir.parent_path() / "bin" / "ffmpeg.exe").string();
+            return true;
+        }
     }
 
     // 2. Check local relative bin/
     const char* candidates[] = {
         "bin\\ffmpeg.exe",
-        "..\\desktop\\bin\\ffmpeg.exe",
-        "desktop\\bin\\ffmpeg.exe",
-        "ffmpeg.exe"
+        "ffmpeg.exe",
+        "..\\bin\\ffmpeg.exe",
+        "vs_project\\Release\\ffmpeg.exe"
     };
     for (const char* path : candidates) {
         if (std::filesystem::exists(path)) {

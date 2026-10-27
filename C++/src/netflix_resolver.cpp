@@ -297,6 +297,19 @@ std::string NetflixResolver::SanitizeFilename(const std::string& rawName) {
 
     if (safe.empty()) safe = "OmniStream_Download";
     if (safe.size() > 180) safe = safe.substr(0, 180);
+
+    // Prevent Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+    std::string upper = safe;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+    static const std::unordered_set<std::string> reserved = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    if (reserved.count(upper)) {
+        safe += "_Stream";
+    }
+
     return safe;
 }
 
@@ -637,7 +650,7 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
     // A. Query TMDB by IMDb ID (/find/{imdb_id})
     if (!imdbId.empty() && imdbId.rfind("tt", 0) == 0) {
         std::string tmdbUrl = "https://api.themoviedb.org/3/find/" + imdbId + "?api_key=" + TMDB_API_KEY + "&external_source=imdb_id";
-        std::string cmd = "curl.exe -s -L --max-time 3 -H \"Authorization: Bearer " + TMDB_BEARER + "\" -H \"Accept: application/json\" \"" + tmdbUrl + "\"";
+        std::string cmd = "curl.exe -s -L --max-time 8 -H \"Authorization: Bearer " + TMDB_BEARER + "\" -H \"Accept: application/json\" \"" + tmdbUrl + "\"";
         FILE* pipe = _popen(cmd.c_str(), "rb");
         if (pipe) {
             std::string result;
@@ -679,7 +692,7 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
             if (!year.empty()) {
                 tmdbUrl += "&year=" + year;
             }
-            std::string cmd = "curl.exe -s -L --max-time 3 -H \"Authorization: Bearer " + TMDB_BEARER + "\" -H \"Accept: application/json\" \"" + tmdbUrl + "\"";
+            std::string cmd = "curl.exe -s -L --max-time 8 -H \"Authorization: Bearer " + TMDB_BEARER + "\" -H \"Accept: application/json\" \"" + tmdbUrl + "\"";
             FILE* pipe = _popen(cmd.c_str(), "rb");
             if (pipe) {
                 std::string result;
@@ -1019,6 +1032,22 @@ std::string NetflixResolver::ResolveMediaRename(
         std::string fallback = !customTitle.empty() ? customTitle : "OmniStream_Download";
         log("[Rename Mode] Netflix Mode (Safe Title Fallback) -> " + fallback);
         return SanitizeFilename(fallback);
+    }
+
+    // 6. Sub Merge Mode:
+    // Video + all multi-audio tracks + subtitles merged into MKV
+    if (mode == "sub_merge") {
+        std::string t = meta.title.empty() ? customTitle : meta.title;
+        if (t.empty()) t = "OmniStream_Download";
+        std::string res = t;
+        if (!meta.year.empty() && res.find("(" + meta.year + ")") == std::string::npos) {
+            res += " (" + meta.year + ")";
+        }
+        if (!meta.episodeTag.empty() && res.find(meta.episodeTag) == std::string::npos) {
+            res += " " + meta.episodeTag;
+        }
+        log("[Rename Mode] Sub Merge Mode -> " + res);
+        return SanitizeFilename(res);
     }
 
     return "";

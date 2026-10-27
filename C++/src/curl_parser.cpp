@@ -6,7 +6,7 @@ std::string CurlParser::UnescapeCurl(const std::string& input) {
     std::string result;
     result.reserve(input.size());
     for (size_t i = 0; i < input.size(); ++i) {
-        if (input[i] == '\\' && i + 1 < input.size()) {
+        if ((input[i] == '\\' || input[i] == '^') && i + 1 < input.size()) {
             char next = input[i + 1];
             if (next == '\n' || next == '\r') {
                 i++;
@@ -14,7 +14,7 @@ std::string CurlParser::UnescapeCurl(const std::string& input) {
                 result += ' ';
                 continue;
             }
-            if (next == '"' || next == '\'' || next == '\\') {
+            if (next == '"' || next == '\'' || next == '\\' || next == '^') {
                 result += next;
                 i++;
                 continue;
@@ -84,6 +84,13 @@ StreamInfo CurlParser::Parse(const std::string& rawInput) {
                     info.url = urlMatch[1].str();
                 }
             }
+        }
+
+        while (!info.url.empty() && (info.url.front() == '"' || info.url.front() == '\'')) {
+            info.url.erase(0, 1);
+        }
+        while (!info.url.empty() && (info.url.back() == '"' || info.url.back() == '\'')) {
+            info.url.pop_back();
         }
 
         // 2. Extract Headers: -H "Key: Value" or -H 'Key: Value'

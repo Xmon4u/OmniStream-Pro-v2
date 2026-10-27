@@ -37,7 +37,13 @@ async function bridgeFetch(path, options = {}) {
   if (token) {
     headers['X-OmniStream-Token'] = token;
   }
-  return fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers }));
+  return fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers })).then(res => {
+    if (res.status === 401 || res.status === 403) {
+      cachedBridgeToken = '';
+      chrome.storage.local.remove(['bridgeToken']).catch(() => {});
+    }
+    return res;
+  });
 }
 
 

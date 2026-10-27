@@ -1,5 +1,0 @@
-# OmniStream Pro v2 — Python dependencies (desktop app / installer from source)
-customtkinter>=5.2.0
-Pillow>=10.0.0
-pyinstaller>=6.0.0
-certifi>=2023.7.22

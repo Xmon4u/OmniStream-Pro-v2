@@ -8,15 +8,18 @@ namespace OmniStream {
 static std::string FindNM3U8Binary() {
     // 1. Current working directory
     std::filesystem::path curDir = std::filesystem::current_path();
-    std::filesystem::path p1 = curDir / "N_m3u8DL-RE.exe";
-    if (std::filesystem::exists(p1)) return p1.string();
+    if (std::filesystem::exists(curDir / "N_m3u8DL-RE.exe")) return (curDir / "N_m3u8DL-RE.exe").string();
+    if (std::filesystem::exists(curDir / "bin" / "N_m3u8DL-RE.exe")) return (curDir / "bin" / "N_m3u8DL-RE.exe").string();
 
     // 2. Executable's directory
     wchar_t exePath[MAX_PATH];
     if (GetModuleFileNameW(NULL, exePath, MAX_PATH)) {
         std::filesystem::path appDir = std::filesystem::path(exePath).parent_path();
-        std::filesystem::path p2 = appDir / "N_m3u8DL-RE.exe";
-        if (std::filesystem::exists(p2)) return p2.string();
+        if (std::filesystem::exists(appDir / "N_m3u8DL-RE.exe")) return (appDir / "N_m3u8DL-RE.exe").string();
+        if (std::filesystem::exists(appDir / "bin" / "N_m3u8DL-RE.exe")) return (appDir / "bin" / "N_m3u8DL-RE.exe").string();
+        if (std::filesystem::exists(appDir / "vs_project" / "Release" / "N_m3u8DL-RE.exe")) return (appDir / "vs_project" / "Release" / "N_m3u8DL-RE.exe").string();
+        if (std::filesystem::exists(appDir.parent_path() / "bin" / "N_m3u8DL-RE.exe")) return (appDir.parent_path() / "bin" / "N_m3u8DL-RE.exe").string();
+        if (std::filesystem::exists(appDir.parent_path() / "N_m3u8DL-RE.exe")) return (appDir.parent_path() / "N_m3u8DL-RE.exe").string();
     }
 
     // 3. LocalAppData folder
@@ -105,7 +108,7 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
     // Determine save name based on active mode
     std::string baseName;
     if (options.mode == "netflix_rename" || options.mode == "imdb_rename" || options.mode == "tmdb_rename" ||
-        options.mode == "title_only" || options.mode == "title_id") {
+        options.mode == "title_only" || options.mode == "title_id" || options.mode == "sub_merge") {
         baseName = NetflixResolver::ResolveMediaRename(
             options.mode,
             options.inputText,
@@ -473,13 +476,24 @@ bool DownloadEngine::DownloadWithNM3U8(
         << "--thread-count " << thCount << " --download-retry-count 15 --http-request-timeout 30 "
         << "--disable-update-check --no-log --no-ansi-color ";
 
+    auto buildSubLangArg = [](const std::string& lang) -> std::string {
+        if (lang.empty() || lang == "all") return "-ss all ";
+        if (lang == "ben" || lang == "bn") return "-ss lang=\"bn|ben|Bengali\":for=all ";
+        if (lang == "eng" || lang == "en") return "-ss lang=\"en|eng|English\":for=all ";
+        if (lang == "hin" || lang == "hi") return "-ss lang=\"hi|hin|Hindi\":for=all ";
+        if (lang == "spa" || lang == "es") return "-ss lang=\"es|spa|Spanish\":for=all ";
+        if (lang == "fra" || lang == "fr") return "-ss lang=\"fr|fra|French\":for=all ";
+        if (lang == "deu" || lang == "de") return "-ss lang=\"de|deu|German\":for=all ";
+        if (lang == "jpn" || lang == "ja") return "-ss lang=\"ja|jpn|Japanese\":for=all ";
+        return "-ss lang=\"" + lang + "\":for=all ";
+    };
+
+
     std::string subFmt = options.subtitleFormat.empty() ? "SRT" : options.subtitleFormat;
 
     if (options.subtitleOnly) {
         cmd << "--sub-only --sub-format " << subFmt << " --auto-subtitle-fix ";
-        if (!options.subtitleLanguage.empty() && options.subtitleLanguage != "all") {
-            cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all ";
-        }
+        cmd << buildSubLangArg(options.subtitleLanguage);
     } else {
         // Video stream selection
         if (options.resolution == "audio_only") {
@@ -495,7 +509,9 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
 
         // Audio selection
-        if (options.audioChoice == "dual") {
+        if (options.mode == "sub_merge") {
+            cmd << "-sa all ";
+        } else if (options.audioChoice == "dual") {
             cmd << "-sa lang=\"en|eng|hi|hin\":for=all ";
         } else if (options.audioChoice == "en") {
             cmd << "-sa lang=\"en|eng\":for=best ";
@@ -506,10 +522,12 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
 
         // Subtitles inclusion
-        if (options.includeSubtitles) {
+        if (options.includeSubtitles || options.mode == "sub_merge") {
             cmd << "--sub-format " << subFmt << " --auto-subtitle-fix ";
-            if (!options.subtitleLanguage.empty() && options.subtitleLanguage != "all") {
-                cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all ";
+            if (options.mode == "sub_merge") {
+                cmd << "-ss all ";
+            } else {
+                cmd << buildSubLangArg(options.subtitleLanguage);
             }
         }
 
@@ -701,9 +719,10 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
     }
 
-    if (WaitForSingleObject(pi.hProcess, 5000) == WAIT_TIMEOUT) {
+    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_TIMEOUT) {
         TerminateProcess(pi.hProcess, 1);
     }
+
     DWORD exitCode = 1;
     GetExitCodeProcess(pi.hProcess, &exitCode);
 

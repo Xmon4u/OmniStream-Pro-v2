@@ -329,6 +329,7 @@ private:
 
     // Backend Core
     struct QueueEntry {
+        int id = 0;
         DownloadOptions options;
         QString status = "Queued"; // "Queued", "Downloading", "Paused", "Stopped", "Done", "Failed", "Cancelled"
         QString downloadedSize = "--";
@@ -340,6 +341,7 @@ private:
     };
     std::vector<QueueEntry> m_queueItems;
     int m_activeQueueIndex = -1;
+    int m_nextQueueId = 1;
 
     std::unique_ptr<BridgeServer> m_bridgeServer;
     std::shared_ptr<DownloadEngine> m_currentEngine;

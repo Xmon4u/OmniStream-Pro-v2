@@ -34,6 +34,19 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this, &MainWindow::progressUpdated, this, &MainWindow::handleProgressUpdate);
     connect(this, &MainWindow::downloadCompleted, this, &MainWindow::handleDownloadComplete);
 
+    auto bringWindowToFront = [this]() {
+        showNormal();
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        if (hwnd) {
+            ShowWindow(hwnd, SW_RESTORE);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetForegroundWindow(hwnd);
+        }
+        raise();
+        activateWindow();
+    };
+
     // Auto-start Chrome Extension Bridge Server on port 28795
     m_bridgeServer = std::make_unique<BridgeServer>(BRIDGE_PORT);
     m_bridgeServer->SetOnModeChanged([this](const std::string& mode) {
@@ -41,9 +54,17 @@ MainWindow::MainWindow(QWidget *parent)
             setDownloadMode(QString::fromStdString(mode));
         }, Qt::QueuedConnection);
     });
-    m_bridgeServer->SetOnJobReceived([this](const DownloadOptions& opts) {
+    m_bridgeServer->SetOnThemeChanged([this](const std::string& theme) {
+        QMetaObject::invokeMethod(this, [this, theme]() {
+            int idx = (theme.find("black") != std::string::npos || theme.find("Black") != std::string::npos) ? 1 : 0;
+            if (m_comboTheme && m_comboTheme->currentIndex() != idx) {
+                m_comboTheme->setCurrentIndex(idx);
+            }
+        }, Qt::QueuedConnection);
+    });
+    m_bridgeServer->SetOnJobReceived([this, bringWindowToFront](const DownloadOptions& opts) {
         emit logMessageReceived(QString::fromStdString("[Bridge] Incoming job from Chrome Extension: " + opts.inputText));
-        QMetaObject::invokeMethod(this, [this, opts]() {
+        QMetaObject::invokeMethod(this, [this, opts, bringWindowToFront]() {
             if (!opts.mode.empty()) {
                 setDownloadMode(QString::fromStdString(opts.mode));
             }
@@ -59,9 +80,7 @@ MainWindow::MainWindow(QWidget *parent)
             }
             addQueueItem(jobOpts);
             int newRow = static_cast<int>(m_queueItems.size()) - 1;
-            showNormal();
-            raise();
-            activateWindow();
+            bringWindowToFront();
             startQueueItem(newRow, jobOpts.subtitleOnly);
         }, Qt::QueuedConnection);
     });
@@ -72,11 +91,9 @@ MainWindow::MainWindow(QWidget *parent)
         }, Qt::QueuedConnection);
     });
 
-    m_bridgeServer->SetOnFocus([this]() {
-        QMetaObject::invokeMethod(this, [this]() {
-            showNormal();
-            raise();
-            activateWindow();
+    m_bridgeServer->SetOnFocus([this, bringWindowToFront]() {
+        QMetaObject::invokeMethod(this, [bringWindowToFront]() {
+            bringWindowToFront();
         }, Qt::QueuedConnection);
     });
 
@@ -88,8 +105,15 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    for (auto& item : m_queueItems) {
+        if (item.engine) {
+            item.engine->Abort();
+            item.engine = nullptr;
+        }
+    }
     if (m_currentEngine) {
         m_currentEngine->Abort();
+        m_currentEngine = nullptr;
     }
     if (m_bridgeServer) {
         m_bridgeServer->Stop();
@@ -414,7 +438,8 @@ void MainWindow::setupUI() {
     lblSubLang->setObjectName("fieldLabel");
     m_comboSubLang = new QComboBox(this);
     m_comboSubLang->setObjectName("inputCombo");
-    m_comboSubLang->addItems({"All Languages", "English (eng)", "Hindi (hin)", "Spanish (spa)", "French (fra)", "German (deu)", "Japanese (jpn)"});
+    m_comboSubLang->addItems({"All Languages", "English (eng)", "Bengali (ben)", "Hindi (hin)", "Spanish (spa)", "French (fra)", "German (deu)", "Japanese (jpn)"});
+
 
     card2Layout->addWidget(lblSubTitle, 3, 0);
     card2Layout->addWidget(m_checkEmbedSubs, 3, 1);
@@ -1031,6 +1056,9 @@ void MainWindow::onFullViewClicked() {
 
 void MainWindow::onThemeChanged(int index) {
     applyStyleSheet(index);
+    if (m_bridgeServer) {
+        m_bridgeServer->SetCurrentTheme(index == 1 ? "Midnight Black" : "Cyber Slate");
+    }
     update();
 }
 
@@ -1198,16 +1226,26 @@ void MainWindow::onClearQueueClicked() {
 }
 
 void MainWindow::onDownloadAllClicked() {
-    bool foundAny = false;
-    for (size_t i = 0; i < m_queueItems.size(); ++i) {
-        if (m_queueItems[i].status == "Queued" || m_queueItems[i].status == "Stopped" ||
-            m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
-            foundAny = true;
-            startQueueItem(static_cast<int>(i), false);
+    bool hasActive = false;
+    for (const auto& it : m_queueItems) {
+        if (it.status == "Downloading") {
+            hasActive = true;
+            break;
         }
     }
 
-    if (!foundAny && m_queueItems.empty()) {
+    if (!hasActive) {
+        for (size_t i = 0; i < m_queueItems.size(); ++i) {
+            if (m_queueItems[i].status == "Queued" || m_queueItems[i].status == "Stopped" ||
+                m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
+                m_queueItems[i].status = "Queued";
+                startQueueItem(static_cast<int>(i), m_queueItems[i].options.subtitleOnly);
+                break;
+            }
+        }
+    }
+
+    if (!hasActive && m_queueItems.empty()) {
         QString inputUrl = m_editUrl ? m_editUrl->toPlainText().trimmed() : "";
         if (!inputUrl.isEmpty()) {
             onStartDownloadClicked();
@@ -1299,12 +1337,13 @@ void MainWindow::onStartDownloadClicked() {
 
     // Subtitle language
     int subLangIdx = m_comboSubLang ? m_comboSubLang->currentIndex() : 0;
-    const char* subLangs[] = { "all", "eng", "hin", "spa", "fra", "deu", "jpn" };
-    if (subLangIdx >= 0 && subLangIdx < 7) {
+    const char* subLangs[] = { "all", "eng", "ben", "hin", "spa", "fra", "deu", "jpn" };
+    if (subLangIdx >= 0 && subLangIdx < 8) {
         options.subtitleLanguage = subLangs[subLangIdx];
     } else {
         options.subtitleLanguage = "all";
     }
+
 
     options.subtitleOnly = false;
     options.includeSubtitles = m_checkEmbedSubs ? m_checkEmbedSubs->isChecked() : true;
@@ -1337,12 +1376,13 @@ void MainWindow::onDownloadSubtitlesClicked() {
     options.subtitleFormat = (m_comboSubFormat && m_comboSubFormat->currentIndex() == 1) ? "VTT" : "SRT";
 
     int subLangIdx = m_comboSubLang ? m_comboSubLang->currentIndex() : 0;
-    const char* subLangs[] = { "all", "eng", "hin", "spa", "fra", "deu", "jpn" };
-    if (subLangIdx >= 0 && subLangIdx < 7) {
+    const char* subLangs[] = { "all", "eng", "ben", "hin", "spa", "fra", "deu", "jpn" };
+    if (subLangIdx >= 0 && subLangIdx < 8) {
         options.subtitleLanguage = subLangs[subLangIdx];
     } else {
         options.subtitleLanguage = "all";
     }
+
 
     options.subtitleOnly = true;
     options.includeSubtitles = true;
@@ -1373,6 +1413,22 @@ void MainWindow::startQueueItem(int row, bool subtitleOnly) {
         return; // Already downloading
     }
 
+    // Ensure sequential IDM-grade queueing: if any other item is actively downloading, keep this item Queued
+    for (size_t i = 0; i < m_queueItems.size(); ++i) {
+        if (static_cast<int>(i) != row && m_queueItems[i].status == "Downloading") {
+            item.status = "Queued";
+            if (m_tableQueue && row < m_tableQueue->rowCount()) {
+                if (auto *stItem = m_tableQueue->item(row, 5)) {
+                    stItem->setText("Queued");
+                    stItem->setForeground(QBrush(QColor("#94a3b8")));
+                }
+            }
+            updateQueueStats();
+            handleLogMessage(QString("[Queue] Download #%1 queued (waiting for active download to finish).").arg(row + 1));
+            return;
+        }
+    }
+
     if (item.status == "Paused" && item.engine && item.engine->IsPaused()) {
         item.engine->Resume();
         item.status = "Downloading";
@@ -1385,6 +1441,7 @@ void MainWindow::startQueueItem(int row, bool subtitleOnly) {
         updateQueueStats();
         return;
     }
+
 
     DownloadOptions options = item.options;
     if (options.saveDir.empty() || options.saveDir == ".") {
@@ -1400,6 +1457,7 @@ void MainWindow::startQueueItem(int row, bool subtitleOnly) {
 
     item.status = "Downloading";
     m_activeQueueIndex = row;
+    int entryId = item.id;
 
     if (m_tableQueue && row < m_tableQueue->rowCount()) {
         if (auto *stItem = m_tableQueue->item(row, 5)) {
@@ -1419,9 +1477,18 @@ void MainWindow::startQueueItem(int row, bool subtitleOnly) {
     item.engine = engine;
     m_currentEngine = engine;
 
-    options.onProgress = [this, row](float pct, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& sizeStr) {
-        QMetaObject::invokeMethod(this, [this, row, pct, speed = QString::fromStdString(speed), eta = QString::fromStdString(eta), bytes, sizeStr = QString::fromStdString(sizeStr)]() {
-            handleItemProgress(row, pct, speed, eta, bytes, sizeStr);
+    options.onProgress = [this, entryId](float pct, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& sizeStr) {
+        QMetaObject::invokeMethod(this, [this, entryId, pct, speed = QString::fromStdString(speed), eta = QString::fromStdString(eta), bytes, sizeStr = QString::fromStdString(sizeStr)]() {
+            int targetRow = -1;
+            for (size_t i = 0; i < m_queueItems.size(); ++i) {
+                if (m_queueItems[i].id == entryId) {
+                    targetRow = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (targetRow >= 0) {
+                handleItemProgress(targetRow, pct, speed, eta, bytes, sizeStr);
+            }
         }, Qt::QueuedConnection);
     };
 
@@ -1431,11 +1498,20 @@ void MainWindow::startQueueItem(int row, bool subtitleOnly) {
 
     updateQueueStats();
 
-    std::thread([this, engine, options, row]() {
+    std::thread([this, engine, options, entryId]() {
         std::string finalOutput;
         bool ok = engine->Download(options, finalOutput);
-        QMetaObject::invokeMethod(this, [this, row, ok, finalOutput = QString::fromStdString(finalOutput)]() {
-            handleItemComplete(row, ok, finalOutput);
+        QMetaObject::invokeMethod(this, [this, entryId, ok, finalOutput = QString::fromStdString(finalOutput)]() {
+            int targetRow = -1;
+            for (size_t i = 0; i < m_queueItems.size(); ++i) {
+                if (m_queueItems[i].id == entryId) {
+                    targetRow = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (targetRow >= 0) {
+                handleItemComplete(targetRow, ok, finalOutput);
+            }
         }, Qt::QueuedConnection);
     }).detach();
 }
@@ -1553,6 +1629,7 @@ void MainWindow::addQueueItem(const DownloadOptions& opts) {
     m_tableQueue->setVisible(true);
 
     QueueEntry entry;
+    entry.id = m_nextQueueId++;
     entry.options = cleanOpts;
     entry.status = "Queued";
     m_queueItems.push_back(entry);
@@ -1654,16 +1731,18 @@ void MainWindow::handleItemProgress(int row, float pct, const QString& speed, co
         }
     }
 
-    // Update Card 3 with active download stats
-    m_progBar->setValue(static_cast<int>(pct));
-    m_lblProgPct->setText(QString::number(pct, 'f', 1) + "%");
-    m_lblProgSpeed->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
-    m_lblProgSize->setText("Downloaded: " + (item.downloadedSize.isEmpty() ? "--" : item.downloadedSize));
-    m_lblProgTitle->setText(item.options.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(item.options.saveName));
-    if (pct >= 100.0f) {
-        m_lblProgStatus->setText("Completed \u2014 File saved successfully.");
-    } else if (pct > 0.0f) {
-        m_lblProgStatus->setText("Downloading segments \u2022 ETA: " + (eta.isEmpty() ? "--" : eta));
+    // Update Card 3 with active download stats only if this is the active queue index
+    if (row == m_activeQueueIndex) {
+        m_progBar->setValue(static_cast<int>(pct));
+        m_lblProgPct->setText(QString::number(pct, 'f', 1) + "%");
+        m_lblProgSpeed->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
+        m_lblProgSize->setText("Downloaded: " + (item.downloadedSize.isEmpty() ? "--" : item.downloadedSize));
+        m_lblProgTitle->setText(item.options.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(item.options.saveName));
+        if (pct >= 100.0f) {
+            m_lblProgStatus->setText("Completed \u2014 File saved successfully.");
+        } else if (pct > 0.0f) {
+            m_lblProgStatus->setText("Downloading segments \u2022 ETA: " + (eta.isEmpty() ? "--" : eta));
+        }
     }
 }
 
@@ -1729,6 +1808,23 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
         handleLogMessage(QString("[Engine] Download #%1 Completed: %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
     } else {
         handleLogMessage(QString("[Engine] Download #%1 Finished with warnings: %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
+    }
+
+    // Auto-advance: automatically start the next queued download in the queue
+    bool hasActive = false;
+    for (const auto& it : m_queueItems) {
+        if (it.status == "Downloading") {
+            hasActive = true;
+            break;
+        }
+    }
+    if (!hasActive) {
+        for (size_t i = 0; i < m_queueItems.size(); ++i) {
+            if (m_queueItems[i].status == "Queued") {
+                startQueueItem(static_cast<int>(i), m_queueItems[i].options.subtitleOnly);
+                break;
+            }
+        }
     }
 }
 

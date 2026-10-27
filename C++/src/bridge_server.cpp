@@ -157,41 +157,41 @@ bool BridgeServer::Start() {
         return false;
     }
 
-    // Persist token for Chrome / Firefox Extension sync
-    try {
-        std::ofstream tokenFile("bridge_token.txt");
-        if (tokenFile.is_open()) {
-            tokenFile << m_token;
-        }
-
-        std::string jsonContent = "{\n  \"token\": \"" + m_token + "\",\n  \"port\": " + std::to_string(m_port) + "\n}\n";
-        const char* tokenPaths[] = {
-            "extension\\bridge_token.json",
-            "..\\extension\\bridge_token.json",
-            "Release Test\\Extension\\bridge_token.json",
-            "..\\Release Test\\Extension\\bridge_token.json"
-        };
-        for (const char* p : tokenPaths) {
-            std::filesystem::path target(p);
-            if (std::filesystem::exists(target.parent_path())) {
-                std::ofstream f(p);
-                if (f.is_open()) f << jsonContent;
+    // Persist token for Chrome / Firefox Extension sync only if production port
+    if (m_port == BRIDGE_PORT) {
+        try {
+            std::ofstream tokenFile("bridge_token.txt");
+            if (tokenFile.is_open()) {
+                tokenFile << m_token;
             }
-        }
 
-        const char* localApp = std::getenv("LOCALAPPDATA");
-        if (localApp) {
-            std::filesystem::path appDir = std::filesystem::path(localApp) / "OmniStreamPro";
-            std::filesystem::create_directories(appDir);
-            std::ofstream fTxt(appDir / "bridge_token.txt");
-            if (fTxt.is_open()) fTxt << m_token;
+            std::string jsonContent = "{\n  \"token\": \"" + m_token + "\",\n  \"port\": " + std::to_string(m_port) + "\n}\n";
+            const char* tokenPaths[] = {
+                "extension\\bridge_token.json",
+                "..\\extension\\bridge_token.json"
+            };
+            for (const char* p : tokenPaths) {
+                std::filesystem::path target(p);
+                if (std::filesystem::exists(target.parent_path())) {
+                    std::ofstream f(p);
+                    if (f.is_open()) f << jsonContent;
+                }
+            }
 
-            std::filesystem::path extDir = appDir / "extension";
-            std::filesystem::create_directories(extDir);
-            std::ofstream fJson(extDir / "bridge_token.json");
-            if (fJson.is_open()) fJson << jsonContent;
-        }
-    } catch (...) {}
+            const char* localApp = std::getenv("LOCALAPPDATA");
+            if (localApp) {
+                std::filesystem::path appDir = std::filesystem::path(localApp) / "OmniStreamPro";
+                std::filesystem::create_directories(appDir);
+                std::ofstream fTxt(appDir / "bridge_token.txt");
+                if (fTxt.is_open()) fTxt << m_token;
+
+                std::filesystem::path extDir = appDir / "extension";
+                std::filesystem::create_directories(extDir);
+                std::ofstream fJson(extDir / "bridge_token.json");
+                if (fJson.is_open()) fJson << jsonContent;
+            }
+        } catch (...) {}
+    }
 
     m_running.store(true);
     m_workerThread = std::make_unique<std::thread>(&BridgeServer::ServerThread, this);
@@ -340,7 +340,7 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
                        "  \"queue_count\": 0,\n"
                        "  \"is_downloading\": false,\n"
                        "  \"mode\": \"" + m_currentMode + "\",\n"
-                       "  \"theme\": \"Cyber Slate\"\n"
+                       "  \"theme\": \"" + m_currentTheme + "\"\n"
                        "}";
     }
     else if (method == "GET" && (path == "/ping" || path == "/status")) {
@@ -375,6 +375,11 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         std::string tid = ExtractJsonValue(body, "tmdbId");
         if (tid.empty()) tid = ExtractJsonValue(body, "tmdb_id");
 
+        bool isSub = (body.find("\"isSubtitleJob\": true") != std::string::npos ||
+                      body.find("\"isSubtitleJob\":true") != std::string::npos ||
+                      ExtractJsonValue(body, "type") == "subtitles" ||
+                      ExtractJsonValue(body, "subtitleOnly") == "true");
+
         // Prefer full curl command with captured headers, fallback to raw url
         std::string inputToQueue = !curlCmd.empty() ? curlCmd : url;
 
@@ -386,6 +391,8 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
             opts.netflixId = nid;
             opts.imdbId = iid;
             opts.tmdbId = tid;
+            opts.subtitleOnly = isSub;
+            opts.includeSubtitles = true;
 
             if (m_onJobReceived) {
                 m_onJobReceived(opts);
@@ -403,8 +410,39 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         size_t searchPos = 0;
         while ((searchPos = body.find("\"url\"", searchPos)) != std::string::npos) {
             size_t itemStart = body.rfind('{', searchPos);
-            size_t itemEnd = body.find('}', searchPos);
-            if (itemStart != std::string::npos && itemEnd != std::string::npos) {
+            if (itemStart == std::string::npos) break;
+
+            size_t itemEnd = std::string::npos;
+            int depth = 0;
+            bool inStr = false;
+            bool esc = false;
+            for (size_t i = itemStart; i < body.size(); ++i) {
+                char ch = body[i];
+                if (esc) {
+                    esc = false;
+                    continue;
+                }
+                if (ch == '\\' && inStr) {
+                    esc = true;
+                    continue;
+                }
+                if (ch == '"') {
+                    inStr = !inStr;
+                    continue;
+                }
+                if (!inStr) {
+                    if (ch == '{') depth++;
+                    else if (ch == '}') {
+                        depth--;
+                        if (depth == 0) {
+                            itemEnd = i;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (itemEnd != std::string::npos) {
                 std::string itemJson = body.substr(itemStart, itemEnd - itemStart + 1);
                 std::string curlCmd = ExtractJsonValue(itemJson, "curl");
                 std::string itUrl = ExtractJsonValue(itemJson, "url");
@@ -423,6 +461,11 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
                 std::string itTid = ExtractJsonValue(itemJson, "tmdbId");
                 if (itTid.empty()) itTid = ExtractJsonValue(itemJson, "tmdb_id");
 
+                bool itSub = (itemJson.find("\"isSubtitleJob\": true") != std::string::npos ||
+                              itemJson.find("\"isSubtitleJob\":true") != std::string::npos ||
+                              ExtractJsonValue(itemJson, "type") == "subtitles" ||
+                              ExtractJsonValue(itemJson, "subtitleOnly") == "true");
+
                 std::string chosen = !curlCmd.empty() ? curlCmd : itUrl;
                 if (!chosen.empty()) {
                     DownloadOptions opts;
@@ -432,6 +475,9 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
                     opts.netflixId = itNid;
                     opts.imdbId = itIid;
                     opts.tmdbId = itTid;
+                    opts.subtitleOnly = itSub;
+                    opts.includeSubtitles = true;
+
                     if (m_onJobReceived) {
                         m_onJobReceived(opts);
                     }
@@ -440,6 +486,7 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
             }
             searchPos = (itemEnd != std::string::npos) ? itemEnd + 1 : searchPos + 5;
         }
+
 
         responseBody = "{\n  \"success\": true,\n  \"count\": " + std::to_string(count) + ",\n  \"message\": \"Successfully queued " + std::to_string(count) + " streams in OmniStream Pro\"\n}";
     }
@@ -469,7 +516,12 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
     }
     else if (method == "POST" && path == "/set_theme") {
         std::string theme = ExtractJsonValue(body, "theme");
-        responseBody = "{\n  \"success\": true,\n  \"theme\": \"" + (theme.empty() ? "Cyber Slate" : theme) + "\"\n}";
+        if (theme.empty()) theme = "Cyber Slate";
+        m_currentTheme = theme;
+        if (m_onThemeChanged) {
+            m_onThemeChanged(m_currentTheme);
+        }
+        responseBody = "{\n  \"success\": true,\n  \"theme\": \"" + m_currentTheme + "\"\n}";
     }
     else if (method == "POST" && path == "/focus") {
         if (m_onFocus) {
