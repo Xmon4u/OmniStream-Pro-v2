@@ -215,8 +215,13 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
                 outFinalFile = safeTargetPath;
             }
         }
-        log("Download successfully completed: " + outFinalFile);
-        return true;
+        if (!outFinalFile.empty() && std::filesystem::exists(outFinalFile) && std::filesystem::file_size(outFinalFile) > 0) {
+            log("Download successfully completed: " + outFinalFile);
+            return true;
+        } else {
+            log("[Engine] Error: Download finished but output file was not found on disk.");
+            return false;
+        }
     }
 
     if (m_aborted.load()) {
@@ -791,8 +796,10 @@ bool DownloadEngine::DownloadWithNM3U8(
             }
         }
     } catch (...) {}
-
-    return exitCode == 0 && !m_aborted.load();
+    if (options.onLog) {
+        options.onLog("[Engine] Error: N_m3u8DL-RE completed without producing any output media file on disk.");
+    }
+    return false;
 }
 
 } // namespace OmniStream

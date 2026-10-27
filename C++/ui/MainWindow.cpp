@@ -408,6 +408,11 @@ void MainWindow::setupUI() {
     connect(m_btnModeTitleId, &QPushButton::clicked, [this]() { onDownloadModeChanged(5); });
     connect(m_btnModeSubMerge, &QPushButton::clicked, [this]() { onDownloadModeChanged(6); });
 
+    for (auto *b : {m_btnModeNormal, m_btnModeNetflix, m_btnModeTitleOnly, m_btnModeImdb, m_btnModeTmdb, m_btnModeTitleId, m_btnModeSubMerge}) {
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        b->setMinimumHeight(28);
+    }
+
     modeLayout->addWidget(m_btnModeNormal);
     modeLayout->addWidget(m_btnModeNetflix);
     modeLayout->addWidget(m_btnModeTitleOnly);
@@ -416,35 +421,39 @@ void MainWindow::setupUI() {
     modeLayout->addWidget(m_btnModeTitleId);
     modeLayout->addWidget(m_btnModeSubMerge);
 
-    auto *lblSubFmt = new QLabel("Subtitle Format", this);
-    lblSubFmt->setObjectName("fieldLabel");
-    m_comboSubFormat = new QComboBox(this);
-    m_comboSubFormat->setObjectName("inputCombo");
-    m_comboSubFormat->addItems({"SRT (SubRip \u2014 Universal)", "VTT (WebVTT)"});
-
     card2Layout->addWidget(lblMode, 2, 0);
-    card2Layout->addWidget(modeBox, 2, 1);
-    card2Layout->addWidget(lblSubFmt, 2, 2);
-    card2Layout->addWidget(m_comboSubFormat, 2, 3);
+    card2Layout->addWidget(modeBox, 2, 1, 1, 3);
 
-    // Row 3: Subtitles Checkbox & Subtitle Language
+    // Row 3: Subtitles Checkbox & Subtitle Track + Format
     auto *lblSubTitle = new QLabel("Subtitles", this);
     lblSubTitle->setObjectName("fieldLabel");
     m_checkEmbedSubs = new QCheckBox("Embed Subtitles into Video (MKV container)", this);
     m_checkEmbedSubs->setObjectName("checkEmbedSubs");
     m_checkEmbedSubs->setChecked(true);
 
-    auto *lblSubLang = new QLabel("Subtitle Language", this);
-    lblSubLang->setObjectName("fieldLabel");
+    auto *lblSubFmt = new QLabel("Subtitle Track & Format", this);
+    lblSubFmt->setObjectName("fieldLabel");
+
+    auto *subOptBox = new QWidget(this);
+    auto *subOptLayout = new QHBoxLayout(subOptBox);
+    subOptLayout->setContentsMargins(0, 0, 0, 0);
+    subOptLayout->setSpacing(6);
+
     m_comboSubLang = new QComboBox(this);
     m_comboSubLang->setObjectName("inputCombo");
     m_comboSubLang->addItems({"All Languages", "English (eng)", "Bengali (ben)", "Hindi (hin)", "Spanish (spa)", "French (fra)", "German (deu)", "Japanese (jpn)"});
 
+    m_comboSubFormat = new QComboBox(this);
+    m_comboSubFormat->setObjectName("inputCombo");
+    m_comboSubFormat->addItems({"SRT (SubRip)", "VTT (WebVTT)"});
+
+    subOptLayout->addWidget(m_comboSubLang, 3);
+    subOptLayout->addWidget(m_comboSubFormat, 2);
 
     card2Layout->addWidget(lblSubTitle, 3, 0);
     card2Layout->addWidget(m_checkEmbedSubs, 3, 1);
-    card2Layout->addWidget(lblSubLang, 3, 2);
-    card2Layout->addWidget(m_comboSubLang, 3, 3);
+    card2Layout->addWidget(lblSubFmt, 3, 2);
+    card2Layout->addWidget(subOptBox, 3, 3);
 
     rootLayout->addWidget(m_card2);
 
@@ -825,17 +834,19 @@ void MainWindow::applyStyleSheet(int themeIdx) {
             color: #ffffff;
             font-weight: bold;
             border-radius: 6px;
-            padding: 5px 12px;
+            padding: 4px 6px;
             border: 1px solid #60a5fa;
             font-size: 11px;
+            min-height: 26px;
         }
         #btnModeInactive {
             background-color: #090d13;
             color: #8b949e;
             border: 1px solid #21262d;
             border-radius: 6px;
-            padding: 5px 12px;
+            padding: 4px 6px;
             font-size: 11px;
+            min-height: 26px;
         }
         #btnModeInactive:hover {
             background-color: #161b22;
@@ -1755,17 +1766,18 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
     if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
 
     auto& item = m_queueItems[row];
-    item.status = success ? "Done" : "Failed";
-    item.engine = nullptr;
 
-    if (!finalPath.isEmpty() && QFile::exists(finalPath)) {
+    // Validate that a real file actually exists on disk with size > 0!
+    bool realFileOnDisk = false;
+    if (success && !finalPath.isEmpty() && QFile::exists(finalPath) && QFileInfo(finalPath).size() > 0) {
+        realFileOnDisk = true;
         item.filePath = finalPath;
         item.options.saveDir = QFileInfo(finalPath).dir().absolutePath().toStdString();
         try {
             uint64_t fsz = std::filesystem::file_size(std::filesystem::u8path(finalPath.toStdString()));
             item.downloadedSize = QString::fromStdString(FormatBytes(fsz));
         } catch (...) {}
-    } else {
+    } else if (success) {
         std::string sDir = item.options.saveDir;
         if (sDir.empty() || sDir == ".") {
             if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
@@ -1774,10 +1786,11 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
         }
         std::string sName = item.options.saveName;
         std::filesystem::path fp = std::filesystem::path(sDir) / (sName + ".mkv");
-        if (!std::filesystem::exists(fp)) {
+        if (!std::filesystem::exists(fp) || std::filesystem::file_size(fp) == 0) {
             fp = std::filesystem::path(sDir) / (sName + ".mp4");
         }
-        if (std::filesystem::exists(fp)) {
+        if (std::filesystem::exists(fp) && std::filesystem::file_size(fp) > 0) {
+            realFileOnDisk = true;
             item.filePath = QString::fromStdWString(fp.wstring());
             try {
                 uint64_t fsz = std::filesystem::file_size(fp);
@@ -1785,6 +1798,13 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
             } catch (...) {}
         }
     }
+
+    if (!realFileOnDisk) {
+        success = false;
+    }
+
+    item.status = success ? "Done" : "Failed";
+    item.engine = nullptr;
 
     if (m_tableQueue && row < m_tableQueue->rowCount()) {
         if (success) {
@@ -1794,7 +1814,9 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
                 if (auto *szItem = m_tableQueue->item(row, 4)) szItem->setText(item.downloadedSize);
             }
         } else {
-            if (auto *sItem = m_tableQueue->item(row, 3)) sItem->setText("Failed");
+            if (auto *pItem = m_tableQueue->item(row, 2)) pItem->setText("0%");
+            if (auto *sItem = m_tableQueue->item(row, 3)) sItem->setText("Error");
+            if (auto *szItem = m_tableQueue->item(row, 4)) szItem->setText("--");
         }
         if (auto *stItem = m_tableQueue->item(row, 5)) {
             stItem->setText(success ? "Done" : "Failed");
@@ -1802,12 +1824,27 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
         }
     }
 
+    // Live update Card 3 progress details
+    if (m_activeQueueIndex == row) {
+        if (success) {
+            m_lblProgStatus->setText("Download completed successfully.");
+            m_lblProgPct->setText("100%");
+            m_progBar->setValue(100);
+            m_lblProgSpeed->setText("Complete");
+        } else {
+            m_lblProgStatus->setText("Download failed: Stream unreachable or host offline.");
+            m_lblProgPct->setText("Failed");
+            m_progBar->setValue(0);
+            m_lblProgSpeed->setText("0.0 MB/s");
+        }
+    }
+
     updateQueueStats();
 
     if (success) {
-        handleLogMessage(QString("[Engine] Download #%1 Completed: %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
+        handleLogMessage(QString("[Engine] Download #%1 Completed: %2 (%3)").arg(row + 1).arg(QString::fromStdString(item.options.saveName)).arg(item.downloadedSize));
     } else {
-        handleLogMessage(QString("[Engine] Download #%1 Finished with warnings: %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
+        handleLogMessage(QString("[Engine] Download #%1 Failed: Stream offline, host unreachable, or no media was produced for %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
     }
 
     // Auto-advance: automatically start the next queued download in the queue
