@@ -24,6 +24,8 @@
 #include <QProcess>
 #include <QDir>
 #include <QFileInfo>
+#include <QSettings>
+#include <QStandardPaths>
 #include <cmath>
 #include <memory>
 #include <atomic>
@@ -183,7 +185,7 @@ public:
 signals:
     void logMessageReceived(const QString& msg);
     void progressUpdated(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr);
-    void downloadCompleted(bool success);
+    void downloadCompleted(bool success, const QString& finalPath = QString(), int queueIdx = -1);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -210,7 +212,7 @@ private slots:
     void setDownloadMode(const QString& modeStr);
     void handleLogMessage(const QString& msg);
     void handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr);
-    void handleDownloadComplete(bool success);
+    void handleDownloadComplete(bool success, const QString& finalPath = QString(), int queueIdx = -1);
     void showQueueContextMenu(const QPoint& pos);
     void playQueueItemFile(int row);
     void openQueueItemLocation(int row);

@@ -51,7 +51,13 @@ MainWindow::MainWindow(QWidget *parent)
             if (!opts.saveName.empty()) {
                 m_editTitle->setText(QString::fromStdString(opts.saveName));
             }
-            addQueueItem(opts);
+            DownloadOptions jobOpts = opts;
+            if (jobOpts.saveDir.empty() || jobOpts.saveDir == ".") {
+                if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+                    jobOpts.saveDir = m_editDir->text().trimmed().toStdString();
+                }
+            }
+            addQueueItem(jobOpts);
             showNormal();
             raise();
             activateWindow();
@@ -303,8 +309,20 @@ void MainWindow::setupUI() {
     folderLayout->setSpacing(6);
 
     QString defaultSave = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
-    m_editDir = new QLineEdit(defaultSave, this);
+    QSettings settings("OmniStreamPro", "OmniStream");
+    QString savedFolder = settings.value("save_dir", defaultSave).toString();
+    if (savedFolder.isEmpty() || !QDir(savedFolder).exists()) {
+        savedFolder = defaultSave;
+    }
+    m_editDir = new QLineEdit(savedFolder, this);
     m_editDir->setObjectName("inputField");
+    connect(m_editDir, &QLineEdit::editingFinished, this, [this]() {
+        QString dir = m_editDir->text().trimmed();
+        if (!dir.isEmpty() && QDir(dir).exists()) {
+            QSettings s("OmniStreamPro", "OmniStream");
+            s.setValue("save_dir", dir);
+        }
+    });
     m_btnBrowse = new QPushButton("Browse...", this);
     m_btnBrowse->setIcon(QIcon(":/assets/images/icon_browse.png"));
     m_btnBrowse->setObjectName("btnBrowse");
@@ -988,9 +1006,13 @@ void MainWindow::onPasteClicked() {
 }
 
 void MainWindow::onBrowseClicked() {
-    QString dir = QFileDialog::getExistingDirectory(this, "Select Download Directory", m_editDir->text());
+    QString current = m_editDir ? m_editDir->text() : "";
+    QString dir = QFileDialog::getExistingDirectory(this, "Select Download Directory", current);
     if (!dir.isEmpty()) {
         m_editDir->setText(dir);
+        QSettings settings("OmniStreamPro", "OmniStream");
+        settings.setValue("save_dir", dir);
+        handleLogMessage("[Settings] Download directory set to: " + dir);
     }
 }
 
@@ -1156,10 +1178,16 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
     if (nextIdx >= 0) {
         m_activeQueueIndex = nextIdx;
         options = m_queueItems[nextIdx].options;
+        if (options.saveDir.empty() || options.saveDir == ".") {
+            if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+                options.saveDir = m_editDir->text().trimmed().toStdString();
+                m_queueItems[nextIdx].options.saveDir = options.saveDir;
+            }
+        }
         m_queueItems[nextIdx].status = "Downloading";
     } else {
         options.inputText = inputUrl.toStdString();
-        options.saveDir = m_editDir->text().toStdString();
+        options.saveDir = m_editDir ? m_editDir->text().trimmed().toStdString() : "";
         options.saveName = m_editTitle->text().toStdString();
         options.resolution = m_comboRes->currentIndex() == 0 ? "1080p" : (m_comboRes->currentIndex() == 1 ? "720p" : "480p");
         options.threadCount = 32;
@@ -1211,11 +1239,11 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
         emit logMessageReceived(QString::fromStdString(msg));
     };
 
-    std::thread([this, engine, options]() {
+    std::thread([this, engine, options, queueIndex = m_activeQueueIndex]() {
         std::string finalOutput;
         bool ok = engine->Download(options, finalOutput);
-        QMetaObject::invokeMethod(this, [this, ok]() {
-            handleDownloadComplete(ok);
+        QMetaObject::invokeMethod(this, [this, ok, finalOutput, queueIndex]() {
+            handleDownloadComplete(ok, QString::fromStdString(finalOutput), queueIndex);
         }, Qt::QueuedConnection);
     }).detach();
 }
@@ -1245,19 +1273,26 @@ void MainWindow::onStopClicked() {
 void MainWindow::addQueueItem(const DownloadOptions& opts) {
     if (!m_tableQueue) return;
 
+    DownloadOptions cleanOpts = opts;
+    if (cleanOpts.saveDir.empty() || cleanOpts.saveDir == ".") {
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+            cleanOpts.saveDir = m_editDir->text().trimmed().toStdString();
+        }
+    }
+
     m_emptyQueuePlaceholder->setVisible(false);
     m_tableQueue->setVisible(true);
 
     QueueEntry entry;
-    entry.options = opts;
+    entry.options = cleanOpts;
     entry.status = "Queued";
     m_queueItems.push_back(entry);
 
     int row = m_tableQueue->rowCount();
     m_tableQueue->insertRow(row);
 
-    QString title = opts.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(opts.saveName);
-    QString res = opts.resolution.empty() ? "1080p" : QString::fromStdString(opts.resolution);
+    QString title = cleanOpts.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(cleanOpts.saveName);
+    QString res = cleanOpts.resolution.empty() ? "1080p" : QString::fromStdString(cleanOpts.resolution);
 
     m_tableQueue->setItem(row, 0, new QTableWidgetItem(title));
     m_tableQueue->setItem(row, 1, new QTableWidgetItem(res));
@@ -1329,36 +1364,49 @@ void MainWindow::handleProgressUpdate(float pct, const QString& speed, const QSt
     }
 }
 
-void MainWindow::handleDownloadComplete(bool success) {
+void MainWindow::handleDownloadComplete(bool success, const QString& finalPath, int queueIdx) {
     m_isDownloading.store(false);
 
-    if (m_activeQueueIndex >= 0 && m_activeQueueIndex < static_cast<int>(m_queueItems.size())) {
-        m_queueItems[m_activeQueueIndex].status = success ? "Done" : "Failed";
+    int idx = (queueIdx >= 0) ? queueIdx : m_activeQueueIndex;
+    if (idx >= 0 && idx < static_cast<int>(m_queueItems.size())) {
+        m_queueItems[idx].status = success ? "Done" : "Failed";
 
         // Determine final saved file path
-        std::string sDir = m_queueItems[m_activeQueueIndex].options.saveDir;
-        std::string sName = m_queueItems[m_activeQueueIndex].options.saveName;
-        std::filesystem::path fp = std::filesystem::path(sDir) / (sName + ".mkv");
-        if (!std::filesystem::exists(fp)) {
-            fp = std::filesystem::path(sDir) / (sName + ".mp4");
-        }
-        if (std::filesystem::exists(fp)) {
-            m_queueItems[m_activeQueueIndex].filePath = QString::fromStdWString(fp.wstring());
-            uint64_t fsz = std::filesystem::file_size(fp);
-            m_queueItems[m_activeQueueIndex].downloadedSize = QString::fromStdString(FormatBytes(fsz));
+        if (!finalPath.isEmpty() && QFile::exists(finalPath)) {
+            m_queueItems[idx].filePath = finalPath;
+            m_queueItems[idx].options.saveDir = QFileInfo(finalPath).dir().absolutePath().toStdString();
+            uint64_t fsz = std::filesystem::file_size(std::filesystem::u8path(finalPath.toStdString()));
+            m_queueItems[idx].downloadedSize = QString::fromStdString(FormatBytes(fsz));
+        } else {
+            std::string sDir = m_queueItems[idx].options.saveDir;
+            if (sDir.empty() || sDir == ".") {
+                if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+                    sDir = m_editDir->text().trimmed().toStdString();
+                }
+            }
+            std::string sName = m_queueItems[idx].options.saveName;
+            std::filesystem::path fp = std::filesystem::path(sDir) / (sName + ".mkv");
+            if (!std::filesystem::exists(fp)) {
+                fp = std::filesystem::path(sDir) / (sName + ".mp4");
+            }
+            if (std::filesystem::exists(fp)) {
+                m_queueItems[idx].filePath = QString::fromStdWString(fp.wstring());
+                uint64_t fsz = std::filesystem::file_size(fp);
+                m_queueItems[idx].downloadedSize = QString::fromStdString(FormatBytes(fsz));
+            }
         }
 
-        if (m_tableQueue && m_activeQueueIndex < m_tableQueue->rowCount()) {
+        if (m_tableQueue && idx < m_tableQueue->rowCount()) {
             if (success) {
-                if (auto *pItem = m_tableQueue->item(m_activeQueueIndex, 2)) pItem->setText("100%");
-                if (auto *sItem = m_tableQueue->item(m_activeQueueIndex, 3)) sItem->setText("Done");
-                if (!m_queueItems[m_activeQueueIndex].downloadedSize.isEmpty()) {
-                    if (auto *szItem = m_tableQueue->item(m_activeQueueIndex, 4)) {
-                        szItem->setText(m_queueItems[m_activeQueueIndex].downloadedSize);
+                if (auto *pItem = m_tableQueue->item(idx, 2)) pItem->setText("100%");
+                if (auto *sItem = m_tableQueue->item(idx, 3)) sItem->setText("Done");
+                if (!m_queueItems[idx].downloadedSize.isEmpty()) {
+                    if (auto *szItem = m_tableQueue->item(idx, 4)) {
+                        szItem->setText(m_queueItems[idx].downloadedSize);
                     }
                 }
             }
-            if (auto *stItem = m_tableQueue->item(m_activeQueueIndex, 5)) {
+            if (auto *stItem = m_tableQueue->item(idx, 5)) {
                 stItem->setText(success ? "Done" : "Failed");
                 stItem->setForeground(QBrush(QColor(success ? "#34d399" : "#f87171")));
             }
@@ -1404,11 +1452,30 @@ void MainWindow::playQueueItemFile(int row) {
     const auto& item = m_queueItems[row];
 
     QString targetFile = item.filePath;
+    QString saveDir = QString::fromStdString(item.options.saveDir);
+    if (saveDir.isEmpty() || saveDir == ".") {
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+            saveDir = m_editDir->text().trimmed();
+        }
+    }
+
     if (targetFile.isEmpty() || !QFile::exists(targetFile)) {
-        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
-        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
-        if (std::filesystem::exists(p1)) targetFile = QString::fromStdWString(p1.wstring());
-        else if (std::filesystem::exists(p2)) targetFile = QString::fromStdWString(p2.wstring());
+        std::vector<QString> candidates;
+        if (!saveDir.isEmpty()) {
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty() && m_editDir->text().trimmed() != saveDir) {
+            QString curDir = m_editDir->text().trimmed();
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        for (const auto& cand : candidates) {
+            if (QFile::exists(cand)) {
+                targetFile = cand;
+                break;
+            }
+        }
     }
 
     if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
@@ -1426,11 +1493,30 @@ void MainWindow::openQueueItemLocation(int row) {
     const auto& item = m_queueItems[row];
 
     QString targetFile = item.filePath;
+    QString saveDir = QString::fromStdString(item.options.saveDir);
+    if (saveDir.isEmpty() || saveDir == ".") {
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+            saveDir = m_editDir->text().trimmed();
+        }
+    }
+
     if (targetFile.isEmpty() || !QFile::exists(targetFile)) {
-        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
-        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
-        if (std::filesystem::exists(p1)) targetFile = QString::fromStdWString(p1.wstring());
-        else if (std::filesystem::exists(p2)) targetFile = QString::fromStdWString(p2.wstring());
+        std::vector<QString> candidates;
+        if (!saveDir.isEmpty()) {
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty() && m_editDir->text().trimmed() != saveDir) {
+            QString curDir = m_editDir->text().trimmed();
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        for (const auto& cand : candidates) {
+            if (QFile::exists(cand)) {
+                targetFile = cand;
+                break;
+            }
+        }
     }
 
     if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
@@ -1439,11 +1525,17 @@ void MainWindow::openQueueItemLocation(int row) {
         QProcess::startDetached("explorer.exe", args);
         handleLogMessage("[Queue] Showing in Explorer: " + targetFile);
     } else {
-        QString dir = QString::fromStdString(item.options.saveDir);
-        if (QDir(dir).exists()) {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        QString dirToOpen = saveDir;
+        if (dirToOpen.isEmpty() || !QDir(dirToOpen).exists()) {
+            if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+                dirToOpen = m_editDir->text().trimmed();
+            }
+        }
+        if (QDir(dirToOpen).exists()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(dirToOpen));
+            handleLogMessage("[Queue] Opened download folder: " + dirToOpen);
         } else {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(QDir::homePath() + "/Desktop"));
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)));
         }
     }
 }
@@ -1466,11 +1558,30 @@ void MainWindow::renameQueueItemTitle(int row) {
     if (!ok || newTitle.isEmpty() || newTitle == currentTitle) return;
 
     QString oldFilePath = item.filePath;
+    QString saveDir = QString::fromStdString(item.options.saveDir);
+    if (saveDir.isEmpty() || saveDir == ".") {
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+            saveDir = m_editDir->text().trimmed();
+        }
+    }
+
     if (oldFilePath.isEmpty() || !QFile::exists(oldFilePath)) {
-        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
-        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
-        if (std::filesystem::exists(p1)) oldFilePath = QString::fromStdWString(p1.wstring());
-        else if (std::filesystem::exists(p2)) oldFilePath = QString::fromStdWString(p2.wstring());
+        std::vector<QString> candidates;
+        if (!saveDir.isEmpty()) {
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty() && m_editDir->text().trimmed() != saveDir) {
+            QString curDir = m_editDir->text().trimmed();
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        for (const auto& cand : candidates) {
+            if (QFile::exists(cand)) {
+                oldFilePath = cand;
+                break;
+            }
+        }
     }
 
     if (!oldFilePath.isEmpty() && QFile::exists(oldFilePath)) {
@@ -1505,7 +1616,13 @@ void MainWindow::copyQueueItemFilePath(int row) {
     const auto& item = m_queueItems[row];
     QString path = item.filePath;
     if (path.isEmpty()) {
-        path = QDir(QString::fromStdString(item.options.saveDir)).filePath(QString::fromStdString(item.options.saveName) + ".mkv");
+        QString sDir = QString::fromStdString(item.options.saveDir);
+        if (sDir.isEmpty() || sDir == ".") {
+            if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+                sDir = m_editDir->text().trimmed();
+            }
+        }
+        path = QDir(sDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv");
     }
     QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(path));
     handleLogMessage("[Queue] Copied file path to clipboard: " + path);
@@ -1540,11 +1657,30 @@ void MainWindow::deleteQueueItemFile(int row) {
     const auto& item = m_queueItems[row];
 
     QString targetFile = item.filePath;
+    QString saveDir = QString::fromStdString(item.options.saveDir);
+    if (saveDir.isEmpty() || saveDir == ".") {
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+            saveDir = m_editDir->text().trimmed();
+        }
+    }
+
     if (targetFile.isEmpty() || !QFile::exists(targetFile)) {
-        std::filesystem::path p1 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mkv");
-        std::filesystem::path p2 = std::filesystem::path(item.options.saveDir) / (item.options.saveName + ".mp4");
-        if (std::filesystem::exists(p1)) targetFile = QString::fromStdWString(p1.wstring());
-        else if (std::filesystem::exists(p2)) targetFile = QString::fromStdWString(p2.wstring());
+        std::vector<QString> candidates;
+        if (!saveDir.isEmpty()) {
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(saveDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty() && m_editDir->text().trimmed() != saveDir) {
+            QString curDir = m_editDir->text().trimmed();
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mkv"));
+            candidates.push_back(QDir(curDir).filePath(QString::fromStdString(item.options.saveName) + ".mp4"));
+        }
+        for (const auto& cand : candidates) {
+            if (QFile::exists(cand)) {
+                targetFile = cand;
+                break;
+            }
+        }
     }
 
     if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
