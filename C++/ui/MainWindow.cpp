@@ -63,29 +63,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_animTimer = new QTimer(this);
     connect(m_animTimer, &QTimer::timeout, this, [this]() {
-        m_glowAngle += 0.035f;
+        m_glowAngle += 0.04f;
         if (m_glowAngle > 6.28318f) m_glowAngle -= 6.28318f;
         m_pulseValue = 0.5f + 0.5f * std::sin(m_glowAngle);
-
-        // Dynamic live breathing green pulse on Ready badge
-        if (m_lblStatusBadge) {
-            float gPulse = 0.5f + 0.5f * std::sin(m_glowAngle * 1.5f);
-            m_lblStatusBadge->setStyleSheet(QString(
-                "#lblStatusBadge {"
-                "   background-color: rgba(6, 78, 59, %1);"
-                "   color: #34d399;"
-                "   font-size: 11px;"
-                "   font-weight: bold;"
-                "   border: 1px solid rgba(52, 211, 153, %2);"
-                "   border-radius: 12px;"
-                "   padding: 3px 12px;"
-                "}"
-            ).arg(140 + static_cast<int>(80 * gPulse)).arg(0.35f + 0.55f * gPulse));
-        }
-
-        update(); // repaints glowing curved border
+        update(); // repaints glowing curved border efficiently
     });
-    m_animTimer->start(25); // ~40 FPS buttery smooth animation
+    m_animTimer->start(60); // Clean 16 FPS ambient border glow, near-zero CPU
 
     if (m_bridgeServer->Start()) {
         handleLogMessage("[Bridge] Extension bridge active \u2014 ready for 1-click capture.");
@@ -95,9 +78,8 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
-    if (m_downloadThread && m_downloadThread->joinable()) {
-        if (m_currentEngine) m_currentEngine->Abort();
-        m_downloadThread->join();
+    if (m_currentEngine) {
+        m_currentEngine->Abort();
     }
     if (m_bridgeServer) {
         m_bridgeServer->Stop();
@@ -1178,9 +1160,9 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
         m_queueItems[m_activeQueueIndex].status = "Downloading";
     }
 
-    // Safely join any previous finished thread before launching a new one
-    if (m_downloadThread && m_downloadThread->joinable()) {
-        m_downloadThread->join();
+    // Abort previous engine instance cleanly without locking GUI thread
+    if (m_currentEngine) {
+        m_currentEngine->Abort();
     }
 
     m_lblProgTitle->setText(options.saveName.empty() ? "Capturing Stream..." : QString::fromStdString(options.saveName));
@@ -1201,8 +1183,8 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
         }
     }
 
-    m_currentEngine = std::make_unique<DownloadEngine>();
-    DownloadEngine* engine = m_currentEngine.get();
+    auto engine = std::make_shared<DownloadEngine>();
+    m_currentEngine = engine;
 
     options.onProgress = [this](float pct, const std::string& speed, const std::string& eta, uint64_t bytes) {
         emit progressUpdated(pct, QString::fromStdString(speed), QString::fromStdString(eta), bytes);
@@ -1212,11 +1194,13 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
         emit logMessageReceived(QString::fromStdString(msg));
     };
 
-    m_downloadThread = std::make_unique<std::thread>([this, engine, options]() {
+    std::thread([this, engine, options]() {
         std::string finalOutput;
         bool ok = engine->Download(options, finalOutput);
-        emit downloadCompleted(ok);
-    });
+        QMetaObject::invokeMethod(this, [this, ok]() {
+            handleDownloadComplete(ok);
+        }, Qt::QueuedConnection);
+    }).detach();
 }
 
 void MainWindow::onStopClicked() {

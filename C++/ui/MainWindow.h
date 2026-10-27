@@ -324,8 +324,7 @@ private:
     int m_activeQueueIndex = -1;
 
     std::unique_ptr<BridgeServer> m_bridgeServer;
-    std::unique_ptr<DownloadEngine> m_currentEngine;
-    std::unique_ptr<std::thread> m_downloadThread;
+    std::shared_ptr<DownloadEngine> m_currentEngine;
     std::atomic<bool> m_isDownloading{ false };
 };
 

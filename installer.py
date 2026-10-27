@@ -576,12 +576,15 @@ class OmniStreamInstaller(ctk.CTk):
     def _finish_and_launch(self):
         target_exe = os.path.join(self.install_dir, "OmniStream_Pro.exe")
         if self.launch_after.get():
+            popen_kwargs = {"close_fds": True}
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS
             if os.path.exists(target_exe):
-                subprocess.Popen([target_exe])
+                subprocess.Popen([target_exe], **popen_kwargs)
             else:
                 main_py = os.path.join(self.install_dir, "main_gui.py")
                 if os.path.exists(main_py):
-                    subprocess.Popen([sys.executable, main_py])
+                    subprocess.Popen([sys.executable, main_py], **popen_kwargs)
         self.destroy()
 
 

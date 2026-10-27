@@ -373,9 +373,9 @@ bool DownloadEngine::DownloadWithNM3U8(
     std::filesystem::create_directories(isolatedTemp);
 
     std::string videoSel = "best";
-    if (options.resolution == "1080p") videoSel = "res=\"1080|1920\":for=best";
-    else if (options.resolution == "720p") videoSel = "res=\"720|1280\":for=best";
-    else if (options.resolution == "480p") videoSel = "res=\"480|854\":for=best";
+    if (options.resolution == "720p") videoSel = "res=\"720|1280\":for=best || best";
+    else if (options.resolution == "480p") videoSel = "res=\"480|854\":for=best || best";
+    else videoSel = "best";
 
     std::ostringstream cmd;
     cmd << "\"" << nm3u8Path << "\" \"" << info.url << "\" "
@@ -383,7 +383,7 @@ bool DownloadEngine::DownloadWithNM3U8(
         << "--save-dir \"" << saveDir << "\" "
         << "--save-name \"" << saveName << "\" "
         << "--tmp-dir \"" << isolatedTemp << "\" "
-        << "--thread-count 16 --download-retry-count 15 --http-request-timeout 30 "
+        << "--thread-count 16 --download-retry-count 3 --http-request-timeout 15 "
         << "--disable-update-check --no-log --no-ansi-color ";
 
     std::string ffmpegPath;
@@ -479,6 +479,9 @@ bool DownloadEngine::DownloadWithNM3U8(
             char c = buffer[i];
             if (c == '\r' || c == '\n') {
                 if (!lineAccumulator.empty()) {
+                    if (options.onLog) {
+                        options.onLog(lineAccumulator);
+                    }
                     std::smatch mPct;
                     if (std::regex_search(lineAccumulator, mPct, pctRegex)) {
                         float pct = std::stof(mPct[1].str());
@@ -510,7 +513,9 @@ bool DownloadEngine::DownloadWithNM3U8(
         }
     }
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    if (WaitForSingleObject(pi.hProcess, 5000) == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 1);
+    }
     DWORD exitCode = 1;
     GetExitCodeProcess(pi.hProcess, &exitCode);
 
