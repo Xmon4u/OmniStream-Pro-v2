@@ -300,6 +300,31 @@ std::string NetflixResolver::SanitizeFilename(const std::string& rawName) {
     return safe;
 }
 
+static std::unordered_set<std::string> s_activeReservedPaths;
+static std::mutex s_activePathsMutex;
+
+std::string NetflixResolver::ReserveNonConflictingPath(const std::string& targetPath) {
+    std::lock_guard<std::mutex> lock(s_activePathsMutex);
+    std::filesystem::path p(targetPath);
+    std::string parentDir = p.parent_path().string();
+    std::string stem = p.stem().string();
+    std::string ext = p.extension().string();
+
+    std::string candidate = targetPath;
+    int counter = 2;
+    while (std::filesystem::exists(candidate) || s_activeReservedPaths.count(candidate)) {
+        candidate = (std::filesystem::path(parentDir) / (stem + " (" + std::to_string(counter) + ")" + ext)).string();
+        counter++;
+    }
+    s_activeReservedPaths.insert(candidate);
+    return candidate;
+}
+
+void NetflixResolver::ReleaseReservedPath(const std::string& targetPath) {
+    std::lock_guard<std::mutex> lock(s_activePathsMutex);
+    s_activeReservedPaths.erase(targetPath);
+}
+
 std::string NetflixResolver::GetNonConflictingPath(const std::string& targetPath) {
     if (!std::filesystem::exists(targetPath)) {
         return targetPath;
@@ -323,6 +348,7 @@ std::string NetflixResolver::GetNonConflictingPath(const std::string& targetPath
 std::string NetflixResolver::ResolveOnlineTitle(
     const std::string& netflixId,
     std::function<void(const std::string&)> logCallback
+
 ) {
     auto log = [&](const std::string& msg) {
         if (logCallback) logCallback(msg);
@@ -560,7 +586,7 @@ std::string NetflixResolver::ResolveOnlineTitle(
     return finalName;
 }
 
-std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title) {
+std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title, const std::string& year) {
     if (title.empty()) return "";
 
     std::string clean = title;
@@ -576,11 +602,23 @@ std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title) {
     std::string slug = UrlEncodeSlug(clean);
     std::string url = "https://v3.sg.media-imdb.com/suggestion/x/" + slug + ".json";
 
-    HttpClient client("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-    HttpResponse res = client.Get(url);
-    if (res.IsSuccess()) {
-        std::string body = res.Text();
-        std::regex regTt("\"id\"\\s*:\\s*\"(tt\\d{7,10})\"", std::regex::icase);
+    std::string body = FetchUrlContent(url, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    if (!body.empty()) {
+        // Look for items inside "d": [...]
+        // Each entry has "id": "tt...", "l": "Title", optional "y": 2024, "q": "feature"
+        // 1. If year is provided, search for exact year match first
+        if (!year.empty()) {
+            std::regex entryWithYear(R"(\"id\"\s*:\s*\"(tt\d{7,10})\"[^\}]*\"y\"\s*:\s*)" + year);
+            std::smatch mY;
+            if (std::regex_search(body, mY, entryWithYear)) {
+                std::string imdbId = mY[1].str();
+                std::transform(imdbId.begin(), imdbId.end(), imdbId.begin(), ::tolower);
+                return imdbId;
+            }
+        }
+
+        // 2. Search for feature or series matching title
+        std::regex regTt(R"(\"id\"\s*:\s*\"(tt\d{7,10})\")", std::regex::icase);
         std::smatch m;
         if (std::regex_search(body, m, regTt)) {
             std::string imdbId = m[1].str();
@@ -591,22 +629,67 @@ std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title) {
     return "";
 }
 
-std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, const std::string& title) {
+std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, const std::string& title, const std::string& year) {
+    // Source 1: Wikidata SPARQL mapping from IMDb ID (P345) to TMDB Movie (P4947) or TV (P4983)
     if (!imdbId.empty() && imdbId.rfind("tt", 0) == 0) {
         std::string query = "SELECT ?tmdb WHERE { ?item wdt:P345 \"" + imdbId + "\" . { ?item wdt:P4947 ?tmdb } UNION { ?item wdt:P4983 ?tmdb } }";
         std::string url = "https://query.wikidata.org/sparql?query=" + UrlEncodeSlug(query) + "&format=json";
-        HttpClient client("OmniStreamPro/2.5 (contact@omnistream.pro)");
-        HttpResponse res = client.Get(url);
-        if (res.IsSuccess()) {
-            std::string body = res.Text();
+        
+        // Use curl.exe with 4-second timeout for fast response
+        std::string cmd = "curl.exe -s -L --max-time 4 -H \"Accept: application/json\" -H \"User-Agent: OmniStreamPro/2.6\" \"" + url + "\"";
+        FILE* pipe = _popen(cmd.c_str(), "rb");
+        if (pipe) {
+            std::string result;
+            char buf[8192];
+            while (size_t bytes = fread(buf, 1, sizeof(buf), pipe)) {
+                result.append(buf, bytes);
+            }
+            _pclose(pipe);
+
             std::regex regVal("\"value\"\\s*:\\s*\"(\\d+)\"");
             std::smatch m;
-            if (std::regex_search(body, m, regVal)) {
+            if (std::regex_search(result, m, regVal)) {
                 return m[1].str();
             }
         }
     }
 
+    // Source 2: Wikipedia pageprops -> Wikidata claims fallback
+    if (!title.empty()) {
+        std::string clean = title;
+        std::regex regParen(R"(\s*\([^)]*\))");
+        clean = std::regex_replace(clean, regParen, "");
+        std::regex regEp(R"(\s*S\d{1,2}E\d{1,2}.*)", std::regex::icase);
+        clean = std::regex_replace(clean, regEp, "");
+        clean.erase(0, clean.find_first_not_of(" -:_"));
+        clean.erase(clean.find_last_not_of(" -:_") + 1);
+
+        if (!clean.empty()) {
+            std::string wpUrl = "https://en.wikipedia.org/w/api.php?action=query&prop=pageprops&titles=" + UrlEncodeSlug(clean) + "&format=json";
+            std::string wpContent = FetchUrlContent(wpUrl, "OmniStreamPro/2.6");
+            std::regex qReg("\"wikibase_item\"\\s*:\\s*\"(Q\\d+)\"");
+            std::smatch mQ;
+            if (std::regex_search(wpContent, mQ, qReg)) {
+                std::string qId = mQ[1].str();
+                // Query claims for Movie ID P4947
+                std::string claimMovie = "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=" + qId + "&property=P4947&format=json";
+                std::string cmContent = FetchUrlContent(claimMovie, "OmniStreamPro/2.6");
+                std::regex regVal("\"value\"\\s*:\\s*\"(\\d+)\"");
+                std::smatch mV;
+                if (std::regex_search(cmContent, mV, regVal)) {
+                    return mV[1].str();
+                }
+                // Query claims for TV series ID P4983
+                std::string claimTv = "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=" + qId + "&property=P4983&format=json";
+                std::string ctContent = FetchUrlContent(claimTv, "OmniStreamPro/2.6");
+                if (std::regex_search(ctContent, mV, regVal)) {
+                    return mV[1].str();
+                }
+            }
+        }
+    }
+
+    // Source 3: DuckDuckGo search fallback
     if (!title.empty()) {
         std::string clean = title;
         std::regex regParen(R"(\s*\([^)]*\))");
@@ -618,7 +701,7 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
 
         if (!clean.empty()) {
             std::string url = "https://lite.duckduckgo.com/lite/";
-            std::string q = "\"" + clean + "\" site:themoviedb.org";
+            std::string q = "\"" + clean + "\" " + year + " site:themoviedb.org";
             std::string postData = "q=" + UrlEncodeSlug(q);
             HttpClient client("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
             HttpResponse res = client.Post(url, postData, "application/x-www-form-urlencoded");
@@ -636,6 +719,95 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
     return "";
 }
 
+MediaMetadata NetflixResolver::ResolveFullMetadata(
+    const std::string& inputText,
+    const std::string& customTitle,
+    const std::string& netflixId,
+    const std::string& imdbId,
+    const std::string& tmdbId,
+    std::function<void(const std::string&)> logCallback
+) {
+    auto log = [&](const std::string& msg) {
+        if (logCallback) logCallback(msg);
+    };
+
+    MediaMetadata meta;
+    meta.netflixId = !netflixId.empty() ? netflixId : ExtractNetflixId(inputText);
+    if (meta.netflixId.empty()) meta.netflixId = ExtractNetflixId(customTitle);
+
+    meta.imdbId = !imdbId.empty() ? imdbId : ExtractImdbId(inputText);
+    if (meta.imdbId.empty()) meta.imdbId = ExtractImdbId(customTitle);
+    if (meta.imdbId.empty() && !meta.netflixId.empty()) meta.imdbId = ExtractImdbId(meta.netflixId);
+
+    meta.tmdbId = !tmdbId.empty() ? tmdbId : ExtractTmdbId(inputText);
+    if (meta.tmdbId.empty()) meta.tmdbId = ExtractTmdbId(customTitle);
+
+    meta.episodeTag = ExtractEpisodeTag(customTitle);
+    if (meta.episodeTag.empty()) meta.episodeTag = ExtractEpisodeTag(inputText);
+
+    // If Netflix ID is available, identify title and year online
+    if (!meta.netflixId.empty()) {
+        log("[Metadata Resolver] Identified Netflix Content ID: " + meta.netflixId);
+        std::string resolved = ResolveOnlineTitle(meta.netflixId, logCallback);
+        if (!resolved.empty()) {
+            std::regex yReg(R"(\b(19\d{2}|20\d{2})\b)");
+            std::smatch mY;
+            if (std::regex_search(resolved, mY, yReg)) {
+                meta.year = mY[1].str();
+            }
+            std::string epTagFound = ExtractEpisodeTag(resolved);
+            if (!epTagFound.empty() && meta.episodeTag.empty()) {
+                meta.episodeTag = epTagFound;
+            }
+            // Clean title by removing year and episode tag
+            std::string clean = resolved;
+            std::regex regParen(R"(\s*\([^)]*\))");
+            clean = std::regex_replace(clean, regParen, "");
+            std::regex regEp(R"(\s*S\d{1,2}E\d{1,2}.*)", std::regex::icase);
+            clean = std::regex_replace(clean, regEp, "");
+            clean.erase(0, clean.find_first_not_of(" -:_"));
+            clean.erase(clean.find_last_not_of(" -:_") + 1);
+            meta.title = clean;
+        }
+    }
+
+    if (meta.title.empty() && !customTitle.empty() && !IsGenericStreamName(customTitle)) {
+        std::string clean = customTitle;
+        std::regex yReg(R"(\b(19\d{2}|20\d{2})\b)");
+        std::smatch mY;
+        if (std::regex_search(clean, mY, yReg)) {
+            meta.year = mY[1].str();
+        }
+        std::regex regParen(R"(\s*\([^)]*\))");
+        clean = std::regex_replace(clean, regParen, "");
+        std::regex regEp(R"(\s*S\d{1,2}E\d{1,2}.*)", std::regex::icase);
+        clean = std::regex_replace(clean, regEp, "");
+        clean.erase(0, clean.find_first_not_of(" -:_"));
+        clean.erase(clean.find_last_not_of(" -:_") + 1);
+        meta.title = clean;
+    }
+
+    // Resolve IMDb ID if missing
+    if (meta.imdbId.empty() && !meta.title.empty()) {
+        log("[Metadata Resolver] Looking up verified IMDb ID for: '" + meta.title + "'...");
+        meta.imdbId = ResolveOnlineImdbId(meta.title, meta.year);
+        if (!meta.imdbId.empty()) {
+            log("[Metadata Resolver] Found IMDb ID: " + meta.imdbId);
+        }
+    }
+
+    // Resolve TMDB ID if missing
+    if (meta.tmdbId.empty()) {
+        log("[Metadata Resolver] Looking up verified TMDB ID...");
+        meta.tmdbId = ResolveOnlineTmdbId(meta.imdbId, meta.title, meta.year);
+        if (!meta.tmdbId.empty()) {
+            log("[Metadata Resolver] Found TMDB ID: " + meta.tmdbId);
+        }
+    }
+
+    return meta;
+}
+
 std::string NetflixResolver::ResolveMediaRename(
     const std::string& mode,
     const std::string& inputText,
@@ -649,114 +821,134 @@ std::string NetflixResolver::ResolveMediaRename(
         if (logCallback) logCallback(msg);
     };
 
-    if (mode != "netflix_rename" && mode != "imdb_rename" && mode != "tmdb_rename") {
-        return "";
+    // If mode is normal or empty, preserve original filename / custom title
+    if (mode == "normal" || mode.empty()) {
+        return !customTitle.empty() ? SanitizeFilename(customTitle) : "";
     }
 
-    std::string epTag = ExtractEpisodeTag(customTitle);
-    if (epTag.empty()) epTag = ExtractEpisodeTag(inputText);
-    std::string epSuffix = epTag.empty() ? "" : ("_" + epTag);
+    MediaMetadata meta = ResolveFullMetadata(inputText, customTitle, netflixId, imdbId, tmdbId, logCallback);
 
-    if (mode == "netflix_rename") {
-        std::string nid = !netflixId.empty() ? netflixId : ExtractNetflixId(inputText);
-        if (nid.empty()) nid = ExtractNetflixId(customTitle);
-
-        if (!nid.empty()) {
-            // Check if customTitle is an explicit custom title provided by user (not numeric, not generic)
-            if (!customTitle.empty() && !IsGenericStreamName(customTitle) &&
-                customTitle.find_first_not_of("0123456789") != std::string::npos &&
-                customTitle.find("http") == std::string::npos &&
-                customTitle != "OmniStream_Download" &&
-                customTitle.find("OmniStream_") != 0) {
-                log("[Netflix Rename] User custom title preserved: '" + customTitle + "'");
-                return customTitle;
-            }
-
-            log("[Netflix Rename] Detected Netflix ID: " + nid);
-            log("[Netflix Rename] Searching online for official movie/series title...");
-            std::string resolved = ResolveOnlineTitle(nid, logCallback);
-            if (!resolved.empty()) {
-                log("[Netflix Rename] Successfully identified title: '" + resolved + "'");
-                return resolved;
-            } else {
-                log("[Netflix Rename] Notice: Could not resolve title online. Using Netflix ID.");
-                return nid + epSuffix;
-            }
-        }
-        log("[Netflix Rename] Notice: No Netflix ID detected in source.");
-        return "";
-    }
-
+    // 1. IMDb Mode:
+    // Movie:     tt1234567.mkv
+    // TV Series: S01E02 tt1234567.mkv
     if (mode == "imdb_rename") {
-        std::string directImdb = !imdbId.empty() ? imdbId : ExtractImdbId(inputText);
-        if (directImdb.empty()) directImdb = ExtractImdbId(customTitle);
-        if (directImdb.empty() && !netflixId.empty()) directImdb = ExtractImdbId(netflixId);
-
-        if (!directImdb.empty()) {
-            std::string result = directImdb + epSuffix;
-            log("[IMDb Rename] Using identified IMDb ID: " + result);
-            return result;
-        }
-
-        std::string searchTitle = IsGenericStreamName(customTitle) ? "" : customTitle;
-        if (searchTitle.empty()) {
-            std::string nid = ExtractNetflixId(inputText);
-            if (!nid.empty()) {
-                searchTitle = ResolveOnlineTitle(nid);
+        if (!meta.imdbId.empty()) {
+            std::string res;
+            if (!meta.episodeTag.empty()) {
+                res = meta.episodeTag + " " + meta.imdbId;
+            } else {
+                res = meta.imdbId;
             }
+            log("[Rename Mode] IMDb Mode -> " + res);
+            return SanitizeFilename(res);
         }
 
-        if (!searchTitle.empty()) {
-            log("[IMDb Rename] Querying IMDb metadata for title: '" + searchTitle + "'...");
-            std::string resolved = ResolveOnlineImdbId(searchTitle);
-            if (!resolved.empty()) {
-                std::string result = resolved + epSuffix;
-                log("[IMDb Rename] Successfully resolved IMDb ID: " + result);
-                return result;
-            }
+        // Safe Fallback if IMDb ID not found: never guess!
+        log("[Rename Mode] Warning: IMDb ID not found online. Using safe title fallback.");
+        std::string fallback = meta.title.empty() ? customTitle : meta.title;
+        if (fallback.empty()) fallback = "OmniStream_Download";
+        if (!meta.year.empty() && fallback.find("(" + meta.year + ")") == std::string::npos) {
+            fallback += " (" + meta.year + ")";
         }
-        log("[IMDb Rename] Notice: Could not resolve IMDb ID for title.");
-        return "";
+        if (!meta.episodeTag.empty() && fallback.find(meta.episodeTag) == std::string::npos) {
+            fallback = meta.episodeTag + " " + fallback;
+        }
+        return SanitizeFilename(fallback);
     }
 
+    // 2. TMDB Mode:
+    // Movie:     8273726.mkv
+    // TV Series: S01E02 8273726.mkv
     if (mode == "tmdb_rename") {
-        std::string directTmdb = !tmdbId.empty() ? tmdbId : ExtractTmdbId(inputText);
-        if (directTmdb.empty()) directTmdb = ExtractTmdbId(customTitle);
-
-        if (!directTmdb.empty()) {
-            std::string result = directTmdb + epSuffix;
-            log("[TMDB Rename] Using identified TMDB ID: " + result);
-            return result;
-        }
-
-        std::string iid = !imdbId.empty() ? imdbId : ExtractImdbId(inputText);
-        if (iid.empty()) iid = ExtractImdbId(customTitle);
-
-        std::string searchTitle = IsGenericStreamName(customTitle) ? "" : customTitle;
-        if (searchTitle.empty()) {
-            std::string nid = ExtractNetflixId(inputText);
-            if (!nid.empty()) {
-                searchTitle = ResolveOnlineTitle(nid);
+        if (!meta.tmdbId.empty()) {
+            std::string res;
+            if (!meta.episodeTag.empty()) {
+                res = meta.episodeTag + " " + meta.tmdbId;
+            } else {
+                res = meta.tmdbId;
             }
+            log("[Rename Mode] TMDB Mode -> " + res);
+            return SanitizeFilename(res);
         }
 
-        if (iid.empty() && !searchTitle.empty()) {
-            iid = ResolveOnlineImdbId(searchTitle);
+        // Safe Fallback if TMDB ID not found: never guess!
+        log("[Rename Mode] Warning: TMDB ID not found online. Using safe title fallback.");
+        std::string fallback = meta.title.empty() ? customTitle : meta.title;
+        if (fallback.empty()) fallback = "OmniStream_Download";
+        if (!meta.year.empty() && fallback.find("(" + meta.year + ")") == std::string::npos) {
+            fallback += " (" + meta.year + ")";
         }
-
-        log("[TMDB Rename] Querying TMDB ID metadata...");
-        std::string resolved = ResolveOnlineTmdbId(iid, searchTitle);
-        if (!resolved.empty()) {
-            std::string result = resolved + epSuffix;
-            log("[TMDB Rename] Successfully resolved TMDB ID: " + result);
-            return result;
+        if (!meta.episodeTag.empty() && fallback.find(meta.episodeTag) == std::string::npos) {
+            fallback = meta.episodeTag + " " + fallback;
         }
+        return SanitizeFilename(fallback);
+    }
 
-        log("[TMDB Rename] Notice: Could not resolve TMDB ID.");
-        return "";
+    // 3. Title Only Mode:
+    // Movie:     Movie Name (2025).mkv
+    // TV Series: Movie Name (2025) S01E02.mkv
+    if (mode == "title_only") {
+        std::string t = meta.title.empty() ? customTitle : meta.title;
+        if (t.empty()) t = "OmniStream_Download";
+
+        std::string res = t;
+        if (!meta.year.empty() && res.find("(" + meta.year + ")") == std::string::npos) {
+            res += " (" + meta.year + ")";
+        }
+        if (!meta.episodeTag.empty() && res.find(meta.episodeTag) == std::string::npos) {
+            res += " " + meta.episodeTag;
+        }
+        log("[Rename Mode] Title Only Mode -> " + res);
+        return SanitizeFilename(res);
+    }
+
+    // 4. Title + ID Mode:
+    // Movie:     Movie Name (2025) tt1234567 8273726.mkv
+    // TV Series: Movie Name (2025) S01E02 tt1234567 8273726.mkv
+    if (mode == "title_id") {
+        std::string t = meta.title.empty() ? customTitle : meta.title;
+        if (t.empty()) t = "OmniStream_Download";
+
+        std::string res = t;
+        if (!meta.year.empty() && res.find("(" + meta.year + ")") == std::string::npos) {
+            res += " (" + meta.year + ")";
+        }
+        if (!meta.episodeTag.empty() && res.find(meta.episodeTag) == std::string::npos) {
+            res += " " + meta.episodeTag;
+        }
+        if (!meta.imdbId.empty()) {
+            res += " " + meta.imdbId;
+        }
+        if (!meta.tmdbId.empty()) {
+            res += " " + meta.tmdbId;
+        }
+        log("[Rename Mode] Title + ID Mode -> " + res);
+        return SanitizeFilename(res);
+    }
+
+    // 5. Netflix Mode (Legacy / Netflix Content ID):
+    // Movie:     81902147.mkv or Title (Year).mkv
+    // TV Series: S01E02 81902147.mkv
+    if (mode == "netflix_rename") {
+        if (!meta.title.empty()) {
+            std::string res = meta.title;
+            if (!meta.year.empty() && res.find("(" + meta.year + ")") == std::string::npos) {
+                res += " (" + meta.year + ")";
+            }
+            if (!meta.episodeTag.empty() && res.find(meta.episodeTag) == std::string::npos) {
+                res += " " + meta.episodeTag;
+            }
+            log("[Rename Mode] Netflix Mode -> " + res);
+            return SanitizeFilename(res);
+        }
+        if (!meta.netflixId.empty()) {
+            std::string res = !meta.episodeTag.empty() ? (meta.episodeTag + " " + meta.netflixId) : meta.netflixId;
+            return SanitizeFilename(res);
+        }
     }
 
     return "";
 }
 
 } // namespace OmniStream
+

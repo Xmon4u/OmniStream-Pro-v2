@@ -78,18 +78,31 @@ int RunSelfTest() {
     test("Episode tag extracted (S01E03)", NetflixResolver::ExtractEpisodeTag("MyShow S01E03 1080p") == "S01E03");
     test("Filename sanitizer", NetflixResolver::SanitizeFilename("Bad:Name/With*Illegal?Chars") == "Bad_Name_With_Illegal_Chars");
 
-    // Unified Media Rename Logic Tests
-    std::string renNf = NetflixResolver::ResolveMediaRename("netflix_rename", "https://www.netflix.com/watch/81902147");
-    test("ResolveMediaRename Netflix Mode resolves title", renNf.find("Sonic the Hedgehog 3") != std::string::npos || renNf.find("81902147") != std::string::npos);
+    // Unified Media Rename Logic Tests (Strict User Specifications)
+    std::string renImdbMovie = NetflixResolver::ResolveMediaRename("imdb_rename", "stream.m3u8", "Inception", "", "tt1375666");
+    test("ResolveMediaRename IMDb Mode Movie (tt1375666)", renImdbMovie == "tt1375666");
 
-    std::string renNfCustom = NetflixResolver::ResolveMediaRename("netflix_rename", "https://www.netflix.com/watch/81902147", "My Preserved Movie");
-    test("ResolveMediaRename preserves user custom title", renNfCustom == "My Preserved Movie");
+    std::string renImdbTv = NetflixResolver::ResolveMediaRename("imdb_rename", "stream.m3u8", "Stranger Things S01E02", "", "tt4574334");
+    test("ResolveMediaRename IMDb Mode TV Series (S01E02 tt4574334)", renImdbTv == "S01E02 tt4574334");
 
-    std::string renImdb = NetflixResolver::ResolveMediaRename("imdb_rename", "stream.m3u8", "Inception S02E04", "", "tt1375666");
-    test("ResolveMediaRename IMDb Mode (tt1375666_S02E04)", renImdb == "tt1375666_S02E04");
+    std::string renTmdbMovie = NetflixResolver::ResolveMediaRename("tmdb_rename", "stream.m3u8", "Sonic 3", "", "", "939243");
+    test("ResolveMediaRename TMDB Mode Movie (939243)", renTmdbMovie == "939243");
 
-    std::string renTmdb = NetflixResolver::ResolveMediaRename("tmdb_rename", "stream.m3u8", "Sonic 3", "", "", "939243");
-    test("ResolveMediaRename TMDB Mode (939243)", renTmdb == "939243");
+    std::string renTmdbTv = NetflixResolver::ResolveMediaRename("tmdb_rename", "stream.m3u8", "Arcane S01E02", "", "", "94605");
+    test("ResolveMediaRename TMDB Mode TV Series (S01E02 94605)", renTmdbTv == "S01E02 94605");
+
+    std::string renTitleOnly = NetflixResolver::ResolveMediaRename("title_only", "stream.m3u8", "Movie Name (2025)", "", "tt1234567", "8273726");
+    test("ResolveMediaRename Title Only Mode (Movie Name (2025))", renTitleOnly == "Movie Name (2025)");
+
+    std::string renTitleId = NetflixResolver::ResolveMediaRename("title_id", "stream.m3u8", "Movie Name (2025)", "", "tt1234567", "8273726");
+    test("ResolveMediaRename Title + ID Mode (Movie Name (2025) tt1234567 8273726)", renTitleId == "Movie Name (2025) tt1234567 8273726");
+
+    // Path Reservation Non-Conflict Test (Same folder concurrent download)
+    std::string resPath1 = NetflixResolver::ReserveNonConflictingPath("SampleVideo.mkv");
+    std::string resPath2 = NetflixResolver::ReserveNonConflictingPath("SampleVideo.mkv");
+    test("Path reservation prevents overwrite on same folder concurrency", resPath1 != resPath2 && resPath2.find("(2)") != std::string::npos);
+    NetflixResolver::ReleaseReservedPath(resPath1);
+    NetflixResolver::ReleaseReservedPath(resPath2);
 
     // 6. Bridge Server & Settings Sync
     BridgeServer server(28796, "test_token_123");

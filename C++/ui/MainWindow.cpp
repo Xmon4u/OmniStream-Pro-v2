@@ -58,20 +58,17 @@ MainWindow::MainWindow(QWidget *parent)
                 }
             }
             addQueueItem(jobOpts);
+            int newRow = static_cast<int>(m_queueItems.size()) - 1;
             showNormal();
             raise();
             activateWindow();
-            if (!m_isDownloading.load()) {
-                onStartDownloadClicked();
-            }
+            startQueueItem(newRow, jobOpts.subtitleOnly);
         }, Qt::QueuedConnection);
     });
 
     m_bridgeServer->SetOnStartQueue([this]() {
         QMetaObject::invokeMethod(this, [this]() {
-            if (!m_isDownloading.load()) {
-                onDownloadAllClicked();
-            }
+            onDownloadAllClicked();
         }, Qt::QueuedConnection);
     });
 
@@ -366,26 +363,30 @@ void MainWindow::setupUI() {
 
     m_btnModeNormal = new QPushButton("\u2713 Normal", this);
     m_btnModeNormal->setObjectName("btnModeActive");
-    m_btnModeSubMerge = new QPushButton("Sub Merge", this);
-    m_btnModeSubMerge->setObjectName("btnModeInactive");
-    m_btnModeNetflix = new QPushButton("Netflix Mode", this);
-    m_btnModeNetflix->setObjectName("btnModeInactive");
-    m_btnModeTmdb = new QPushButton("TMDB Mode", this);
-    m_btnModeTmdb->setObjectName("btnModeInactive");
+    m_btnModeTitleOnly = new QPushButton("Title Only", this);
+    m_btnModeTitleOnly->setObjectName("btnModeInactive");
     m_btnModeImdb = new QPushButton("IMDb Mode", this);
     m_btnModeImdb->setObjectName("btnModeInactive");
+    m_btnModeTmdb = new QPushButton("TMDB Mode", this);
+    m_btnModeTmdb->setObjectName("btnModeInactive");
+    m_btnModeTitleId = new QPushButton("Title + ID", this);
+    m_btnModeTitleId->setObjectName("btnModeInactive");
+    m_btnModeSubMerge = new QPushButton("Sub Merge", this);
+    m_btnModeSubMerge->setObjectName("btnModeInactive");
 
     connect(m_btnModeNormal, &QPushButton::clicked, [this]() { onDownloadModeChanged(0); });
-    connect(m_btnModeSubMerge, &QPushButton::clicked, [this]() { onDownloadModeChanged(1); });
-    connect(m_btnModeNetflix, &QPushButton::clicked, [this]() { onDownloadModeChanged(2); });
+    connect(m_btnModeTitleOnly, &QPushButton::clicked, [this]() { onDownloadModeChanged(1); });
+    connect(m_btnModeImdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(2); });
     connect(m_btnModeTmdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(3); });
-    connect(m_btnModeImdb, &QPushButton::clicked, [this]() { onDownloadModeChanged(4); });
+    connect(m_btnModeTitleId, &QPushButton::clicked, [this]() { onDownloadModeChanged(4); });
+    connect(m_btnModeSubMerge, &QPushButton::clicked, [this]() { onDownloadModeChanged(5); });
 
     modeLayout->addWidget(m_btnModeNormal);
-    modeLayout->addWidget(m_btnModeSubMerge);
-    modeLayout->addWidget(m_btnModeNetflix);
-    modeLayout->addWidget(m_btnModeTmdb);
+    modeLayout->addWidget(m_btnModeTitleOnly);
     modeLayout->addWidget(m_btnModeImdb);
+    modeLayout->addWidget(m_btnModeTmdb);
+    modeLayout->addWidget(m_btnModeTitleId);
+    modeLayout->addWidget(m_btnModeSubMerge);
 
     auto *lblSubFmt = new QLabel("Subtitle Format", this);
     lblSubFmt->setObjectName("fieldLabel");
@@ -537,6 +538,21 @@ void MainWindow::setupUI() {
     m_btnDownloadAll->setObjectName("btnDownloadAll");
     connect(m_btnDownloadAll, &QPushButton::clicked, this, &MainWindow::onDownloadAllClicked);
     queueToolbar->addWidget(m_btnDownloadAll);
+
+    m_btnPauseAll = new QPushButton(" ⏸ Pause All", this);
+    m_btnPauseAll->setObjectName("btnToolbar");
+    connect(m_btnPauseAll, &QPushButton::clicked, this, &MainWindow::onPauseAllClicked);
+    queueToolbar->addWidget(m_btnPauseAll);
+
+    m_btnResumeAll = new QPushButton(" ▶ Resume All", this);
+    m_btnResumeAll->setObjectName("btnToolbar");
+    connect(m_btnResumeAll, &QPushButton::clicked, this, &MainWindow::onResumeAllClicked);
+    queueToolbar->addWidget(m_btnResumeAll);
+
+    m_btnStopAll = new QPushButton(" ⏹ Stop All", this);
+    m_btnStopAll->setObjectName("btnToolbar");
+    connect(m_btnStopAll, &QPushButton::clicked, this, &MainWindow::onStopAllClicked);
+    queueToolbar->addWidget(m_btnStopAll);
 
     m_btnClearQueue = new QPushButton("Clear All", this);
     m_btnClearQueue->setObjectName("btnToolbar");
@@ -1032,14 +1048,16 @@ void MainWindow::onBrowseClicked() {
 
 void MainWindow::setDownloadMode(const QString& modeStr) {
     QString m = modeStr.toLower();
-    if (m.contains("imdb")) {
-        onDownloadModeChanged(4);
+    if (m == "title_only" || m == "title") {
+        onDownloadModeChanged(1);
+    } else if (m.contains("imdb") || m.contains("netflix")) {
+        onDownloadModeChanged(2);
     } else if (m.contains("tmdb")) {
         onDownloadModeChanged(3);
-    } else if (m.contains("netflix")) {
-        onDownloadModeChanged(2);
+    } else if (m.contains("title_id") || m.contains("title+id") || m.contains("titleid")) {
+        onDownloadModeChanged(4);
     } else if (m.contains("sub") || m.contains("merge")) {
-        onDownloadModeChanged(1);
+        onDownloadModeChanged(5);
     } else {
         onDownloadModeChanged(0);
     }
@@ -1047,35 +1065,28 @@ void MainWindow::setDownloadMode(const QString& modeStr) {
 
 void MainWindow::onDownloadModeChanged(int modeIdx) {
     m_selectedMode = modeIdx;
-    m_btnModeNormal->setObjectName(modeIdx == 0 ? "btnModeActive" : "btnModeInactive");
-    m_btnModeSubMerge->setObjectName(modeIdx == 1 ? "btnModeActive" : "btnModeInactive");
-    m_btnModeNetflix->setObjectName(modeIdx == 2 ? "btnModeActive" : "btnModeInactive");
-    m_btnModeTmdb->setObjectName(modeIdx == 3 ? "btnModeActive" : "btnModeInactive");
-    m_btnModeImdb->setObjectName(modeIdx == 4 ? "btnModeActive" : "btnModeInactive");
+    QPushButton* btns[] = { m_btnModeNormal, m_btnModeTitleOnly, m_btnModeImdb, m_btnModeTmdb, m_btnModeTitleId, m_btnModeSubMerge };
+    const char* titles[] = { "Normal", "Title Only", "IMDb Mode", "TMDB Mode", "Title + ID", "Sub Merge" };
 
-    m_btnModeNormal->setText(modeIdx == 0 ? "\u2713 Normal" : "Normal");
-    m_btnModeSubMerge->setText(modeIdx == 1 ? "\u2713 Sub Merge" : "Sub Merge");
-    m_btnModeNetflix->setText(modeIdx == 2 ? "\u2713 Netflix Mode" : "Netflix Mode");
-    m_btnModeTmdb->setText(modeIdx == 3 ? "\u2713 TMDB Mode" : "TMDB Mode");
-    m_btnModeImdb->setText(modeIdx == 4 ? "\u2713 IMDb Mode" : "IMDb Mode");
-
-    // Reapply style properties
-    m_btnModeNormal->style()->unpolish(m_btnModeNormal);
-    m_btnModeNormal->style()->polish(m_btnModeNormal);
-    m_btnModeSubMerge->style()->unpolish(m_btnModeSubMerge);
-    m_btnModeSubMerge->style()->polish(m_btnModeSubMerge);
-    m_btnModeNetflix->style()->unpolish(m_btnModeNetflix);
-    m_btnModeNetflix->style()->polish(m_btnModeNetflix);
-    m_btnModeTmdb->style()->unpolish(m_btnModeTmdb);
-    m_btnModeTmdb->style()->polish(m_btnModeTmdb);
-    m_btnModeImdb->style()->unpolish(m_btnModeImdb);
-    m_btnModeImdb->style()->polish(m_btnModeImdb);
+    for (int i = 0; i < 6; ++i) {
+        if (!btns[i]) continue;
+        if (i == modeIdx) {
+            btns[i]->setObjectName("btnModeActive");
+            btns[i]->setText(QString("\u2713 ") + titles[i]);
+        } else {
+            btns[i]->setObjectName("btnModeInactive");
+            btns[i]->setText(titles[i]);
+        }
+        btns[i]->style()->unpolish(btns[i]);
+        btns[i]->style()->polish(btns[i]);
+    }
 
     std::string modeCode = "normal";
-    if (modeIdx == 1) modeCode = "sub_merge";
-    else if (modeIdx == 2) modeCode = "netflix_rename";
+    if (modeIdx == 1) modeCode = "title_only";
+    else if (modeIdx == 2) modeCode = "imdb_rename";
     else if (modeIdx == 3) modeCode = "tmdb_rename";
-    else if (modeIdx == 4) modeCode = "imdb_rename";
+    else if (modeIdx == 4) modeCode = "title_id";
+    else if (modeIdx == 5) modeCode = "sub_merge";
 
     if (m_bridgeServer) {
         m_bridgeServer->SetCurrentMode(modeCode);
@@ -1084,16 +1095,18 @@ void MainWindow::onDownloadModeChanged(int modeIdx) {
     if (modeIdx == 0) {
         handleLogMessage("[Mode] Switched to Normal Mode (Keeps original stream title/filename).");
     } else if (modeIdx == 1) {
-        handleLogMessage("[Mode] Switched to Sub Merge Mode (Video + all multi-audio + subtitles merged into MKV).");
-        m_checkEmbedSubs->setChecked(true);
+        handleLogMessage("[Mode] Switched to Title Only Mode: Movie Name (2025).mkv / S01E02.mkv.");
     } else if (modeIdx == 2) {
-        handleLogMessage("[Mode] Switched to Netflix Mode (Auto-identifies Netflix ID & renames file, e.g. 81902147.mkv).");
+        handleLogMessage("[Mode] Switched to IMDb Mode: tt1234567.mkv / S01E02 tt1234567.mkv.");
         m_checkEmbedSubs->setChecked(true);
     } else if (modeIdx == 3) {
-        handleLogMessage("[Mode] Switched to TMDB Mode (Auto-identifies TMDB ID & renames file, e.g. 939243.mkv).");
+        handleLogMessage("[Mode] Switched to TMDB Mode: 8273726.mkv / S01E02 8273726.mkv.");
         m_checkEmbedSubs->setChecked(true);
     } else if (modeIdx == 4) {
-        handleLogMessage("[Mode] Switched to IMDb Mode (Auto-identifies IMDb ID & renames file, e.g. tt18259086.mkv).");
+        handleLogMessage("[Mode] Switched to Title + ID Mode: Movie Name (2025) tt1234567 8273726.mkv.");
+        m_checkEmbedSubs->setChecked(true);
+    } else if (modeIdx == 5) {
+        handleLogMessage("[Mode] Switched to Sub Merge Mode (Video + all multi-audio + subtitles merged into MKV).");
         m_checkEmbedSubs->setChecked(true);
     }
 }
@@ -1159,185 +1172,343 @@ void MainWindow::onClearQueueClicked() {
 }
 
 void MainWindow::onDownloadAllClicked() {
-    if (m_isDownloading.load()) return;
-
-    bool hasQueued = false;
-    for (const auto& item : m_queueItems) {
-        if (item.status == "Queued") {
-            hasQueued = true;
-            break;
+    bool foundAny = false;
+    for (size_t i = 0; i < m_queueItems.size(); ++i) {
+        if (m_queueItems[i].status == "Queued" || m_queueItems[i].status == "Stopped" ||
+            m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
+            foundAny = true;
+            startQueueItem(static_cast<int>(i), false);
         }
     }
 
-    if (!hasQueued && !m_queueItems.empty()) {
-        for (size_t i = 0; i < m_queueItems.size(); ++i) {
-            if (m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
-                m_queueItems[i].status = "Queued";
-                if (m_tableQueue && (int)i < m_tableQueue->rowCount()) {
-                    if (auto *stItem = m_tableQueue->item((int)i, 5)) {
-                        stItem->setText("Queued");
-                        stItem->setForeground(QBrush(QColor("#94a3b8")));
-                    }
-                }
-            }
+    if (!foundAny && m_queueItems.empty()) {
+        QString inputUrl = m_editUrl ? m_editUrl->toPlainText().trimmed() : "";
+        if (!inputUrl.isEmpty()) {
+            onStartDownloadClicked();
+        } else {
+            QMessageBox::information(this, "Queue Empty", "The queue is empty. Paste a stream link or capture media with the extension.");
         }
-        updateQueueStats();
     }
+}
 
-    startDownloadEngine(false);
+void MainWindow::onPauseAllClicked() {
+    int count = 0;
+    for (size_t i = 0; i < m_queueItems.size(); ++i) {
+        if (m_queueItems[i].status == "Downloading") {
+            pauseQueueItem(static_cast<int>(i));
+            count++;
+        }
+    }
+    if (count > 0) {
+        handleLogMessage(QString("[Queue] Paused %1 active downloads.").arg(count));
+    }
+}
+
+void MainWindow::onResumeAllClicked() {
+    int count = 0;
+    for (size_t i = 0; i < m_queueItems.size(); ++i) {
+        if (m_queueItems[i].status == "Paused" || m_queueItems[i].status == "Queued") {
+            resumeQueueItem(static_cast<int>(i));
+            count++;
+        }
+    }
+    if (count > 0) {
+        handleLogMessage(QString("[Queue] Resumed %1 downloads.").arg(count));
+    }
+}
+
+void MainWindow::onStopAllClicked() {
+    int count = 0;
+    for (size_t i = 0; i < m_queueItems.size(); ++i) {
+        if (m_queueItems[i].status == "Downloading" || m_queueItems[i].status == "Paused") {
+            stopQueueItem(static_cast<int>(i));
+            count++;
+        }
+    }
+    if (count > 0) {
+        handleLogMessage(QString("[Queue] Stopped %1 downloads.").arg(count));
+    }
 }
 
 void MainWindow::onStartDownloadClicked() {
-    startDownloadEngine(false);
+    QString inputUrl = m_editUrl ? m_editUrl->toPlainText().trimmed() : "";
+    if (inputUrl.isEmpty()) {
+        // Start any queued items
+        bool started = false;
+        for (size_t i = 0; i < m_queueItems.size(); ++i) {
+            if (m_queueItems[i].status == "Queued") {
+                startQueueItem(static_cast<int>(i), false);
+                started = true;
+            }
+        }
+        if (!started) {
+            QMessageBox::warning(this, "Input Required", "Please enter a stream URL or Chrome cURL command.");
+        }
+        return;
+    }
+
+    DownloadOptions options;
+    options.inputText = inputUrl.toStdString();
+    options.saveDir = m_editDir ? m_editDir->text().trimmed().toStdString() : "";
+    options.saveName = m_editTitle ? m_editTitle->text().toStdString() : "";
+
+    // Resolution parsing
+    int resIdx = m_comboRes ? m_comboRes->currentIndex() : 0;
+    if (resIdx == 0) options.resolution = "1080p";
+    else if (resIdx == 1) options.resolution = "720p";
+    else if (resIdx == 2) options.resolution = "480p";
+    else if (resIdx == 3) options.resolution = "best";
+    else if (resIdx == 4) options.resolution = "audio_only";
+    else options.resolution = "best";
+
+    // Audio selection parsing
+    int audioIdx = m_comboAudio ? m_comboAudio->currentIndex() : 0;
+    if (audioIdx == 1) options.audioChoice = "dual";
+    else if (audioIdx == 2) options.audioChoice = "en";
+    else if (audioIdx == 3) options.audioChoice = "hi";
+    else options.audioChoice = "all";
+
+    // Subtitle format
+    options.subtitleFormat = (m_comboSubFormat && m_comboSubFormat->currentIndex() == 1) ? "VTT" : "SRT";
+
+    // Subtitle language
+    int subLangIdx = m_comboSubLang ? m_comboSubLang->currentIndex() : 0;
+    const char* subLangs[] = { "all", "eng", "hin", "spa", "fra", "deu", "jpn" };
+    if (subLangIdx >= 0 && subLangIdx < 7) {
+        options.subtitleLanguage = subLangs[subLangIdx];
+    } else {
+        options.subtitleLanguage = "all";
+    }
+
+    options.subtitleOnly = false;
+    options.includeSubtitles = m_checkEmbedSubs ? m_checkEmbedSubs->isChecked() : true;
+    options.threadCount = 32;
+
+    if (m_selectedMode == 1) options.mode = "title_only";
+    else if (m_selectedMode == 2) options.mode = "imdb_rename";
+    else if (m_selectedMode == 3) options.mode = "tmdb_rename";
+    else if (m_selectedMode == 4) options.mode = "title_id";
+    else if (m_selectedMode == 5) options.mode = "sub_merge";
+    else options.mode = "normal";
+
+    addQueueItem(options);
+    int newRow = static_cast<int>(m_queueItems.size()) - 1;
+    startQueueItem(newRow, false);
 }
 
 void MainWindow::onDownloadSubtitlesClicked() {
-    startDownloadEngine(true);
-}
-
-void MainWindow::startDownloadEngine(bool subtitleOnly) {
-    if (m_isDownloading.load()) return;
-
-    QString inputUrl = m_editUrl->toPlainText().trimmed();
-    if (inputUrl.isEmpty() && m_queueItems.empty()) {
+    QString inputUrl = m_editUrl ? m_editUrl->toPlainText().trimmed() : "";
+    if (inputUrl.isEmpty()) {
         QMessageBox::warning(this, "Input Required", "Please enter a stream URL or Chrome cURL command.");
         return;
     }
 
-    int nextIdx = -1;
-    for (size_t i = 0; i < m_queueItems.size(); ++i) {
-        if (m_queueItems[i].status == "Queued") {
-            nextIdx = static_cast<int>(i);
-            break;
-        }
+    DownloadOptions options;
+    options.inputText = inputUrl.toStdString();
+    options.saveDir = m_editDir ? m_editDir->text().trimmed().toStdString() : "";
+    options.saveName = m_editTitle ? m_editTitle->text().toStdString() : "";
+    options.subtitleFormat = (m_comboSubFormat && m_comboSubFormat->currentIndex() == 1) ? "VTT" : "SRT";
+
+    int subLangIdx = m_comboSubLang ? m_comboSubLang->currentIndex() : 0;
+    const char* subLangs[] = { "all", "eng", "hin", "spa", "fra", "deu", "jpn" };
+    if (subLangIdx >= 0 && subLangIdx < 7) {
+        options.subtitleLanguage = subLangs[subLangIdx];
+    } else {
+        options.subtitleLanguage = "all";
     }
 
-    DownloadOptions options;
-    if (nextIdx >= 0) {
-        m_activeQueueIndex = nextIdx;
-        options = m_queueItems[nextIdx].options;
-        if (options.saveDir.empty() || options.saveDir == ".") {
-            if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
-                options.saveDir = m_editDir->text().trimmed().toStdString();
-                m_queueItems[nextIdx].options.saveDir = options.saveDir;
+    options.subtitleOnly = true;
+    options.includeSubtitles = true;
+    options.threadCount = 32;
+
+    if (m_selectedMode == 1) options.mode = "title_only";
+    else if (m_selectedMode == 2) options.mode = "imdb_rename";
+    else if (m_selectedMode == 3) options.mode = "tmdb_rename";
+    else if (m_selectedMode == 4) options.mode = "title_id";
+    else if (m_selectedMode == 5) options.mode = "sub_merge";
+    else options.mode = "normal";
+
+    addQueueItem(options);
+    int newRow = static_cast<int>(m_queueItems.size()) - 1;
+    startQueueItem(newRow, true);
+}
+
+void MainWindow::startDownloadEngine(bool subtitleOnly) {
+    onStartDownloadClicked();
+}
+
+void MainWindow::startQueueItem(int row, bool subtitleOnly) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+
+    auto& item = m_queueItems[row];
+    if (item.status == "Downloading" && item.engine) {
+        return; // Already downloading
+    }
+
+    if (item.status == "Paused" && item.engine && item.engine->IsPaused()) {
+        item.engine->Resume();
+        item.status = "Downloading";
+        if (m_tableQueue && row < m_tableQueue->rowCount()) {
+            if (auto *stItem = m_tableQueue->item(row, 5)) {
+                stItem->setText("Downloading");
+                stItem->setForeground(QBrush(QColor("#38bdf8")));
             }
         }
-        if (subtitleOnly) {
-            options.subtitleOnly = true;
-            options.includeSubtitles = true;
-        }
-        m_queueItems[nextIdx].status = "Downloading";
-    } else {
-        options.inputText = inputUrl.toStdString();
-        options.saveDir = m_editDir ? m_editDir->text().trimmed().toStdString() : "";
-        options.saveName = m_editTitle->text().toStdString();
-
-        // Resolution parsing
-        int resIdx = m_comboRes ? m_comboRes->currentIndex() : 0;
-        if (resIdx == 0) options.resolution = "1080p";
-        else if (resIdx == 1) options.resolution = "720p";
-        else if (resIdx == 2) options.resolution = "480p";
-        else if (resIdx == 3) options.resolution = "best";
-        else if (resIdx == 4) options.resolution = "audio_only";
-        else options.resolution = "best";
-
-        // Audio selection parsing
-        int audioIdx = m_comboAudio ? m_comboAudio->currentIndex() : 0;
-        if (audioIdx == 1) options.audioChoice = "dual";
-        else if (audioIdx == 2) options.audioChoice = "en";
-        else if (audioIdx == 3) options.audioChoice = "hi";
-        else options.audioChoice = "all";
-
-        // Subtitle format
-        options.subtitleFormat = (m_comboSubFormat && m_comboSubFormat->currentIndex() == 1) ? "VTT" : "SRT";
-
-        // Subtitle language
-        int subLangIdx = m_comboSubLang ? m_comboSubLang->currentIndex() : 0;
-        const char* subLangs[] = { "all", "eng", "hin", "spa", "fra", "deu", "jpn" };
-        if (subLangIdx >= 0 && subLangIdx < 7) {
-            options.subtitleLanguage = subLangs[subLangIdx];
-        } else {
-            options.subtitleLanguage = "all";
-        }
-
-        options.subtitleOnly = subtitleOnly;
-        options.includeSubtitles = m_checkEmbedSubs->isChecked() || subtitleOnly;
-        options.threadCount = 32;
-
-        if (m_selectedMode == 1) options.mode = "sub_merge";
-        else if (m_selectedMode == 2) options.mode = "netflix_rename";
-        else if (m_selectedMode == 3) options.mode = "tmdb_rename";
-        else if (m_selectedMode == 4) options.mode = "imdb_rename";
-        else options.mode = "normal";
-
-        addQueueItem(options);
-        m_activeQueueIndex = static_cast<int>(m_queueItems.size()) - 1;
-        m_queueItems[m_activeQueueIndex].status = "Downloading";
+        updateQueueStats();
+        return;
     }
 
-    // Abort previous engine instance cleanly without locking GUI thread
-    if (m_currentEngine) {
-        m_currentEngine->Abort();
+    DownloadOptions options = item.options;
+    if (options.saveDir.empty() || options.saveDir == ".") {
+        if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+            options.saveDir = m_editDir->text().trimmed().toStdString();
+            item.options.saveDir = options.saveDir;
+        }
+    }
+    if (subtitleOnly) {
+        options.subtitleOnly = true;
+        options.includeSubtitles = true;
     }
 
-    m_lblProgTitle->setText(options.saveName.empty() ? "Capturing Stream..." : QString::fromStdString(options.saveName));
+    item.status = "Downloading";
+    m_activeQueueIndex = row;
+
+    if (m_tableQueue && row < m_tableQueue->rowCount()) {
+        if (auto *stItem = m_tableQueue->item(row, 5)) {
+            stItem->setText("Downloading");
+            stItem->setForeground(QBrush(QColor("#38bdf8")));
+        }
+        if (auto *spItem = m_tableQueue->item(row, 3)) spItem->setText("0.0 MB/s");
+    }
+
+    m_lblProgTitle->setText(options.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(options.saveName));
     m_lblProgStatus->setText("Initializing download engine...");
     m_lblProgPct->setText("0%");
     m_progBar->setValue(0);
     m_lblProgSpeed->setText("0.0 MB/s");
 
-    m_isDownloading.store(true);
-    m_btnStart->setEnabled(false);
-    m_btnSubs->setEnabled(false);
-    m_btnStop->setEnabled(true);
-
-    if (m_tableQueue && m_activeQueueIndex >= 0 && m_activeQueueIndex < m_tableQueue->rowCount()) {
-        if (auto *stItem = m_tableQueue->item(m_activeQueueIndex, 5)) {
-            stItem->setText("Downloading");
-            stItem->setForeground(QBrush(QColor("#38bdf8")));
-        }
-    }
-
     auto engine = std::make_shared<DownloadEngine>();
+    item.engine = engine;
     m_currentEngine = engine;
 
-    options.onProgress = [this](float pct, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& sizeStr) {
-        emit progressUpdated(pct, QString::fromStdString(speed), QString::fromStdString(eta), bytes, QString::fromStdString(sizeStr));
+    options.onProgress = [this, row](float pct, const std::string& speed, const std::string& eta, uint64_t bytes, const std::string& sizeStr) {
+        QMetaObject::invokeMethod(this, [this, row, pct, speed = QString::fromStdString(speed), eta = QString::fromStdString(eta), bytes, sizeStr = QString::fromStdString(sizeStr)]() {
+            handleItemProgress(row, pct, speed, eta, bytes, sizeStr);
+        }, Qt::QueuedConnection);
     };
 
     options.onLog = [this](const std::string& msg) {
         emit logMessageReceived(QString::fromStdString(msg));
     };
 
-    std::thread([this, engine, options, queueIndex = m_activeQueueIndex]() {
+    updateQueueStats();
+
+    std::thread([this, engine, options, row]() {
         std::string finalOutput;
         bool ok = engine->Download(options, finalOutput);
-        QMetaObject::invokeMethod(this, [this, ok, finalOutput, queueIndex]() {
-            handleDownloadComplete(ok, QString::fromStdString(finalOutput), queueIndex);
+        QMetaObject::invokeMethod(this, [this, row, ok, finalOutput = QString::fromStdString(finalOutput)]() {
+            handleItemComplete(row, ok, finalOutput);
         }, Qt::QueuedConnection);
     }).detach();
 }
 
-void MainWindow::onStopClicked() {
-    if (m_isDownloading.load() && m_currentEngine) {
-        m_currentEngine->Abort();
-        handleLogMessage("[Engine] Download aborted by user.");
-        m_lblProgStatus->setText("Cancelled by user.");
-        m_isDownloading.store(false);
-        m_btnStart->setEnabled(true);
-        m_btnSubs->setEnabled(true);
-        m_btnStop->setEnabled(false);
-
-        if (m_activeQueueIndex >= 0 && m_activeQueueIndex < static_cast<int>(m_queueItems.size())) {
-            m_queueItems[m_activeQueueIndex].status = "Cancelled";
-            if (m_tableQueue && m_activeQueueIndex < m_tableQueue->rowCount()) {
-                if (auto *stItem = m_tableQueue->item(m_activeQueueIndex, 5)) {
-                    stItem->setText("Cancelled");
-                    stItem->setForeground(QBrush(QColor("#f87171")));
-                }
+void MainWindow::pauseQueueItem(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    auto& item = m_queueItems[row];
+    if (item.status == "Downloading" && item.engine) {
+        item.engine->Pause();
+        item.status = "Paused";
+        if (m_tableQueue && row < m_tableQueue->rowCount()) {
+            if (auto *stItem = m_tableQueue->item(row, 5)) {
+                stItem->setText("Paused");
+                stItem->setForeground(QBrush(QColor("#fbbf24")));
+            }
+            if (auto *sItem = m_tableQueue->item(row, 3)) {
+                sItem->setText("Paused");
             }
         }
+        handleLogMessage(QString("[Queue] Download #%1 Paused.").arg(row + 1));
+        updateQueueStats();
     }
+}
+
+void MainWindow::resumeQueueItem(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    auto& item = m_queueItems[row];
+    if (item.status == "Paused") {
+        if (item.engine && item.engine->IsPaused()) {
+            item.engine->Resume();
+            item.status = "Downloading";
+            if (m_tableQueue && row < m_tableQueue->rowCount()) {
+                if (auto *stItem = m_tableQueue->item(row, 5)) {
+                    stItem->setText("Downloading");
+                    stItem->setForeground(QBrush(QColor("#38bdf8")));
+                }
+            }
+            handleLogMessage(QString("[Queue] Download #%1 Resumed.").arg(row + 1));
+            updateQueueStats();
+        } else {
+            startQueueItem(row, item.options.subtitleOnly);
+        }
+    } else if (item.status == "Queued" || item.status == "Stopped" || item.status == "Cancelled" || item.status == "Failed") {
+        startQueueItem(row, item.options.subtitleOnly);
+    }
+}
+
+void MainWindow::restartQueueItem(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    auto& item = m_queueItems[row];
+    if (item.engine) {
+        item.engine->Abort();
+        item.engine = nullptr;
+    }
+    item.status = "Queued";
+    item.progressPercent = 0.0f;
+    item.speed = "0.0 MB/s";
+    item.downloadedSize = "--";
+    if (m_tableQueue && row < m_tableQueue->rowCount()) {
+        if (auto *pItem = m_tableQueue->item(row, 2)) pItem->setText("0%");
+        if (auto *sItem = m_tableQueue->item(row, 3)) sItem->setText("0.0 MB/s");
+        if (auto *szItem = m_tableQueue->item(row, 4)) szItem->setText("--");
+        if (auto *stItem = m_tableQueue->item(row, 5)) {
+            stItem->setText("Queued");
+            stItem->setForeground(QBrush(QColor("#94a3b8")));
+        }
+    }
+    handleLogMessage(QString("[Queue] Download #%1 Restarting.").arg(row + 1));
+    startQueueItem(row, item.options.subtitleOnly);
+}
+
+void MainWindow::stopQueueItem(int row) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+    auto& item = m_queueItems[row];
+    if (item.engine) {
+        item.engine->Abort();
+        item.engine = nullptr;
+    }
+    item.status = "Stopped";
+    if (m_tableQueue && row < m_tableQueue->rowCount()) {
+        if (auto *stItem = m_tableQueue->item(row, 5)) {
+            stItem->setText("Stopped");
+            stItem->setForeground(QBrush(QColor("#f87171")));
+        }
+        if (auto *sItem = m_tableQueue->item(row, 3)) {
+            sItem->setText("--");
+        }
+    }
+    handleLogMessage(QString("[Queue] Download #%1 Stopped.").arg(row + 1));
+    updateQueueStats();
+}
+
+void MainWindow::onStopClicked() {
+    int sel = (m_tableQueue) ? m_tableQueue->currentRow() : -1;
+    if (sel >= 0 && sel < static_cast<int>(m_queueItems.size())) {
+        if (m_queueItems[sel].status == "Downloading" || m_queueItems[sel].status == "Paused") {
+            stopQueueItem(sel);
+            return;
+        }
+    }
+    onStopAllClicked();
 }
 
 void MainWindow::addQueueItem(const DownloadOptions& opts) {
@@ -1383,14 +1554,39 @@ void MainWindow::addQueueItem(const DownloadOptions& opts) {
 void MainWindow::updateQueueStats() {
     int total = static_cast<int>(m_queueItems.size());
     int waiting = 0;
+    int active = 0;
+    int paused = 0;
     int done = 0;
     for (const auto& it : m_queueItems) {
         if (it.status == "Queued") waiting++;
+        else if (it.status == "Downloading") active++;
+        else if (it.status == "Paused") paused++;
         else if (it.status == "Done") done++;
     }
     m_btnTabQueue->setText(QString(" Download Queue (%1)").arg(total));
-    m_lblQueueStats->setText(QString("Queue: %1 total \u2022 %2 active \u2022 %3 waiting \u2022 %4 done")
-        .arg(total).arg(m_isDownloading.load() ? 1 : 0).arg(waiting).arg(done));
+    QString statMsg = QString("Queue: %1 total \u2022 %2 active").arg(total).arg(active);
+    if (paused > 0) statMsg += QString(" \u2022 %1 paused").arg(paused);
+    statMsg += QString(" \u2022 %1 waiting \u2022 %2 done").arg(waiting).arg(done);
+    m_lblQueueStats->setText(statMsg);
+
+    if (active > 0) {
+        m_isDownloading.store(true);
+        m_btnStop->setEnabled(true);
+        m_lblStatusBadge->setText(QString("\u25CF %1 Downloading").arg(active));
+        m_lblStatusBadge->setStyleSheet("background-color: #0c4a6e; color: #38bdf8; border: 1px solid #0284c7;");
+    } else {
+        m_isDownloading.store(false);
+        m_btnStart->setEnabled(true);
+        m_btnSubs->setEnabled(true);
+        m_btnStop->setEnabled(paused > 0);
+        if (paused > 0) {
+            m_lblStatusBadge->setText(QString("\u25CF %1 Paused").arg(paused));
+            m_lblStatusBadge->setStyleSheet("background-color: #78350f; color: #fbbf24; border: 1px solid #d97706;");
+        } else {
+            m_lblStatusBadge->setText("\u25CF Ready");
+            m_lblStatusBadge->setStyleSheet("background-color: #064e3b; color: #34d399; border: 1px solid #059669;");
+        }
+    }
 }
 
 void MainWindow::handleLogMessage(const QString& msg) {
@@ -1398,122 +1594,113 @@ void MainWindow::handleLogMessage(const QString& msg) {
 }
 
 void MainWindow::handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr) {
+    handleItemProgress(m_activeQueueIndex, pct, speed, eta, bytes, sizeStr);
+}
+
+void MainWindow::handleItemProgress(int row, float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+
+    auto& item = m_queueItems[row];
+    item.progressPercent = pct;
+    item.speed = speed;
+    item.eta = eta;
+    if (!sizeStr.isEmpty() && sizeStr != "-- / --") {
+        item.downloadedSize = sizeStr;
+    } else if (bytes > 0) {
+        item.downloadedSize = QString::fromStdString(FormatBytes(bytes));
+    }
+
+    if (m_tableQueue && row < m_tableQueue->rowCount()) {
+        if (auto *pItem = m_tableQueue->item(row, 2)) pItem->setText(QString::number(pct, 'f', 1) + "%");
+        if (auto *sItem = m_tableQueue->item(row, 3)) sItem->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
+        if (auto *szItem = m_tableQueue->item(row, 4)) {
+            if (!item.downloadedSize.isEmpty() && item.downloadedSize != "-- / --") {
+                szItem->setText(item.downloadedSize);
+            }
+        }
+        if (auto *stItem = m_tableQueue->item(row, 5)) {
+            if (item.status == "Downloading") {
+                stItem->setText("Downloading");
+                stItem->setForeground(QBrush(QColor("#38bdf8")));
+            }
+        }
+    }
+
+    // Update Card 3 with active download stats
     m_progBar->setValue(static_cast<int>(pct));
     m_lblProgPct->setText(QString::number(pct, 'f', 1) + "%");
     m_lblProgSpeed->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
-
-    QString displaySize = sizeStr;
-    if (displaySize.isEmpty() || displaySize == "-- / --") {
-        if (bytes > 0) {
-            displaySize = QString::fromStdString(FormatBytes(bytes));
-        } else {
-            displaySize = "-- / --";
-        }
-    }
-    m_lblProgSize->setText("Downloaded: " + displaySize);
-
+    m_lblProgSize->setText("Downloaded: " + (item.downloadedSize.isEmpty() ? "--" : item.downloadedSize));
+    m_lblProgTitle->setText(item.options.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(item.options.saveName));
     if (pct >= 100.0f) {
         m_lblProgStatus->setText("Completed \u2014 File saved successfully.");
     } else if (pct > 0.0f) {
         m_lblProgStatus->setText("Downloading segments \u2022 ETA: " + (eta.isEmpty() ? "--" : eta));
     }
-
-    if (m_tableQueue && m_activeQueueIndex >= 0 && m_activeQueueIndex < m_tableQueue->rowCount()) {
-        int activeRow = m_activeQueueIndex;
-        if (auto *pItem = m_tableQueue->item(activeRow, 2)) pItem->setText(QString::number(pct, 'f', 1) + "%");
-        if (auto *sItem = m_tableQueue->item(activeRow, 3)) sItem->setText(speed.isEmpty() ? "0.0 MB/s" : speed);
-        if (auto *szItem = m_tableQueue->item(activeRow, 4)) {
-            if (!displaySize.isEmpty() && displaySize != "-- / --") {
-                szItem->setText(displaySize);
-            }
-        }
-        if (auto *stItem = m_tableQueue->item(activeRow, 5)) {
-            stItem->setText("Downloading");
-            stItem->setForeground(QBrush(QColor("#38bdf8")));
-        }
-    }
 }
 
 void MainWindow::handleDownloadComplete(bool success, const QString& finalPath, int queueIdx) {
-    m_isDownloading.store(false);
-
     int idx = (queueIdx >= 0) ? queueIdx : m_activeQueueIndex;
-    if (idx >= 0 && idx < static_cast<int>(m_queueItems.size())) {
-        m_queueItems[idx].status = success ? "Done" : "Failed";
+    handleItemComplete(idx, success, finalPath);
+}
 
-        // Determine final saved file path
-        if (!finalPath.isEmpty() && QFile::exists(finalPath)) {
-            m_queueItems[idx].filePath = finalPath;
-            m_queueItems[idx].options.saveDir = QFileInfo(finalPath).dir().absolutePath().toStdString();
+void MainWindow::handleItemComplete(int row, bool success, const QString& finalPath) {
+    if (row < 0 || row >= static_cast<int>(m_queueItems.size())) return;
+
+    auto& item = m_queueItems[row];
+    item.status = success ? "Done" : "Failed";
+    item.engine = nullptr;
+
+    if (!finalPath.isEmpty() && QFile::exists(finalPath)) {
+        item.filePath = finalPath;
+        item.options.saveDir = QFileInfo(finalPath).dir().absolutePath().toStdString();
+        try {
             uint64_t fsz = std::filesystem::file_size(std::filesystem::u8path(finalPath.toStdString()));
-            m_queueItems[idx].downloadedSize = QString::fromStdString(FormatBytes(fsz));
-        } else {
-            std::string sDir = m_queueItems[idx].options.saveDir;
-            if (sDir.empty() || sDir == ".") {
-                if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
-                    sDir = m_editDir->text().trimmed().toStdString();
-                }
-            }
-            std::string sName = m_queueItems[idx].options.saveName;
-            std::filesystem::path fp = std::filesystem::path(sDir) / (sName + ".mkv");
-            if (!std::filesystem::exists(fp)) {
-                fp = std::filesystem::path(sDir) / (sName + ".mp4");
-            }
-            if (std::filesystem::exists(fp)) {
-                m_queueItems[idx].filePath = QString::fromStdWString(fp.wstring());
-                uint64_t fsz = std::filesystem::file_size(fp);
-                m_queueItems[idx].downloadedSize = QString::fromStdString(FormatBytes(fsz));
+            item.downloadedSize = QString::fromStdString(FormatBytes(fsz));
+        } catch (...) {}
+    } else {
+        std::string sDir = item.options.saveDir;
+        if (sDir.empty() || sDir == ".") {
+            if (m_editDir && !m_editDir->text().trimmed().isEmpty()) {
+                sDir = m_editDir->text().trimmed().toStdString();
             }
         }
-
-        if (m_tableQueue && idx < m_tableQueue->rowCount()) {
-            if (success) {
-                if (auto *pItem = m_tableQueue->item(idx, 2)) pItem->setText("100%");
-                if (auto *sItem = m_tableQueue->item(idx, 3)) sItem->setText("Done");
-                if (!m_queueItems[idx].downloadedSize.isEmpty()) {
-                    if (auto *szItem = m_tableQueue->item(idx, 4)) {
-                        szItem->setText(m_queueItems[idx].downloadedSize);
-                    }
-                }
-            }
-            if (auto *stItem = m_tableQueue->item(idx, 5)) {
-                stItem->setText(success ? "Done" : "Failed");
-                stItem->setForeground(QBrush(QColor(success ? "#34d399" : "#f87171")));
-            }
+        std::string sName = item.options.saveName;
+        std::filesystem::path fp = std::filesystem::path(sDir) / (sName + ".mkv");
+        if (!std::filesystem::exists(fp)) {
+            fp = std::filesystem::path(sDir) / (sName + ".mp4");
+        }
+        if (std::filesystem::exists(fp)) {
+            item.filePath = QString::fromStdWString(fp.wstring());
+            try {
+                uint64_t fsz = std::filesystem::file_size(fp);
+                item.downloadedSize = QString::fromStdString(FormatBytes(fsz));
+            } catch (...) {}
         }
     }
 
-    // Check if there are remaining waiting items in queue
-    int nextWaiting = -1;
-    for (size_t i = 0; i < m_queueItems.size(); ++i) {
-        if (m_queueItems[i].status == "Queued") {
-            nextWaiting = static_cast<int>(i);
-            break;
+    if (m_tableQueue && row < m_tableQueue->rowCount()) {
+        if (success) {
+            if (auto *pItem = m_tableQueue->item(row, 2)) pItem->setText("100%");
+            if (auto *sItem = m_tableQueue->item(row, 3)) sItem->setText("Done");
+            if (!item.downloadedSize.isEmpty()) {
+                if (auto *szItem = m_tableQueue->item(row, 4)) szItem->setText(item.downloadedSize);
+            }
+        } else {
+            if (auto *sItem = m_tableQueue->item(row, 3)) sItem->setText("Failed");
+        }
+        if (auto *stItem = m_tableQueue->item(row, 5)) {
+            stItem->setText(success ? "Done" : "Failed");
+            stItem->setForeground(QBrush(QColor(success ? "#34d399" : "#f87171")));
         }
     }
 
     updateQueueStats();
 
-    if (nextWaiting >= 0) {
-        startDownloadEngine(false);
+    if (success) {
+        handleLogMessage(QString("[Engine] Download #%1 Completed: %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
     } else {
-        m_btnStart->setEnabled(true);
-        m_btnSubs->setEnabled(true);
-        m_btnStop->setEnabled(false);
-
-        if (success) {
-            m_progBar->setValue(100);
-            m_lblProgPct->setText("100%");
-            m_lblProgSpeed->setText("Complete");
-            m_lblProgStatus->setText("Download finished successfully.");
-            if (m_activeQueueIndex >= 0 && !m_queueItems[m_activeQueueIndex].downloadedSize.isEmpty()) {
-                m_lblProgSize->setText("Downloaded: " + m_queueItems[m_activeQueueIndex].downloadedSize);
-            }
-            handleLogMessage("[Engine] 100% Download Completed Successfully.");
-        } else {
-            m_lblProgStatus->setText("Download finished with warnings or errors.");
-            handleLogMessage("[Engine] Download finished.");
-        }
+        handleLogMessage(QString("[Engine] Download #%1 Finished with warnings: %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
     }
 }
 
@@ -1778,6 +1965,7 @@ void MainWindow::showQueueContextMenu(const QPoint& pos) {
     const auto& item = m_queueItems[row];
     bool isDone = (item.status == "Done");
     bool isDownloading = (item.status == "Downloading");
+    bool isPaused = (item.status == "Paused");
 
     QMenu menu(this);
     menu.setObjectName("queueContextMenu");
@@ -1786,20 +1974,24 @@ void MainWindow::showQueueContextMenu(const QPoint& pos) {
     QAction *actOpenDir = menu.addAction("📂  Open File Location");
     menu.addSeparator();
 
+    // Individual Download Controls as required
+    QAction *actPause = menu.addAction("⏸  Pause");
+    QAction *actResume = menu.addAction("▶  Resume");
+    QAction *actRestart = menu.addAction("🔄  Restart");
+    QAction *actStop = menu.addAction("⏹  Stop");
+    menu.addSeparator();
+
+    actPause->setEnabled(isDownloading);
+    actResume->setEnabled(isPaused || (!isDownloading && !isDone));
+    actRestart->setEnabled(true);
+    actStop->setEnabled(isDownloading || isPaused);
+
     QAction *actRename = menu.addAction("✏️  Change Title / Rename");
     menu.addSeparator();
 
     QAction *actCopyUrl = menu.addAction("🔗  Copy Stream URL");
     QAction *actCopyPath = menu.addAction("📋  Copy File Path");
     menu.addSeparator();
-
-    QAction *actStart = nullptr;
-    QAction *actCancel = nullptr;
-    if (!isDownloading && !isDone) {
-        actStart = menu.addAction("▶  Start This Download");
-    } else if (isDownloading) {
-        actCancel = menu.addAction("⏹  Cancel Download");
-    }
 
     QAction *actRemove = menu.addAction("🗑️  Remove from List");
     QAction *actDelete = menu.addAction("❌  Delete File from Disk");
@@ -1813,21 +2005,13 @@ void MainWindow::showQueueContextMenu(const QPoint& pos) {
 
     if (chosen == actPlay) playQueueItemFile(row);
     else if (chosen == actOpenDir) openQueueItemLocation(row);
+    else if (chosen == actPause) pauseQueueItem(row);
+    else if (chosen == actResume) resumeQueueItem(row);
+    else if (chosen == actRestart) restartQueueItem(row);
+    else if (chosen == actStop) stopQueueItem(row);
     else if (chosen == actRename) renameQueueItemTitle(row);
     else if (chosen == actCopyUrl) copyQueueItemUrl(row);
     else if (chosen == actCopyPath) copyQueueItemFilePath(row);
-    else if (actStart && chosen == actStart) {
-        m_queueItems[row].status = "Queued";
-        if (m_tableQueue && row < m_tableQueue->rowCount()) {
-            if (auto *stItem = m_tableQueue->item(row, 5)) {
-                stItem->setText("Queued");
-                stItem->setForeground(QBrush(QColor("#94a3b8")));
-            }
-        }
-        updateQueueStats();
-        startDownloadEngine(false);
-    }
-    else if (actCancel && chosen == actCancel) onStopClicked();
     else if (chosen == actRemove) removeQueueItem(row);
     else if (chosen == actDelete) deleteQueueItemFile(row);
 }

@@ -36,7 +36,10 @@ public:
 
     bool Download(const DownloadOptions& options, std::string& outFinalFile);
     void Abort();
+    void Pause();
+    void Resume();
     bool IsAborted() const { return m_aborted.load(); }
+    bool IsPaused() const { return m_paused.load(); }
 
 private:
     bool DownloadDirectStream(const StreamInfo& info, const std::string& outputFile, const DownloadOptions& options);
@@ -52,8 +55,10 @@ private:
     bool DownloadWithNM3U8(const StreamInfo& info, const std::string& outputFile, const DownloadOptions& options, const std::string& nm3u8Path);
 
     std::atomic<bool> m_aborted{ false };
+    std::atomic<bool> m_paused{ false };
     std::mutex m_processMutex;
     HANDLE m_hCurrentProcess{ NULL };
+    std::string m_reservedTargetPath;
 };
 
 } // namespace OmniStream

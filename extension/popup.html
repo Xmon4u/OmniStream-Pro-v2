@@ -28,10 +28,11 @@
   <div class="mode-row">
     <div class="mode-segmented">
       <button id="modeNormalBtn" type="button" class="mode-tab active" data-mode="normal" title="Normal Mode: Keeps original filename">Normal</button>
+      <button id="modeTitleOnlyBtn" type="button" class="mode-tab" data-mode="title_only" title="Title Only Mode: Movie Name (Year).mkv or S01E02">Title Only</button>
+      <button id="modeImdbBtn" type="button" class="mode-tab" data-mode="imdb_rename" title="IMDb ID Mode: tt1234567.mkv / S01E02 tt1234567.mkv">IMDb ID</button>
+      <button id="modeTmdbBtn" type="button" class="mode-tab" data-mode="tmdb_rename" title="TMDB ID Mode: 8273726.mkv / S01E02 8273726.mkv">TMDB ID</button>
+      <button id="modeTitleIdBtn" type="button" class="mode-tab" data-mode="title_id" title="Title + ID Mode: Movie Name (Year) tt1234567 8273726.mkv">Title + ID</button>
       <button id="modeSubMergeBtn" type="button" class="mode-tab" data-mode="sub_merge" title="Sub Merge Mode: Video + Multi-Audio + Subtitles all merged into MKV">Sub Merge</button>
-      <button id="modeNetflixBtn" type="button" class="mode-tab" data-mode="netflix_rename" title="Netflix Mode: Auto-identifies ID and renames to Netflix ID">Netflix</button>
-      <button id="modeTmdbBtn" type="button" class="mode-tab" data-mode="tmdb_rename" title="TMDB ID Mode: Auto-identifies ID and renames to TMDB ID">TMDB ID</button>
-      <button id="modeImdbBtn" type="button" class="mode-tab" data-mode="imdb_rename" title="IMDb ID Mode: Auto-identifies ID and renames to IMDb ID">IMDb ID</button>
     </div>
   </div>
 
@@ -53,8 +54,11 @@
 
   <section class="panel">
     <div class="panel-head">
-      <span>Player</span>
-      <button id="clearOnlyBtn" type="button" class="text-btn" title="Clear detected files from list">Clear</button>
+      <span>Player Streams</span>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button id="batchDownloadBtn" type="button" class="text-btn" style="color:#38bdf8;font-weight:600;" title="Send all detected streams to OmniStream queue">Download All</button>
+        <button id="clearOnlyBtn" type="button" class="text-btn" title="Clear detected files from list">Clear</button>
+      </div>
     </div>
     <div id="detectedList" class="list"></div>
   </section>

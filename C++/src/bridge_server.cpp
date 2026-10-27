@@ -313,6 +313,17 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
     size_t bodyPos = request.find("\r\n\r\n");
     std::string body = (bodyPos != std::string::npos) ? request.substr(bodyPos + 4) : "";
 
+    size_t expectedLen = 0;
+    if (headers.count("content-length")) {
+        try { expectedLen = std::stoul(headers["content-length"]); } catch (...) {}
+    }
+    while (body.size() < expectedLen) {
+        int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        if (n <= 0) break;
+        buffer[n] = '\0';
+        body.append(buffer, n);
+    }
+
     // Routes
     std::string responseBody;
     int statusCode = 200;
@@ -442,7 +453,9 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         std::string rawMode = ExtractJsonValue(body, "mode");
         std::string lowerMode = rawMode;
         std::transform(lowerMode.begin(), lowerMode.end(), lowerMode.begin(), ::tolower);
-        if (lowerMode.find("tmdb") != std::string::npos) m_currentMode = "tmdb_rename";
+        if (lowerMode.find("title_id") != std::string::npos || lowerMode.find("title+id") != std::string::npos) m_currentMode = "title_id";
+        else if (lowerMode.find("title") != std::string::npos) m_currentMode = "title_only";
+        else if (lowerMode.find("tmdb") != std::string::npos) m_currentMode = "tmdb_rename";
         else if (lowerMode.find("imdb") != std::string::npos) m_currentMode = "imdb_rename";
         else if (lowerMode.find("netflix") != std::string::npos) m_currentMode = "netflix_rename";
         else if (lowerMode.find("sub") != std::string::npos || lowerMode.find("merge") != std::string::npos) m_currentMode = "sub_merge";

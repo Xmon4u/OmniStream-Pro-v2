@@ -31,16 +31,60 @@ static std::string FindNM3U8Binary() {
     return "";
 }
 
+typedef LONG(NTAPI* pfnNtSuspendProcess)(HANDLE ProcessHandle);
+typedef LONG(NTAPI* pfnNtResumeProcess)(HANDLE ProcessHandle);
+
+static pfnNtSuspendProcess s_pfnNtSuspendProcess = nullptr;
+static pfnNtResumeProcess s_pfnNtResumeProcess = nullptr;
+static bool s_ntProcsInitialized = false;
+
+static void EnsureNtProcessFuncs() {
+    if (!s_ntProcsInitialized) {
+        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+        if (hNtdll) {
+            s_pfnNtSuspendProcess = (pfnNtSuspendProcess)GetProcAddress(hNtdll, "NtSuspendProcess");
+            s_pfnNtResumeProcess = (pfnNtResumeProcess)GetProcAddress(hNtdll, "NtResumeProcess");
+        }
+        s_ntProcsInitialized = true;
+    }
+}
+
 DownloadEngine::DownloadEngine() = default;
 DownloadEngine::~DownloadEngine() {
     Abort();
 }
 
+void DownloadEngine::Pause() {
+    m_paused.store(true);
+    EnsureNtProcessFuncs();
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    if (m_hCurrentProcess != NULL && s_pfnNtSuspendProcess) {
+        s_pfnNtSuspendProcess(m_hCurrentProcess);
+    }
+}
+
+void DownloadEngine::Resume() {
+    m_paused.store(false);
+    EnsureNtProcessFuncs();
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    if (m_hCurrentProcess != NULL && s_pfnNtResumeProcess) {
+        s_pfnNtResumeProcess(m_hCurrentProcess);
+    }
+}
+
 void DownloadEngine::Abort() {
     m_aborted.store(true);
+    EnsureNtProcessFuncs();
     std::lock_guard<std::mutex> lock(m_processMutex);
     if (m_hCurrentProcess != NULL) {
+        if (m_paused.load() && s_pfnNtResumeProcess) {
+            s_pfnNtResumeProcess(m_hCurrentProcess);
+        }
         TerminateProcess(m_hCurrentProcess, 1);
+    }
+    if (!m_reservedTargetPath.empty()) {
+        NetflixResolver::ReleaseReservedPath(m_reservedTargetPath);
+        m_reservedTargetPath.clear();
     }
 }
 
@@ -60,7 +104,8 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
 
     // Determine save name based on active mode
     std::string baseName;
-    if (options.mode == "netflix_rename" || options.mode == "imdb_rename" || options.mode == "tmdb_rename") {
+    if (options.mode == "netflix_rename" || options.mode == "imdb_rename" || options.mode == "tmdb_rename" ||
+        options.mode == "title_only" || options.mode == "title_id") {
         baseName = NetflixResolver::ResolveMediaRename(
             options.mode,
             options.inputText,
@@ -109,7 +154,8 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
         ext = isStream ? ".mkv" : ".mp4";
     }
     std::filesystem::path targetFile = dirPath / (baseName + ext);
-    std::string safeTargetPath = NetflixResolver::GetNonConflictingPath(targetFile.string());
+    std::string safeTargetPath = NetflixResolver::ReserveNonConflictingPath(targetFile.string());
+    m_reservedTargetPath = safeTargetPath;
 
     log("Target: " + safeTargetPath);
     log("Mode: " + std::string(options.subtitleOnly ? "Direct Subtitle Stream Extractor" :
@@ -130,6 +176,11 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
         }
     } else {
         success = DownloadDirectStream(info, safeTargetPath, options);
+    }
+
+    if (!m_reservedTargetPath.empty()) {
+        NetflixResolver::ReleaseReservedPath(m_reservedTargetPath);
+        m_reservedTargetPath.clear();
     }
 
     if (success && !m_aborted.load()) {
@@ -243,6 +294,11 @@ bool DownloadEngine::DownloadTrackSegments(
             HttpClient threadClient(info.user_agent);
 
             while (!m_aborted.load()) {
+                while (m_paused.load() && !m_aborted.load()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                if (m_aborted.load()) break;
+
                 size_t segIdx = 0;
                 {
                     std::lock_guard<std::mutex> lock(queueMutex);
@@ -408,12 +464,13 @@ bool DownloadEngine::DownloadWithNM3U8(
     std::filesystem::create_directories(isolatedTemp);
 
     std::ostringstream cmd;
+    int thCount = options.threadCount > 0 ? options.threadCount : 16;
     cmd << "\"" << nm3u8Path << "\" \"" << info.url << "\" "
         << "--auto-select --live-perform-as-vod "
         << "--save-dir \"" << saveDir << "\" "
         << "--save-name \"" << saveName << "\" "
         << "--tmp-dir \"" << isolatedTemp << "\" "
-        << "--thread-count 16 --download-retry-count 5 --http-request-timeout 20 "
+        << "--thread-count " << thCount << " --download-retry-count 15 --http-request-timeout 30 "
         << "--disable-update-check --no-log --no-ansi-color ";
 
     std::string subFmt = options.subtitleFormat.empty() ? "SRT" : options.subtitleFormat;
@@ -551,10 +608,19 @@ bool DownloadEngine::DownloadWithNM3U8(
     std::string lastReportedSize = "-- / --";
     uint64_t lastReportedBytes = 0;
 
+    auto lastProgressCheck = std::chrono::steady_clock::now();
+
     while (ReadFile(hStdOutRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
         if (m_aborted.load()) {
             TerminateProcess(pi.hProcess, 1);
             break;
+        }
+
+        if (m_paused.load()) {
+            if (options.onProgress) {
+                options.onProgress(lastReportedPct, "Paused", "Paused", lastReportedBytes, lastReportedSize);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
         buffer[bytesRead] = '\0';
@@ -570,6 +636,12 @@ bool DownloadEngine::DownloadWithNM3U8(
             }
             streamAccumulator.erase(0, nlPos + 1);
         }
+
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastProgressCheck).count() < 60) {
+            continue;
+        }
+        lastProgressCheck = now;
 
         // Search for progress in recent window (since piped N_m3u8DL-RE outputs continuous records without newlines)
         std::string searchWindow = streamAccumulator;
@@ -615,11 +687,11 @@ bool DownloadEngine::DownloadWithNM3U8(
 
             lastReportedPct = pct;
 
-            if (options.onProgress) {
+            if (options.onProgress && !m_paused.load()) {
                 options.onProgress(lastReportedPct, lastReportedSpeed, lastReportedEta, lastReportedBytes, lastReportedSize);
             }
         } else if (searchWindow.find("Muxing") != std::string::npos || searchWindow.find("merging") != std::string::npos) {
-            if (options.onProgress) {
+            if (options.onProgress && !m_paused.load()) {
                 options.onProgress(99.0f, "Muxing", "0s", lastReportedBytes, lastReportedSize);
             }
         }

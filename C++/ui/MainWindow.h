@@ -204,6 +204,9 @@ private slots:
     void onTabQueueClicked();
     void onTabTerminalClicked();
     void onDownloadAllClicked();
+    void onPauseAllClicked();
+    void onResumeAllClicked();
+    void onStopAllClicked();
     void onClearQueueClicked();
     void onClearLogsClicked();
     void onFullViewClicked();
@@ -213,7 +216,14 @@ private slots:
     void handleLogMessage(const QString& msg);
     void handleProgressUpdate(float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr);
     void handleDownloadComplete(bool success, const QString& finalPath = QString(), int queueIdx = -1);
+    void handleItemProgress(int row, float pct, const QString& speed, const QString& eta, quint64 bytes, const QString& sizeStr);
+    void handleItemComplete(int row, bool success, const QString& finalPath = QString());
     void showQueueContextMenu(const QPoint& pos);
+    void pauseQueueItem(int row);
+    void resumeQueueItem(int row);
+    void restartQueueItem(int row);
+    void stopQueueItem(int row);
+    void startQueueItem(int row, bool subtitleOnly = false);
     void playQueueItemFile(int row);
     void openQueueItemLocation(int row);
     void renameQueueItemTitle(int row);
@@ -266,10 +276,11 @@ private:
 
     // Download Mode Segmented Buttons
     QPushButton* m_btnModeNormal = nullptr;
-    QPushButton* m_btnModeSubMerge = nullptr;
-    QPushButton* m_btnModeNetflix = nullptr;
-    QPushButton* m_btnModeTmdb = nullptr;
+    QPushButton* m_btnModeTitleOnly = nullptr;
     QPushButton* m_btnModeImdb = nullptr;
+    QPushButton* m_btnModeTmdb = nullptr;
+    QPushButton* m_btnModeTitleId = nullptr;
+    QPushButton* m_btnModeSubMerge = nullptr;
     int m_selectedMode = 0;
 
     // Action Buttons
@@ -292,6 +303,9 @@ private:
     QPushButton* m_btnTabQueue = nullptr;
     QPushButton* m_btnTabTerminal = nullptr;
     QPushButton* m_btnDownloadAll = nullptr;
+    QPushButton* m_btnPauseAll = nullptr;
+    QPushButton* m_btnResumeAll = nullptr;
+    QPushButton* m_btnStopAll = nullptr;
     QPushButton* m_btnClearQueue = nullptr;
     QPushButton* m_btnFullView = nullptr;
     QLabel* m_lblQueueStats = nullptr;
@@ -315,9 +329,13 @@ private:
     // Backend Core
     struct QueueEntry {
         DownloadOptions options;
-        QString status; // "Queued", "Downloading", "Done", "Failed", "Cancelled"
-        QString downloadedSize;
+        QString status = "Queued"; // "Queued", "Downloading", "Paused", "Stopped", "Done", "Failed", "Cancelled"
+        QString downloadedSize = "--";
         QString filePath;
+        float progressPercent = 0.0f;
+        QString speed = "--";
+        QString eta = "--";
+        std::shared_ptr<DownloadEngine> engine;
     };
     std::vector<QueueEntry> m_queueItems;
     int m_activeQueueIndex = -1;
