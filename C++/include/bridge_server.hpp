@@ -27,6 +27,14 @@ public:
         m_onModeChanged = callback;
     }
 
+    void SetOnStartQueue(std::function<void()> callback) {
+        m_onStartQueue = callback;
+    }
+
+    void SetOnFocus(std::function<void()> callback) {
+        m_onFocus = callback;
+    }
+
 private:
     void ServerThread();
     void HandleClient(SOCKET clientSocket);
@@ -38,6 +46,8 @@ private:
     std::unique_ptr<std::thread> m_workerThread;
     std::function<void(const DownloadOptions& opts)> m_onJobReceived;
     std::function<void(const std::string& mode)> m_onModeChanged;
+    std::function<void()> m_onStartQueue;
+    std::function<void()> m_onFocus;
     std::string m_currentMode = "normal";
 };
 

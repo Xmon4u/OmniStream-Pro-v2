@@ -17,6 +17,8 @@ struct DownloadOptions {
     std::string audioChoice = "all";
     bool includeSubtitles = true;
     std::string subtitleFormat = "SRT";
+    std::string subtitleLanguage = "all";
+    bool subtitleOnly = false;
     int threadCount = 16;
     std::string mode = "normal"; // "normal", "sub_merge", "netflix_rename", "imdb_rename", "tmdb_rename"
     std::string netflixId;

@@ -433,6 +433,9 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         responseBody = "{\n  \"success\": true,\n  \"count\": " + std::to_string(count) + ",\n  \"message\": \"Successfully queued " + std::to_string(count) + " streams in OmniStream Pro\"\n}";
     }
     else if (method == "POST" && path == "/start_queue") {
+        if (m_onStartQueue) {
+            m_onStartQueue();
+        }
         responseBody = "{\n  \"success\": true,\n  \"message\": \"Queue download started\"\n}";
     }
     else if (method == "POST" && path == "/set_mode") {
@@ -456,6 +459,9 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
         responseBody = "{\n  \"success\": true,\n  \"theme\": \"" + (theme.empty() ? "Cyber Slate" : theme) + "\"\n}";
     }
     else if (method == "POST" && path == "/focus") {
+        if (m_onFocus) {
+            m_onFocus();
+        }
         responseBody = "{\n  \"success\": true\n}";
     }
     else {

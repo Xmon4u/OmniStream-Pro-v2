@@ -67,7 +67,21 @@ MainWindow::MainWindow(QWidget *parent)
         }, Qt::QueuedConnection);
     });
 
+    m_bridgeServer->SetOnStartQueue([this]() {
+        QMetaObject::invokeMethod(this, [this]() {
+            if (!m_isDownloading.load()) {
+                onDownloadAllClicked();
+            }
+        }, Qt::QueuedConnection);
+    });
 
+    m_bridgeServer->SetOnFocus([this]() {
+        QMetaObject::invokeMethod(this, [this]() {
+            showNormal();
+            raise();
+            activateWindow();
+        }, Qt::QueuedConnection);
+    });
 
     if (m_bridgeServer->Start()) {
         handleLogMessage("[Bridge] Extension bridge active \u2014 ready for 1-click capture.");
@@ -1146,6 +1160,30 @@ void MainWindow::onClearQueueClicked() {
 
 void MainWindow::onDownloadAllClicked() {
     if (m_isDownloading.load()) return;
+
+    bool hasQueued = false;
+    for (const auto& item : m_queueItems) {
+        if (item.status == "Queued") {
+            hasQueued = true;
+            break;
+        }
+    }
+
+    if (!hasQueued && !m_queueItems.empty()) {
+        for (size_t i = 0; i < m_queueItems.size(); ++i) {
+            if (m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
+                m_queueItems[i].status = "Queued";
+                if (m_tableQueue && (int)i < m_tableQueue->rowCount()) {
+                    if (auto *stItem = m_tableQueue->item((int)i, 5)) {
+                        stItem->setText("Queued");
+                        stItem->setForeground(QBrush(QColor("#94a3b8")));
+                    }
+                }
+            }
+        }
+        updateQueueStats();
+    }
+
     startDownloadEngine(false);
 }
 
@@ -1184,12 +1222,46 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
                 m_queueItems[nextIdx].options.saveDir = options.saveDir;
             }
         }
+        if (subtitleOnly) {
+            options.subtitleOnly = true;
+            options.includeSubtitles = true;
+        }
         m_queueItems[nextIdx].status = "Downloading";
     } else {
         options.inputText = inputUrl.toStdString();
         options.saveDir = m_editDir ? m_editDir->text().trimmed().toStdString() : "";
         options.saveName = m_editTitle->text().toStdString();
-        options.resolution = m_comboRes->currentIndex() == 0 ? "1080p" : (m_comboRes->currentIndex() == 1 ? "720p" : "480p");
+
+        // Resolution parsing
+        int resIdx = m_comboRes ? m_comboRes->currentIndex() : 0;
+        if (resIdx == 0) options.resolution = "1080p";
+        else if (resIdx == 1) options.resolution = "720p";
+        else if (resIdx == 2) options.resolution = "480p";
+        else if (resIdx == 3) options.resolution = "best";
+        else if (resIdx == 4) options.resolution = "audio_only";
+        else options.resolution = "best";
+
+        // Audio selection parsing
+        int audioIdx = m_comboAudio ? m_comboAudio->currentIndex() : 0;
+        if (audioIdx == 1) options.audioChoice = "dual";
+        else if (audioIdx == 2) options.audioChoice = "en";
+        else if (audioIdx == 3) options.audioChoice = "hi";
+        else options.audioChoice = "all";
+
+        // Subtitle format
+        options.subtitleFormat = (m_comboSubFormat && m_comboSubFormat->currentIndex() == 1) ? "VTT" : "SRT";
+
+        // Subtitle language
+        int subLangIdx = m_comboSubLang ? m_comboSubLang->currentIndex() : 0;
+        const char* subLangs[] = { "all", "eng", "hin", "spa", "fra", "deu", "jpn" };
+        if (subLangIdx >= 0 && subLangIdx < 7) {
+            options.subtitleLanguage = subLangs[subLangIdx];
+        } else {
+            options.subtitleLanguage = "all";
+        }
+
+        options.subtitleOnly = subtitleOnly;
+        options.includeSubtitles = m_checkEmbedSubs->isChecked() || subtitleOnly;
         options.threadCount = 32;
 
         if (m_selectedMode == 1) options.mode = "sub_merge";
@@ -1197,8 +1269,6 @@ void MainWindow::startDownloadEngine(bool subtitleOnly) {
         else if (m_selectedMode == 3) options.mode = "tmdb_rename";
         else if (m_selectedMode == 4) options.mode = "imdb_rename";
         else options.mode = "normal";
-
-        options.includeSubtitles = m_checkEmbedSubs->isChecked() || subtitleOnly;
 
         addQueueItem(options);
         m_activeQueueIndex = static_cast<int>(m_queueItems.size()) - 1;
@@ -1521,7 +1591,7 @@ void MainWindow::openQueueItemLocation(int row) {
 
     if (!targetFile.isEmpty() && QFile::exists(targetFile)) {
         QStringList args;
-        args << "/select," << QDir::toNativeSeparators(targetFile);
+        args << ("/select," + QDir::toNativeSeparators(targetFile));
         QProcess::startDetached("explorer.exe", args);
         handleLogMessage("[Queue] Showing in Explorer: " + targetFile);
     } else {
@@ -1747,7 +1817,14 @@ void MainWindow::showQueueContextMenu(const QPoint& pos) {
     else if (chosen == actCopyUrl) copyQueueItemUrl(row);
     else if (chosen == actCopyPath) copyQueueItemFilePath(row);
     else if (actStart && chosen == actStart) {
-        m_activeQueueIndex = row;
+        m_queueItems[row].status = "Queued";
+        if (m_tableQueue && row < m_tableQueue->rowCount()) {
+            if (auto *stItem = m_tableQueue->item(row, 5)) {
+                stItem->setText("Queued");
+                stItem->setForeground(QBrush(QColor("#94a3b8")));
+            }
+        }
+        updateQueueStats();
         startDownloadEngine(false);
     }
     else if (actCancel && chosen == actCancel) onStopClicked();

@@ -114,6 +114,18 @@ int RunSelfTest() {
         HttpResponse addRes = client.Post("http://127.0.0.1:28796/add", "{\"url\": \"https://example.com/test.m3u8\", \"title\": \"TestStream\"}", "application/json");
         test("Bridge POST /add accepts stream payload", addRes.IsSuccess() && addRes.Text().find("\"success\": true") != std::string::npos);
 
+        // Test POST /start_queue and POST /focus
+        bool startQueueFired = false;
+        bool focusFired = false;
+        server.SetOnStartQueue([&]() { startQueueFired = true; });
+        server.SetOnFocus([&]() { focusFired = true; });
+
+        HttpResponse sqRes = client.Post("http://127.0.0.1:28796/start_queue", "{}", "application/json");
+        test("Bridge POST /start_queue triggers callback", sqRes.IsSuccess() && startQueueFired);
+
+        HttpResponse focusRes = client.Post("http://127.0.0.1:28796/focus", "{}", "application/json");
+        test("Bridge POST /focus triggers callback", focusRes.IsSuccess() && focusFired);
+
         server.Stop();
     }
 
@@ -183,6 +195,25 @@ int main(int argc, char* argv[]) {
             isCliMode = true;
         } else if ((arg == "--threads" || arg == "-t") && i + 1 < argc) {
             options.threadCount = std::atoi(argv[++i]);
+            isCliMode = true;
+        } else if (arg == "--subs" || arg == "--sub-only") {
+            options.subtitleOnly = true;
+            options.includeSubtitles = true;
+            isCliMode = true;
+        } else if (arg == "--no-subs") {
+            options.includeSubtitles = false;
+            isCliMode = true;
+        } else if (arg == "--audio" && i + 1 < argc) {
+            options.audioChoice = argv[++i];
+            isCliMode = true;
+        } else if (arg == "--sub-format" && i + 1 < argc) {
+            options.subtitleFormat = argv[++i];
+            isCliMode = true;
+        } else if (arg == "--sub-lang" && i + 1 < argc) {
+            options.subtitleLanguage = argv[++i];
+            isCliMode = true;
+        } else if (arg == "--mode" && i + 1 < argc) {
+            options.mode = argv[++i];
             isCliMode = true;
         } else if (!arg.empty() && arg[0] != '-') {
             if (options.inputText.empty()) {

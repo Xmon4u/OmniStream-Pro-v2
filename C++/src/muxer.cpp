@@ -4,7 +4,21 @@
 namespace OmniStream {
 
 bool Muxer::FindFFmpeg(std::string& outPath) {
-    // 1. Check local bin/
+    // 1. Check application directory where executable lives
+    wchar_t modPath[MAX_PATH];
+    if (GetModuleFileNameW(NULL, modPath, MAX_PATH) > 0) {
+        std::filesystem::path appDir = std::filesystem::path(modPath).parent_path();
+        if (std::filesystem::exists(appDir / "ffmpeg.exe")) {
+            outPath = (appDir / "ffmpeg.exe").string();
+            return true;
+        }
+        if (std::filesystem::exists(appDir / "bin" / "ffmpeg.exe")) {
+            outPath = (appDir / "bin" / "ffmpeg.exe").string();
+            return true;
+        }
+    }
+
+    // 2. Check local relative bin/
     const char* candidates[] = {
         "bin\\ffmpeg.exe",
         "..\\desktop\\bin\\ffmpeg.exe",
@@ -18,7 +32,7 @@ bool Muxer::FindFFmpeg(std::string& outPath) {
         }
     }
 
-    // 2. Check PATH via SearchPathW
+    // 3. Check PATH via SearchPathW
     wchar_t buffer[MAX_PATH];
     DWORD res = SearchPathW(nullptr, L"ffmpeg.exe", nullptr, MAX_PATH, buffer, nullptr);
     if (res > 0 && res < MAX_PATH) {

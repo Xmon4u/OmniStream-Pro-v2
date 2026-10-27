@@ -100,20 +100,28 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
                      info.url.find(".mpd") != std::string::npos ||
                      info.GetHeader("content-type").find("mpegurl") != std::string::npos);
 
-    std::string ext = isStream ? ".mkv" : ".mp4";
+    std::string ext;
+    if (options.subtitleOnly) {
+        ext = (options.subtitleFormat == "VTT") ? ".vtt" : ".srt";
+    } else if (options.resolution == "audio_only") {
+        ext = ".m4a";
+    } else {
+        ext = isStream ? ".mkv" : ".mp4";
+    }
     std::filesystem::path targetFile = dirPath / (baseName + ext);
     std::string safeTargetPath = NetflixResolver::GetNonConflictingPath(targetFile.string());
 
     log("Target: " + safeTargetPath);
-    log("Mode: " + std::string(isStream ? "HLS/DASH Multi-Stream Downloader" : "Direct Media Stream Downloader"));
+    log("Mode: " + std::string(options.subtitleOnly ? "Direct Subtitle Stream Extractor" :
+                                (isStream ? "HLS/DASH Multi-Stream Downloader" : "Direct Media Stream Downloader")));
 
     bool success = false;
-    if (isStream) {
+    if (isStream || options.subtitleOnly) {
         std::string nm3u8Binary = FindNM3U8Binary();
         if (!nm3u8Binary.empty()) {
             log("[Engine] Found N_m3u8DL-RE binary: " + nm3u8Binary);
             success = DownloadWithNM3U8(info, safeTargetPath, options, nm3u8Binary);
-            if (!success && !m_aborted.load()) {
+            if (!success && !m_aborted.load() && !options.subtitleOnly) {
                 log("[Engine] Notice: N_m3u8DL-RE completed with non-zero or failed. Falling back to native C++ HLS engine...");
                 success = DownloadHlsStream(info, safeTargetPath, options);
             }
@@ -125,8 +133,35 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
     }
 
     if (success && !m_aborted.load()) {
-        outFinalFile = safeTargetPath;
-        log("Download successfully completed: " + safeTargetPath);
+        if (std::filesystem::exists(safeTargetPath)) {
+            outFinalFile = safeTargetPath;
+        } else {
+            std::vector<std::string> altExts = options.subtitleOnly ? std::vector<std::string>{".srt", ".vtt"} :
+                (options.resolution == "audio_only" ? std::vector<std::string>{".m4a", ".aac", ".mp3"} : std::vector<std::string>{".mkv", ".mp4"});
+            bool foundAlt = false;
+            try {
+                for (const auto& entry : std::filesystem::directory_iterator(dirPath)) {
+                    if (!entry.is_regular_file()) continue;
+                    std::string stem = entry.path().stem().string();
+                    if (stem.find(baseName) != std::string::npos && entry.file_size() > 0) {
+                        std::string entryExt = entry.path().extension().string();
+                        std::transform(entryExt.begin(), entryExt.end(), entryExt.begin(), ::tolower);
+                        for (const auto& aExt : altExts) {
+                            if (entryExt == aExt) {
+                                outFinalFile = entry.path().string();
+                                foundAlt = true;
+                                break;
+                            }
+                        }
+                        if (foundAlt) break;
+                    }
+                }
+            } catch (...) {}
+            if (!foundAlt) {
+                outFinalFile = safeTargetPath;
+            }
+        }
+        log("Download successfully completed: " + outFinalFile);
         return true;
     }
 
@@ -372,29 +407,74 @@ bool DownloadEngine::DownloadWithNM3U8(
     std::string isolatedTemp = (outPath.parent_path() / (".omnistream_tmp_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()))).string();
     std::filesystem::create_directories(isolatedTemp);
 
-    std::string videoSel = "best";
-    if (options.resolution == "720p") videoSel = "res=\"720|1280\":for=best || best";
-    else if (options.resolution == "480p") videoSel = "res=\"480|854\":for=best || best";
-    else videoSel = "best";
-
     std::ostringstream cmd;
     cmd << "\"" << nm3u8Path << "\" \"" << info.url << "\" "
-        << "--auto-select -sv " << videoSel << " -sa all -mt "
+        << "--auto-select "
         << "--save-dir \"" << saveDir << "\" "
         << "--save-name \"" << saveName << "\" "
         << "--tmp-dir \"" << isolatedTemp << "\" "
         << "--thread-count 16 --download-retry-count 3 --http-request-timeout 15 "
         << "--disable-update-check --no-log --no-ansi-color ";
 
-    std::string ffmpegPath;
-    if (Muxer::FindFFmpeg(ffmpegPath)) {
-        cmd << "-M format=mkv:muxer=ffmpeg --ffmpeg-binary-path \"" << ffmpegPath << "\" ";
-    } else {
-        cmd << "-M format=mkv ";
-    }
+    std::string subFmt = options.subtitleFormat.empty() ? "SRT" : options.subtitleFormat;
 
-    if (options.includeSubtitles) {
-        cmd << "--sub-format SRT --auto-subtitle-fix -ss all ";
+    if (options.subtitleOnly) {
+        cmd << "--sub-only --sub-format " << subFmt << " --auto-subtitle-fix ";
+        if (options.subtitleLanguage.empty() || options.subtitleLanguage == "all") {
+            cmd << "-ss all ";
+        } else {
+            cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all || all ";
+        }
+    } else {
+        // Video stream selection
+        if (options.resolution == "audio_only") {
+            cmd << "-dv all ";
+        } else if (options.resolution == "720p") {
+            cmd << "-sv res=\"720|1280\":for=best || best ";
+        } else if (options.resolution == "480p") {
+            cmd << "-sv res=\"480|854\":for=best || best ";
+        } else if (options.resolution == "1080p") {
+            cmd << "-sv res=\"1080|1920\":for=best || best ";
+        } else {
+            cmd << "-sv best ";
+        }
+
+        // Audio selection
+        if (options.audioChoice == "dual") {
+            cmd << "-sa lang=\"en|eng|hi|hin\":for=all || all ";
+        } else if (options.audioChoice == "en") {
+            cmd << "-sa lang=\"en|eng\":for=best || all ";
+        } else if (options.audioChoice == "hi") {
+            cmd << "-sa lang=\"hi|hin\":for=best || all ";
+        } else {
+            cmd << "-sa all ";
+        }
+
+        // Subtitles inclusion
+        if (options.includeSubtitles) {
+            cmd << "--sub-format " << subFmt << " --auto-subtitle-fix ";
+            if (options.subtitleLanguage.empty() || options.subtitleLanguage == "all") {
+                cmd << "-ss all ";
+            } else {
+                cmd << "-ss lang=\"" << options.subtitleLanguage << "\":for=all || all ";
+            }
+        }
+
+        // Muxer container
+        std::string ffmpegPath;
+        if (options.resolution == "audio_only") {
+            if (Muxer::FindFFmpeg(ffmpegPath)) {
+                cmd << "-M format=m4a:muxer=ffmpeg --ffmpeg-binary-path \"" << ffmpegPath << "\" ";
+            } else {
+                cmd << "-M format=m4a ";
+            }
+        } else {
+            if (Muxer::FindFFmpeg(ffmpegPath)) {
+                cmd << "-M format=mkv:muxer=ffmpeg --ffmpeg-binary-path \"" << ffmpegPath << "\" ";
+            } else {
+                cmd << "-M format=mkv ";
+            }
+        }
     }
 
     if (!info.referer.empty()) {
@@ -580,26 +660,50 @@ bool DownloadEngine::DownloadWithNM3U8(
         return true;
     }
 
-    std::filesystem::path altMkv = outPath.parent_path() / (saveName + ".mkv");
-    std::filesystem::path altMp4 = outPath.parent_path() / (saveName + ".mp4");
-    if (std::filesystem::exists(altMkv) && (finalSz = std::filesystem::file_size(altMkv)) > 0) {
-        if (altMkv.string() != outputFile) {
-            std::filesystem::rename(altMkv, outputFile);
-        }
-        if (options.onProgress) {
-            options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
-        }
-        return true;
+    std::vector<std::string> altExts;
+    if (options.subtitleOnly) {
+        altExts = { ".srt", ".vtt" };
+    } else if (options.resolution == "audio_only") {
+        altExts = { ".m4a", ".aac", ".mp3", ".mkv", ".mp4" };
+    } else {
+        altExts = { ".mkv", ".mp4", ".ts" };
     }
-    if (std::filesystem::exists(altMp4) && (finalSz = std::filesystem::file_size(altMp4)) > 0) {
-        if (altMp4.string() != outputFile) {
-            std::filesystem::rename(altMp4, outputFile);
+
+    for (const auto& aExt : altExts) {
+        std::filesystem::path altFile = outPath.parent_path() / (saveName + aExt);
+        if (std::filesystem::exists(altFile) && (finalSz = std::filesystem::file_size(altFile)) > 0) {
+            if (altFile.string() != outputFile && !std::filesystem::exists(outputFile)) {
+                try {
+                    std::filesystem::rename(altFile, outputFile);
+                } catch (...) {}
+            }
+            if (options.onProgress) {
+                options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
+            }
+            return true;
         }
-        if (options.onProgress) {
-            options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
-        }
-        return true;
     }
+
+    // Check directory iterator for files matching saveName prefix (e.g. saveName.en.srt)
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(outPath.parent_path())) {
+            if (!entry.is_regular_file()) continue;
+            std::string stem = entry.path().stem().string();
+            if (stem.find(saveName) != std::string::npos && entry.file_size() > 0) {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                for (const auto& aExt : altExts) {
+                    if (ext == aExt) {
+                        finalSz = entry.file_size();
+                        if (options.onProgress) {
+                            options.onProgress(100.0f, "Done", "0s", finalSz, FormatBytes(finalSz));
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+    } catch (...) {}
 
     return exitCode == 0 && !m_aborted.load();
 }
