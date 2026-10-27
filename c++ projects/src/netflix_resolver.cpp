@@ -3,8 +3,17 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_set>
+#include <unordered_map>
+#include <mutex>
+#include <regex>
+#include <algorithm>
+#include <filesystem>
+#include <cstdio>
 
 namespace OmniStream {
+
+static std::unordered_map<std::string, std::string> s_netflixCache;
+static std::mutex s_cacheMutex;
 
 static bool IsGenericStreamName(const std::string& str) {
     if (str.empty()) return true;
@@ -36,6 +45,154 @@ static std::string UrlEncodeSlug(const std::string& value) {
     return escaped.str();
 }
 
+static std::string HtmlUnescape(const std::string& input) {
+    std::string s = input;
+    static const std::vector<std::pair<std::string, std::string>> entities = {
+        {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
+        {"&#39;", "'"}, {"&apos;", "'"}, {"&#x27;", "'"}, {"&#x2F;", "/"},
+        {"&#32;", " "}, {"&nbsp;", " "}
+    };
+    for (const auto& [from, to] : entities) {
+        size_t pos = 0;
+        while ((pos = s.find(from, pos)) != std::string::npos) {
+            s.replace(pos, from.length(), to);
+            pos += to.length();
+        }
+    }
+    return s;
+}
+
+static std::string UnescapeHexStrings(const std::string& input) {
+    std::string s = input;
+    std::regex hexReg(R"(\\x([0-9a-fA-F]{2}))");
+    std::string res;
+    auto words_begin = std::sregex_iterator(s.begin(), s.end(), hexReg);
+    auto words_end = std::sregex_iterator();
+    size_t lastPos = 0;
+    for (auto it = words_begin; it != words_end; ++it) {
+        std::smatch m = *it;
+        res += s.substr(lastPos, m.position() - lastPos);
+        int ch = std::stoi(m[1].str(), nullptr, 16);
+        res += static_cast<char>(ch);
+        lastPos = m.position() + m.length();
+    }
+    res += s.substr(lastPos);
+    return res;
+}
+
+static std::string CleanScrapedTitle(const std::string& raw) {
+    std::string t = HtmlUnescape(raw);
+    std::regex tagReg("<[^>]+>");
+    t = std::regex_replace(t, tagReg, "");
+
+    t.erase(0, t.find_first_not_of(" \t\r\n"));
+    t.erase(t.find_last_not_of(" \t\r\n") + 1);
+
+    std::regex rWatch(R"(^Watch\s+)", std::regex::icase);
+    t = std::regex_replace(t, rWatch, "");
+    std::regex rNfBar(R"(\s*\|\s*Netflix.*$)", std::regex::icase);
+    t = std::regex_replace(t, rNfBar, "");
+    std::regex rNfDash(R"(\s*-\s*Netflix.*$)", std::regex::icase);
+    t = std::regex_replace(t, rNfDash, "");
+    std::regex rSite(R"(\s*\|\s*Official Site.*$)", std::regex::icase);
+    t = std::regex_replace(t, rSite, "");
+
+    t.erase(0, t.find_first_not_of(" \t\r\n"));
+    t.erase(t.find_last_not_of(" \t\r\n") + 1);
+
+    std::string lower = t;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    static const std::vector<std::string> genericPhrases = {
+        "netflix", "sign in", "sign up", "sign-in", "sign-up", "login", "tv code",
+        "home", "browse", "watch tv shows online", "watch movies online",
+        "help center", "customer service", "account", "terms of use", "privacy statement",
+        "how to keep your account", "reset your password", "page not found", "error", "404"
+    };
+    for (const auto& phrase : genericPhrases) {
+        if (lower == phrase || lower.find(phrase) != std::string::npos) {
+            return "";
+        }
+    }
+    return NetflixResolver::SanitizeFilename(t);
+}
+
+static std::string FetchUrlContent(const std::string& url, const std::string& userAgent) {
+    // 1. Try curl.exe with 4-second timeout (handles Googlebot crawl headers & SSR redirects)
+    std::string cmd = "curl.exe -s -L --max-time 4 -A \"" + userAgent + "\" -H \"Accept-Language: en-US,en;q=0.9\" \"" + url + "\"";
+    FILE* pipe = _popen(cmd.c_str(), "rb");
+    if (pipe) {
+        std::string result;
+        char buf[8192];
+        while (size_t bytes = fread(buf, 1, sizeof(buf), pipe)) {
+            result.append(buf, bytes);
+        }
+        _pclose(pipe);
+        if (!result.empty()) {
+            return result;
+        }
+    }
+
+    // 2. Fallback to native WinHTTP HttpClient
+    HttpClient client(userAgent);
+    std::map<std::string, std::string> headers = {
+        {"Accept-Language", "en-US,en;q=0.9"},
+        {"Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
+    };
+    HttpResponse res = client.Get(url, headers);
+    if (res.IsSuccess()) {
+        return res.Text();
+    }
+    return "";
+}
+
+static std::pair<std::string, std::string> FetchImdbMetadata(const std::string& title) {
+    if (title.empty()) return {"", ""};
+    std::string clean = title;
+    std::regex regParen(R"(\s*\([^)]*\))");
+    clean = std::regex_replace(clean, regParen, "");
+    clean.erase(0, clean.find_first_not_of(" -:_"));
+    clean.erase(clean.find_last_not_of(" -:_") + 1);
+    if (clean.empty()) return {"", ""};
+
+    std::string slug = UrlEncodeSlug(clean);
+    std::string url = "https://v3.sg.media-imdb.com/suggestion/x/" + slug + ".json";
+
+    std::string body = FetchUrlContent(url, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    if (!body.empty()) {
+        std::regex regL("\"l\"\\s*:\\s*\"([^\"]+)\"");
+        std::regex regY("\"y\"\\s*:\\s*(\\d{4})");
+        std::smatch mL, mY;
+        std::string foundTitle, foundYear;
+        if (std::regex_search(body, mL, regL)) foundTitle = mL[1].str();
+        if (std::regex_search(body, mY, regY)) foundYear = mY[1].str();
+        if (!foundTitle.empty()) {
+            return {foundTitle, foundYear};
+        }
+    }
+    return {"", ""};
+}
+
+static std::string FetchWikipediaYear(const std::string& title) {
+    if (title.empty()) return "";
+    std::string clean = title;
+    std::regex regParen(R"(\s*\([^)]*\))");
+    clean = std::regex_replace(clean, regParen, "");
+    clean.erase(0, clean.find_first_not_of(" -:_"));
+    clean.erase(clean.find_last_not_of(" -:_") + 1);
+    if (clean.empty()) return "";
+
+    std::string url = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=" + UrlEncodeSlug(clean) + "&utf8=&format=json";
+    std::string body = FetchUrlContent(url, "OmniStreamPro/2.6");
+    if (!body.empty()) {
+        std::regex regYear(R"(\b(19\d{2}|20\d{2})\b)");
+        std::smatch m;
+        if (std::regex_search(body, m, regYear)) {
+            return m[1].str();
+        }
+    }
+    return "";
+}
+
 std::string NetflixResolver::ExtractNetflixId(const std::string& input) {
     if (input.empty()) return "";
 
@@ -46,15 +203,21 @@ std::string NetflixResolver::ExtractNetflixId(const std::string& input) {
         return m[1].str();
     }
 
-    // 2. Query / header parameters
-    std::regex regParam(R"((?:movieid|titleid|viewable_id|netflix_id|netflixid|trackid)[=:_\-](\d{6,10}))", std::regex::icase);
+    // 2. Query / header parameter patterns or NF prefix
+    std::regex regParam(R"((?:movieid|titleid|viewable_id|netflix_id|netflixid|trackid|nf)[=:_\-](\d{6,10}))", std::regex::icase);
     if (std::regex_search(input, m, regParam)) {
         return m[1].str();
     }
 
-    // 3. Filename patterns: 'NF_81902147', '81902147.mp4'
-    std::regex regFn(R"((?:netflix\.com\/(?:title|watch)\/|(?:OmniStream|NF|Netflix)[_\-]|_|^|\b)(\d{7,10})(?:\?|[^\d]|$))", std::regex::icase);
+    // 3. Filename patterns: 'OmniStream_81902147', 'NF_81902147', '81902147.mp4'
+    std::regex regFn(R"((?:OmniStream[_\-]|NF[_\-]|\b)(\d{6,10})(?:_\d+|\.\w+)?\b)", std::regex::icase);
     if (std::regex_search(input, m, regFn)) {
+        return m[1].str();
+    }
+
+    // 4. Standalone or non-alphanumeric bounded 6-10 digit number
+    std::regex regNum(R"((?:^|[^0-9a-zA-Z])(\d{6,10})(?:[^0-9a-zA-Z]|$))");
+    if (std::regex_search(input, m, regNum)) {
         return m[1].str();
     }
 
@@ -75,7 +238,6 @@ std::string NetflixResolver::ExtractImdbId(const std::string& input) {
 
 std::string NetflixResolver::ExtractTmdbId(const std::string& input) {
     if (input.empty()) return "";
-    // 1. Direct numeric string (3 to 9 digits)
     std::string trimmed = input;
     trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
     trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
@@ -83,13 +245,11 @@ std::string NetflixResolver::ExtractTmdbId(const std::string& input) {
         trimmed.find_first_not_of("0123456789") == std::string::npos) {
         return trimmed;
     }
-    // 2. URL pattern
     std::regex regUrl(R"(themoviedb\.org\/(?:movie|tv)\/(\d+))", std::regex::icase);
     std::smatch m;
     if (std::regex_search(input, m, regUrl)) {
         return m[1].str();
     }
-    // 3. Parameter pattern
     std::regex regParam(R"((?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+))", std::regex::icase);
     if (std::regex_search(input, m, regParam)) {
         return m[1].str();
@@ -100,7 +260,6 @@ std::string NetflixResolver::ExtractTmdbId(const std::string& input) {
 std::string NetflixResolver::ExtractEpisodeTag(const std::string& input) {
     if (input.empty()) return "";
 
-    // 1. Matches S01E02 or S1E2
     std::regex regSE(R"(\bS(\d{1,2})E(\d{1,2})\b)", std::regex::icase);
     std::smatch m;
     if (std::regex_search(input, m, regSE)) {
@@ -112,7 +271,6 @@ std::string NetflixResolver::ExtractEpisodeTag(const std::string& input) {
         return ss.str();
     }
 
-    // 2. Matches Season 1 Episode 2
     std::regex regFull(R"(\bSeason\s*(\d+)\s*(?:Episode|Chapter)\s*(\d+)\b)", std::regex::icase);
     if (std::regex_search(input, m, regFull)) {
         int s = std::stoi(m[1].str());
@@ -134,7 +292,6 @@ std::string NetflixResolver::SanitizeFilename(const std::string& rawName) {
             c = '_';
         }
     }
-    // Trim spaces and periods from ends
     safe.erase(0, safe.find_first_not_of(" ."));
     safe.erase(safe.find_last_not_of(" .") + 1);
 
@@ -163,39 +320,252 @@ std::string NetflixResolver::GetNonConflictingPath(const std::string& targetPath
     }
 }
 
-std::string NetflixResolver::ResolveOnlineTitle(const std::string& netflixId) {
-    if (netflixId.empty()) return "";
+std::string NetflixResolver::ResolveOnlineTitle(
+    const std::string& netflixId,
+    std::function<void(const std::string&)> logCallback
+) {
+    auto log = [&](const std::string& msg) {
+        if (logCallback) logCallback(msg);
+    };
 
-    std::string url = "https://www.netflix.com/title/" + netflixId;
-    HttpClient client("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-    HttpResponse res = client.Get(url);
+    std::string nid = netflixId;
+    nid.erase(0, nid.find_first_not_of(" \t\r\n"));
+    nid.erase(nid.find_last_not_of(" \t\r\n") + 1);
 
-    if (res.IsSuccess()) {
-        std::string html = res.Text();
-        std::regex titleRegex(R"(<title>([^<]+)<\/title>)", std::regex::icase);
-        std::smatch m;
-        if (std::regex_search(html, m, titleRegex)) {
-            std::string fullTitle = m[1].str();
-            size_t barPos = fullTitle.find('|');
-            if (barPos != std::string::npos) {
-                fullTitle = fullTitle.substr(0, barPos);
-            }
-            return SanitizeFilename(fullTitle);
+    if (nid.empty() || nid.find_first_not_of("0123456789") != std::string::npos) {
+        return "";
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        auto it = s_netflixCache.find(nid);
+        if (it != s_netflixCache.end()) {
+            log("[Netflix Resolver] Using cached title for ID " + nid + ": '" + it->second + "'");
+            return it->second;
         }
     }
 
-    return "Netflix_" + netflixId;
+    log("[Netflix Resolver] Querying metadata sources for Netflix ID: " + nid + "...");
+
+    std::string title;
+    std::string year;
+    std::string episodeTag;
+
+    // ── Source 1: Direct Netflix Title Page via Googlebot Crawl Headers ─────────
+    std::string page = FetchUrlContent("https://www.netflix.com/title/" + nid, "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
+    if (!page.empty()) {
+        page = UnescapeHexStrings(page);
+
+        // Step A: Show / Movie title from <h1>
+        std::regex h1Reg(R"(<h1[^>]*>(.*?)<\/h1>)", std::regex::icase);
+        std::smatch mH1;
+        if (std::regex_search(page, mH1, h1Reg)) {
+            std::string cand = CleanScrapedTitle(mH1[1].str());
+            if (!cand.empty()) {
+                title = cand;
+            }
+        }
+
+        // Step B: Detect if nid is an episode in embedded JSON
+        std::regex vidReg("\"videoId\"\\s*:\\s*" + nid);
+        std::smatch mVid;
+        size_t idx = std::string::npos;
+        if (std::regex_search(page, mVid, vidReg)) {
+            idx = mVid.position();
+        } else {
+            idx = page.find(nid);
+        }
+
+        if (idx != std::string::npos) {
+            size_t fwdLen = std::min<size_t>(page.size() - idx, 800);
+            std::string forward = page.substr(idx, fwdLen);
+
+            size_t backStart = (idx > 15000) ? idx - 15000 : 0;
+            std::string back = page.substr(backStart, idx - backStart);
+
+            // Episode number
+            std::regex epNumReg("\"number\"\\s*:\\s*(\\d+)");
+            std::smatch mEpNum;
+            int epNum = 0;
+            if (std::regex_search(forward, mEpNum, epNumReg)) {
+                epNum = std::stoi(mEpNum[1].str());
+            }
+
+            // Episode title
+            std::regex epTitleReg("\"title\"\\s*:\\s*\"([^\"]+)\"");
+            std::smatch mEpTitle;
+            std::string epTitle;
+            if (std::regex_search(forward, mEpTitle, epTitleReg)) {
+                std::string rawEp = mEpTitle[1].str();
+                size_t bPos = 0;
+                while ((bPos = rawEp.find("\\\"", bPos)) != std::string::npos) {
+                    rawEp.replace(bPos, 2, "\"");
+                    bPos += 1;
+                }
+                rawEp = UnescapeHexStrings(rawEp);
+                std::regex seasonOnly(R"(^Season\s*\d+$)", std::regex::icase);
+                if (!rawEp.empty() && !std::regex_match(rawEp, seasonOnly)) {
+                    epTitle = SanitizeFilename(rawEp);
+                }
+            }
+
+            // Season number
+            int seasonNum = 0;
+            std::regex seasonReg("Season\\s+(\\d+)", std::regex::icase);
+            auto s_begin = std::sregex_iterator(back.begin(), back.end(), seasonReg);
+            auto s_end = std::sregex_iterator();
+            for (auto it = s_begin; it != s_end; ++it) {
+                seasonNum = std::stoi((*it)[1].str());
+            }
+
+            if (seasonNum == 0) {
+                size_t seasonsStart = back.rfind("\"seasons\"");
+                if (seasonsStart != std::string::npos) {
+                    std::string afterSeasons = back.substr(seasonsStart);
+                    std::regex edgeReg("SeasonEdge");
+                    auto e_begin = std::sregex_iterator(afterSeasons.begin(), afterSeasons.end(), edgeReg);
+                    auto e_end = std::sregex_iterator();
+                    int edgeCount = 0;
+                    for (auto it = e_begin; it != e_end; ++it) {
+                        edgeCount++;
+                    }
+                    if (edgeCount > 0) seasonNum = edgeCount;
+                }
+            }
+
+            if (seasonNum > 0 && epNum > 0) {
+                std::ostringstream ss;
+                ss << "S" << std::setw(2) << std::setfill('0') << seasonNum
+                   << "E" << std::setw(2) << std::setfill('0') << epNum;
+                if (!epTitle.empty()) {
+                    episodeTag = ss.str() + " - " + epTitle;
+                } else {
+                    episodeTag = ss.str();
+                }
+            } else if (epNum > 0 && !epTitle.empty()) {
+                std::ostringstream ss;
+                ss << "E" << std::setw(2) << std::setfill('0') << epNum << " - " << epTitle;
+                episodeTag = ss.str();
+            }
+        } else {
+            // Step B Fallback: parse <title> tag for Season/Episode
+            std::regex tagRegex(R"(<title>([^<]+)<\/title>)", std::regex::icase);
+            std::smatch mTitleTag;
+            if (std::regex_search(page, mTitleTag, tagRegex)) {
+                std::string rawTag = HtmlUnescape(mTitleTag[1].str());
+                std::regex epMatch("(?:Season|Part)\\s*(\\d+).*?(?:Episode|Chapter)\\s*(\\d+)", std::regex::icase);
+                std::smatch mEp;
+                if (std::regex_search(rawTag, mEp, epMatch)) {
+                    int s = std::stoi(mEp[1].str());
+                    int e = std::stoi(mEp[2].str());
+                    std::ostringstream ss;
+                    ss << "S" << std::setw(2) << std::setfill('0') << s
+                       << "E" << std::setw(2) << std::setfill('0') << e;
+                    episodeTag = ss.str();
+                }
+            }
+        }
+
+        // Step C: Year extraction
+        if (!title.empty()) {
+            size_t titleIdx = page.find(title);
+            if (titleIdx != std::string::npos) {
+                size_t winLen = std::min<size_t>(page.size() - titleIdx, 3000);
+                std::string window = page.substr(titleIdx, winLen);
+                std::regex yearLi("<li[^>]*>\\s*(19\\d{2}|20\\d{2})\\s*<\\/li>", std::regex::icase);
+                std::smatch mYear;
+                if (std::regex_search(window, mYear, yearLi)) {
+                    year = mYear[1].str();
+                } else {
+                    std::regex yearGen(">\\s*(19\\d{2}|20\\d{2})\\s*<");
+                    if (std::regex_search(window, mYear, yearGen)) {
+                        year = mYear[1].str();
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Source 2: DuckDuckGo Search Fallback ("{id} netflix") ───────────────────
+    if (title.empty()) {
+        std::string ddgUrl = "https://lite.duckduckgo.com/lite/";
+        std::string postData = "q=" + UrlEncodeSlug(nid + " netflix");
+        HttpClient ddgClient("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        HttpResponse ddgRes = ddgClient.Post(ddgUrl, postData, "application/x-www-form-urlencoded");
+        if (ddgRes.IsSuccess()) {
+            std::string content = ddgRes.Text();
+            std::regex linkReg("class=['\"]result-link['\"][^>]*>(.*?)<\\/a>", std::regex::icase);
+            auto l_begin = std::sregex_iterator(content.begin(), content.end(), linkReg);
+            auto l_end = std::sregex_iterator();
+            for (auto it = l_begin; it != l_end; ++it) {
+                std::string rawLink = (*it)[1].str();
+                std::string cleaned = CleanScrapedTitle(rawLink);
+                if (!cleaned.empty()) {
+                    title = cleaned;
+                    std::regex ymReg("\\b(19\\d{2}|20\\d{2})\\b");
+                    std::smatch mYm;
+                    if (std::regex_search(rawLink, mYm, ymReg)) {
+                        year = mYm[1].str();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if (title.empty()) {
+        log("[Netflix Resolver] Could not identify title online for ID " + nid + ".");
+        return "";
+    }
+
+    // ── Source 3: IMDb Suggestion Verification for Official Title & Year ────────
+    auto [imdbTitle, imdbYear] = FetchImdbMetadata(title);
+    if (!imdbTitle.empty()) {
+        if (year.empty()) {
+            year = imdbYear;
+        }
+        std::string lowerImdb = imdbTitle;
+        std::string lowerTitle = title;
+        std::transform(lowerImdb.begin(), lowerImdb.end(), lowerImdb.begin(), ::tolower);
+        std::transform(lowerTitle.begin(), lowerTitle.end(), lowerTitle.begin(), ::tolower);
+        if (lowerImdb == lowerTitle) {
+            title = imdbTitle;
+        }
+    }
+
+    // ── Source 4: Wikipedia Fallback for Year ───────────────────────────────────
+    if (year.empty()) {
+        year = FetchWikipediaYear(title);
+    }
+
+    // ── Assemble Final Output: "Movie Title (Year)" or "Series SxxExx - Title (Year)"
+    std::regex hasYearReg("\\(\\s*(?:19\\d{2}|20\\d{2})\\s*\\)");
+    bool hasYear = std::regex_search(title, hasYearReg);
+
+    std::string finalName = title;
+    if (!episodeTag.empty() && title.find(episodeTag) == std::string::npos) {
+        finalName += " " + episodeTag;
+    }
+    if (!year.empty() && !hasYear) {
+        finalName += " (" + year + ")";
+    }
+
+    finalName = SanitizeFilename(finalName);
+    {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        s_netflixCache[nid] = finalName;
+    }
+
+    log("[Netflix Resolver] Successfully identified: '" + finalName + "'");
+    return finalName;
 }
 
 std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title) {
     if (title.empty()) return "";
 
-    // Clean title for search
     std::string clean = title;
-    // Remove (2024), etc.
     std::regex regParen(R"(\s*\([^)]*\))");
     clean = std::regex_replace(clean, regParen, "");
-    // Remove S01E01, etc.
     std::regex regEp(R"(\s*S\d{1,2}E\d{1,2}.*)", std::regex::icase);
     clean = std::regex_replace(clean, regEp, "");
     clean.erase(0, clean.find_first_not_of(" -:_"));
@@ -222,7 +592,6 @@ std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title) {
 }
 
 std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, const std::string& title) {
-    // 1. Try Wikidata mapping from IMDb ID (100% precision)
     if (!imdbId.empty() && imdbId.rfind("tt", 0) == 0) {
         std::string query = "SELECT ?tmdb WHERE { ?item wdt:P345 \"" + imdbId + "\" . { ?item wdt:P4947 ?tmdb } UNION { ?item wdt:P4983 ?tmdb } }";
         std::string url = "https://query.wikidata.org/sparql?query=" + UrlEncodeSlug(query) + "&format=json";
@@ -238,7 +607,6 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
         }
     }
 
-    // 2. Fallback search via title
     if (!title.empty()) {
         std::string clean = title;
         std::regex regParen(R"(\s*\([^)]*\))");
@@ -285,7 +653,6 @@ std::string NetflixResolver::ResolveMediaRename(
         return "";
     }
 
-    // Detect episode tag if present
     std::string epTag = ExtractEpisodeTag(customTitle);
     if (epTag.empty()) epTag = ExtractEpisodeTag(inputText);
     std::string epSuffix = epTag.empty() ? "" : ("_" + epTag);
@@ -295,11 +662,28 @@ std::string NetflixResolver::ResolveMediaRename(
         if (nid.empty()) nid = ExtractNetflixId(customTitle);
 
         if (!nid.empty()) {
-            std::string result = nid + epSuffix;
-            log("[Netflix Rename] Successfully identified Netflix ID: " + result);
-            return result;
+            // Check if customTitle is an explicit custom title provided by user (not numeric, not generic)
+            if (!customTitle.empty() && !IsGenericStreamName(customTitle) &&
+                customTitle.find_first_not_of("0123456789") != std::string::npos &&
+                customTitle.find("http") == std::string::npos &&
+                customTitle != "OmniStream_Download" &&
+                customTitle.find("OmniStream_") != 0) {
+                log("[Netflix Rename] User custom title preserved: '" + customTitle + "'");
+                return customTitle;
+            }
+
+            log("[Netflix Rename] Detected Netflix ID: " + nid);
+            log("[Netflix Rename] Searching online for official movie/series title...");
+            std::string resolved = ResolveOnlineTitle(nid, logCallback);
+            if (!resolved.empty()) {
+                log("[Netflix Rename] Successfully identified title: '" + resolved + "'");
+                return resolved;
+            } else {
+                log("[Netflix Rename] Notice: Could not resolve title online. Using Netflix ID.");
+                return nid + epSuffix;
+            }
         }
-        log("[Netflix Rename] Notice: No Netflix ID could be extracted from input.");
+        log("[Netflix Rename] Notice: No Netflix ID detected in source.");
         return "";
     }
 
@@ -314,7 +698,6 @@ std::string NetflixResolver::ResolveMediaRename(
             return result;
         }
 
-        // Online lookup
         std::string searchTitle = IsGenericStreamName(customTitle) ? "" : customTitle;
         if (searchTitle.empty()) {
             std::string nid = ExtractNetflixId(inputText);
@@ -346,7 +729,6 @@ std::string NetflixResolver::ResolveMediaRename(
             return result;
         }
 
-        // Try mapping via IMDb ID or title
         std::string iid = !imdbId.empty() ? imdbId : ExtractImdbId(inputText);
         if (iid.empty()) iid = ExtractImdbId(customTitle);
 

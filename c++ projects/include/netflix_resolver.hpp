@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include <functional>
 
 namespace OmniStream {
 
@@ -14,7 +15,7 @@ public:
     static std::string SanitizeFilename(const std::string& rawName);
     static std::string GetNonConflictingPath(const std::string& targetPath);
 
-    static std::string ResolveOnlineTitle(const std::string& netflixId);
+    static std::string ResolveOnlineTitle(const std::string& netflixId, std::function<void(const std::string&)> logCallback = nullptr);
     static std::string ResolveOnlineImdbId(const std::string& title);
     static std::string ResolveOnlineTmdbId(const std::string& imdbId, const std::string& title = "");
 

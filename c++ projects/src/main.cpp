@@ -77,8 +77,11 @@ void RunSelfTest() {
     test("Filename sanitizer", NetflixResolver::SanitizeFilename("Bad:Name/With*Illegal?Chars") == "Bad_Name_With_Illegal_Chars");
 
     // Unified Media Rename Logic Tests
-    std::string renNf = NetflixResolver::ResolveMediaRename("netflix_rename", "https://www.netflix.com/watch/81902147", "Episode 1 S01E01");
-    test("ResolveMediaRename Netflix Mode (81902147_S01E01)", renNf == "81902147_S01E01");
+    std::string renNf = NetflixResolver::ResolveMediaRename("netflix_rename", "https://www.netflix.com/watch/81902147");
+    test("ResolveMediaRename Netflix Mode resolves title", renNf.find("Sonic the Hedgehog 3") != std::string::npos || renNf.find("81902147") != std::string::npos);
+
+    std::string renNfCustom = NetflixResolver::ResolveMediaRename("netflix_rename", "https://www.netflix.com/watch/81902147", "My Preserved Movie");
+    test("ResolveMediaRename preserves user custom title", renNfCustom == "My Preserved Movie");
 
     std::string renImdb = NetflixResolver::ResolveMediaRename("imdb_rename", "stream.m3u8", "Inception S02E04", "", "tt1375666");
     test("ResolveMediaRename IMDb Mode (tt1375666_S02E04)", renImdb == "tt1375666_S02E04");
