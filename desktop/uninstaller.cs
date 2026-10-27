@@ -97,8 +97,8 @@ namespace OmniStreamUninstaller
                     }
                 }
 
-                // 6. Schedule self-deletion of installDir via background command
-                string cmdArgs = string.Format("/c ping 127.0.0.1 -n 3 > nul & if exist \"{0}\" rd /s /q \"{0}\"", installDir);
+                // 6. Schedule self-deletion of installDir via resilient retry loop in background
+                string cmdArgs = string.Format("/c for /L %i in (1,1,30) do ( if exist \"{0}\" ( rd /s /q \"{0}\" & ping 127.0.0.1 -n 2 > nul ) else ( exit ) )", installDir);
                 ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", cmdArgs)
                 {
                     CreateNoWindow = true,

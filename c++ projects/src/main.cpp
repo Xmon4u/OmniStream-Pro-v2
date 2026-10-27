@@ -10,7 +10,7 @@
 
 using namespace OmniStream;
 
-void RunSelfTest() {
+int RunSelfTest() {
     std::cout << "\n" << Color::Bold << Color::Cyan
               << "============================================================\n"
               << " OmniStream Pro v" << VERSION << " — C++ Native Core Self-Test Suite\n"
@@ -70,6 +70,8 @@ void RunSelfTest() {
 
     // 5. Netflix, IMDb & TMDB Metadata Resolver
     test("Netflix ID extracted (URL)", NetflixResolver::ExtractNetflixId("https://www.netflix.com/watch/81902147?trackId=123") == "81902147");
+    test("Netflix ID extracted (Episode URL)", NetflixResolver::ExtractNetflixId("https://www.netflix.com/watch/81948683") == "81948683");
+    test("Netflix ID extracted (Query param)", NetflixResolver::ExtractNetflixId("https://cdn.example.com/video?movieid=81902147") == "81902147");
     test("Netflix ID extracted (Filename)", NetflixResolver::ExtractNetflixId("NF_81902147_1080p.mkv") == "81902147");
     test("IMDb ID extracted", NetflixResolver::ExtractImdbId("https://www.imdb.com/title/tt1375666/") == "tt1375666");
     test("TMDB ID extracted (URL)", NetflixResolver::ExtractTmdbId("https://www.themoviedb.org/movie/939243") == "939243");
@@ -105,6 +107,13 @@ void RunSelfTest() {
         HttpResponse healthRes = client.Get("http://127.0.0.1:28796/health");
         test("Bridge GET /health reflects synced mode (imdb_rename)", healthRes.IsSuccess() && healthRes.Text().find("\"mode\": \"imdb_rename\"") != std::string::npos);
 
+        HttpResponse tokRes = client.Get("http://127.0.0.1:28796/token");
+        test("Bridge GET /token returns token", tokRes.IsSuccess() && tokRes.Text().find("test_token_123") != std::string::npos);
+
+        // Test POST /add
+        HttpResponse addRes = client.Post("http://127.0.0.1:28796/add", "{\"url\": \"https://example.com/test.m3u8\", \"title\": \"TestStream\"}", "application/json");
+        test("Bridge POST /add accepts stream payload", addRes.IsSuccess() && addRes.Text().find("\"success\": true") != std::string::npos);
+
         server.Stop();
     }
 
@@ -113,6 +122,8 @@ void RunSelfTest() {
               << " RESULT: " << passed << " PASSED  |  " << failed << " FAILED\n"
               << "============================================================\n"
               << Color::Reset << std::endl;
+
+    return (failed == 0) ? 0 : 1;
 }
 
 void PrintBanner() {
@@ -152,8 +163,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--test") {
-            RunSelfTest();
-            return 0;
+            return RunSelfTest();
         } else if (arg == "--server") {
             isDaemonServer = true;
             isCliMode = true;

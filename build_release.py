@@ -127,7 +127,9 @@ def build_cpp_executable():
         print(test_res.stdout)
         print(test_res.stderr)
         raise RuntimeError("C++ Native Core Self-Test failed!")
-    print("  [OK] C++ Self-Tests passed: 23/23 tests successful.")
+    result_line = [l.strip() for l in test_res.stdout.splitlines() if "RESULT:" in l]
+    res_str = result_line[0] if result_line else "All tests passed"
+    print(f"  [OK] C++ Self-Tests successful ({res_str}).")
 
     # Copy Downloader Engine tools to C++ Release directory
     dl_engine_src = os.path.join(DESKTOP_DIR, "bin", "N_m3u8DL-RE.exe")

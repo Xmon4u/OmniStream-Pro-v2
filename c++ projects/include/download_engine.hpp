@@ -47,8 +47,11 @@ private:
         std::vector<std::string>& outSegmentFiles,
         const DownloadOptions& options
     );
+    bool DownloadWithNM3U8(const StreamInfo& info, const std::string& outputFile, const DownloadOptions& options, const std::string& nm3u8Path);
 
     std::atomic<bool> m_aborted{ false };
+    std::mutex m_processMutex;
+    HANDLE m_hCurrentProcess{ NULL };
 };
 
 } // namespace OmniStream

@@ -316,6 +316,13 @@ private:
     float m_pulseValue = 0.0f;
 
     // Backend Core
+    struct QueueEntry {
+        DownloadOptions options;
+        QString status; // "Queued", "Downloading", "Done", "Failed"
+    };
+    std::vector<QueueEntry> m_queueItems;
+    int m_activeQueueIndex = -1;
+
     std::unique_ptr<BridgeServer> m_bridgeServer;
     std::unique_ptr<DownloadEngine> m_currentEngine;
     std::unique_ptr<std::thread> m_downloadThread;

@@ -5,6 +5,32 @@
 
 namespace OmniStream {
 
+static std::string FindNM3U8Binary() {
+    // 1. Current working directory
+    std::filesystem::path curDir = std::filesystem::current_path();
+    std::filesystem::path p1 = curDir / "N_m3u8DL-RE.exe";
+    if (std::filesystem::exists(p1)) return p1.string();
+
+    // 2. Executable's directory
+    wchar_t exePath[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exePath, MAX_PATH)) {
+        std::filesystem::path appDir = std::filesystem::path(exePath).parent_path();
+        std::filesystem::path p2 = appDir / "N_m3u8DL-RE.exe";
+        if (std::filesystem::exists(p2)) return p2.string();
+    }
+
+    // 3. LocalAppData folder
+    const char* localApp = std::getenv("LOCALAPPDATA");
+    if (localApp) {
+        std::filesystem::path p3 = std::filesystem::path(localApp) / "OmniStreamPro" / "bin" / "N_m3u8DL-RE.exe";
+        if (std::filesystem::exists(p3)) return p3.string();
+        std::filesystem::path p4 = std::filesystem::path(localApp) / "OmniStreamPro" / "N_m3u8DL-RE.exe";
+        if (std::filesystem::exists(p4)) return p4.string();
+    }
+
+    return "";
+}
+
 DownloadEngine::DownloadEngine() = default;
 DownloadEngine::~DownloadEngine() {
     Abort();
@@ -12,6 +38,10 @@ DownloadEngine::~DownloadEngine() {
 
 void DownloadEngine::Abort() {
     m_aborted.store(true);
+    std::lock_guard<std::mutex> lock(m_processMutex);
+    if (m_hCurrentProcess != NULL) {
+        TerminateProcess(m_hCurrentProcess, 1);
+    }
 }
 
 bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFinalFile) {
@@ -66,19 +96,30 @@ bool DownloadEngine::Download(const DownloadOptions& options, std::string& outFi
     std::filesystem::path dirPath = options.saveDir.empty() ? "." : options.saveDir;
     std::filesystem::create_directories(dirPath);
 
-    bool isHls = (info.url.find(".m3u8") != std::string::npos ||
-                  info.GetHeader("content-type").find("mpegurl") != std::string::npos);
+    bool isStream = (info.url.find(".m3u8") != std::string::npos ||
+                     info.url.find(".mpd") != std::string::npos ||
+                     info.GetHeader("content-type").find("mpegurl") != std::string::npos);
 
-    std::string ext = isHls ? ".mkv" : ".mp4";
+    std::string ext = isStream ? ".mkv" : ".mp4";
     std::filesystem::path targetFile = dirPath / (baseName + ext);
     std::string safeTargetPath = NetflixResolver::GetNonConflictingPath(targetFile.string());
 
     log("Target: " + safeTargetPath);
-    log("Mode: " + std::string(isHls ? "HLS Multi-Stream Downloader" : "Direct Media Stream Downloader"));
+    log("Mode: " + std::string(isStream ? "HLS/DASH Multi-Stream Downloader" : "Direct Media Stream Downloader"));
 
     bool success = false;
-    if (isHls) {
-        success = DownloadHlsStream(info, safeTargetPath, options);
+    if (isStream) {
+        std::string nm3u8Binary = FindNM3U8Binary();
+        if (!nm3u8Binary.empty()) {
+            log("[Engine] Found N_m3u8DL-RE binary: " + nm3u8Binary);
+            success = DownloadWithNM3U8(info, safeTargetPath, options, nm3u8Binary);
+            if (!success && !m_aborted.load()) {
+                log("[Engine] Notice: N_m3u8DL-RE completed with non-zero or failed. Falling back to native C++ HLS engine...");
+                success = DownloadHlsStream(info, safeTargetPath, options);
+            }
+        } else {
+            success = DownloadHlsStream(info, safeTargetPath, options);
+        }
     } else {
         success = DownloadDirectStream(info, safeTargetPath, options);
     }
@@ -316,6 +357,196 @@ bool DownloadEngine::DownloadHlsStream(const StreamInfo& info, const std::string
     } catch (...) {}
 
     return std::filesystem::exists(outputFile);
+}
+
+bool DownloadEngine::DownloadWithNM3U8(
+    const StreamInfo& info,
+    const std::string& outputFile,
+    const DownloadOptions& options,
+    const std::string& nm3u8Path
+) {
+    std::filesystem::path outPath(outputFile);
+    std::string saveDir = outPath.parent_path().string();
+    std::string saveName = outPath.stem().string();
+
+    std::string isolatedTemp = (outPath.parent_path() / (".omnistream_tmp_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()))).string();
+    std::filesystem::create_directories(isolatedTemp);
+
+    std::string videoSel = "best";
+    if (options.resolution == "1080p") videoSel = "res=\"1080|1920\":for=best";
+    else if (options.resolution == "720p") videoSel = "res=\"720|1280\":for=best";
+    else if (options.resolution == "480p") videoSel = "res=\"480|854\":for=best";
+
+    std::ostringstream cmd;
+    cmd << "\"" << nm3u8Path << "\" \"" << info.url << "\" "
+        << "--auto-select -sv " << videoSel << " -sa all -mt "
+        << "--save-dir \"" << saveDir << "\" "
+        << "--save-name \"" << saveName << "\" "
+        << "--tmp-dir \"" << isolatedTemp << "\" "
+        << "--thread-count 16 --download-retry-count 15 --http-request-timeout 30 "
+        << "--disable-update-check --no-log --no-ansi-color ";
+
+    std::string ffmpegPath;
+    if (Muxer::FindFFmpeg(ffmpegPath)) {
+        cmd << "-M format=mkv:muxer=ffmpeg --ffmpeg-binary-path \"" << ffmpegPath << "\" ";
+    } else {
+        cmd << "-M format=mkv ";
+    }
+
+    if (options.includeSubtitles) {
+        cmd << "--sub-format SRT --auto-subtitle-fix -ss all ";
+    }
+
+    if (!info.referer.empty()) {
+        cmd << "-H \"Referer: " << info.referer << "\" ";
+    }
+    if (!info.origin.empty()) {
+        cmd << "-H \"Origin: " << info.origin << "\" ";
+    }
+    if (!info.user_agent.empty()) {
+        cmd << "-H \"User-Agent: " << info.user_agent << "\" ";
+    }
+    if (!info.cookie.empty()) {
+        cmd << "-H \"Cookie: " << info.cookie << "\" ";
+    }
+
+    // Add custom request headers
+    for (const auto& [k, v] : info.headers) {
+        std::string lo = k;
+        std::transform(lo.begin(), lo.end(), lo.begin(), ::tolower);
+        if (lo != "referer" && lo != "origin" && lo != "user-agent" && lo != "cookie" &&
+            lo != "host" && lo != "connection" && lo != "content-length" && lo != "accept-encoding") {
+            cmd << "-H \"" << k << ": " << v << "\" ";
+        }
+    }
+
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    HANDLE hStdOutRead = NULL;
+    HANDLE hStdOutWrite = NULL;
+    if (!CreatePipe(&hStdOutRead, &hStdOutWrite, &sa, 0)) {
+        return false;
+    }
+    SetHandleInformation(hStdOutRead, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.hStdOutput = hStdOutWrite;
+    si.hStdError = hStdOutWrite;
+    si.dwFlags |= STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+
+    std::string cmdStr = cmd.str();
+    std::vector<char> cmdBuf(cmdStr.begin(), cmdStr.end());
+    cmdBuf.push_back('\0');
+
+    if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        CloseHandle(hStdOutRead);
+        CloseHandle(hStdOutWrite);
+        return false;
+    }
+
+    CloseHandle(hStdOutWrite);
+
+    {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        m_hCurrentProcess = pi.hProcess;
+    }
+
+    char buffer[4096];
+    DWORD bytesRead = 0;
+    std::string lineAccumulator;
+
+    std::regex pctRegex(R"((\d+(?:\.\d+)?)\s*%)");
+    std::regex speedRegex(R"((\d+(?:\.\d+)?)\s*([KMGT]i?B/s))", std::regex::icase);
+    std::regex etaRegex(R"((\d{1,2}:\d{2}(?::\d{2})?))");
+
+    while (ReadFile(hStdOutRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
+        if (m_aborted.load()) {
+            TerminateProcess(pi.hProcess, 1);
+            break;
+        }
+
+        buffer[bytesRead] = '\0';
+        for (DWORD i = 0; i < bytesRead; ++i) {
+            char c = buffer[i];
+            if (c == '\r' || c == '\n') {
+                if (!lineAccumulator.empty()) {
+                    std::smatch mPct;
+                    if (std::regex_search(lineAccumulator, mPct, pctRegex)) {
+                        float pct = std::stof(mPct[1].str());
+                        std::string speedStr = "0.0 MB/s";
+                        std::string etaStr = "--";
+
+                        std::smatch mSpeed;
+                        if (std::regex_search(lineAccumulator, mSpeed, speedRegex)) {
+                            speedStr = mSpeed[0].str();
+                        }
+                        std::smatch mEta;
+                        if (std::regex_search(lineAccumulator, mEta, etaRegex)) {
+                            etaStr = mEta[1].str();
+                        }
+
+                        if (options.onProgress) {
+                            options.onProgress(pct, speedStr, etaStr, 0);
+                        }
+                    } else if (lineAccumulator.find("Muxing") != std::string::npos || lineAccumulator.find("merging") != std::string::npos) {
+                        if (options.onProgress) {
+                            options.onProgress(99.0f, "Muxing", "0s", 0);
+                        }
+                    }
+                    lineAccumulator.clear();
+                }
+            } else {
+                lineAccumulator += c;
+            }
+        }
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+
+    {
+        std::lock_guard<std::mutex> lock(m_processMutex);
+        m_hCurrentProcess = NULL;
+    }
+
+    CloseHandle(hStdOutRead);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    try {
+        std::filesystem::remove_all(isolatedTemp);
+    } catch (...) {}
+
+    if (std::filesystem::exists(outputFile) && std::filesystem::file_size(outputFile) > 0) {
+        return true;
+    }
+
+    std::filesystem::path altMkv = outPath.parent_path() / (saveName + ".mkv");
+    std::filesystem::path altMp4 = outPath.parent_path() / (saveName + ".mp4");
+    if (std::filesystem::exists(altMkv) && std::filesystem::file_size(altMkv) > 0) {
+        if (altMkv.string() != outputFile) {
+            std::filesystem::rename(altMkv, outputFile);
+        }
+        return true;
+    }
+    if (std::filesystem::exists(altMp4) && std::filesystem::file_size(altMp4) > 0) {
+        if (altMp4.string() != outputFile) {
+            std::filesystem::rename(altMp4, outputFile);
+        }
+        return true;
+    }
+
+    return exitCode == 0 && !m_aborted.load();
 }
 
 } // namespace OmniStream
