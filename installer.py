@@ -314,110 +314,80 @@ class OmniStreamInstaller(ctk.CTk):
 
         self.after(300, self._perform_install_steps)
 
-    def _perform_install_steps(self):
-        try:
-            target_dir = self.install_dir
-            os.makedirs(target_dir, exist_ok=True)
+def perform_installation_headless(target_dir: str = "", create_shortcuts: bool = True) -> bool:
+    """Perform complete C++ native engine installation, extension deployment, shortcuts, and registry."""
+    try:
+        if not target_dir:
+            target_dir = get_app_data_dir()
+        os.makedirs(target_dir, exist_ok=True)
 
-            # Terminate running app instances to avoid Windows file locks (PermissionError)
-            if sys.platform == "win32":
-                try:
-                    subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro.exe"], capture_output=True, creationflags=0x08000000)
-                except Exception:
-                    pass
+        # Terminate running app instances to avoid Windows file locks (PermissionError)
+        if sys.platform == "win32":
+            try:
+                subprocess.run(["taskkill", "/F", "/IM", "OmniStream_Pro.exe"], capture_output=True, creationflags=0x08000000)
+            except Exception:
+                pass
 
-            # 1. Copy desktop application files
-            self.status_lbl.configure(text="Installing application engine...")
-            self.pbar.set(0.3)
-            self.update_idletasks()
+        # 1. Copy C++ native desktop application files & deployed Qt runtime
+        cpp_src = os.path.join(INSTALLER_DIR, "cpp_app")
+        if os.path.isdir(cpp_src):
+            for item in os.listdir(cpp_src):
+                s = os.path.join(cpp_src, item)
+                d = os.path.join(target_dir, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(s, d)
+        else:
+            # Fallback to local C++ Release folder
+            cpp_local = os.path.join(INSTALLER_DIR, "c++ projects", "vs_project", "Release")
+            if not os.path.isdir(cpp_local):
+                cpp_local = os.path.join(os.path.dirname(INSTALLER_DIR), "c++ projects", "vs_project", "Release")
+            if os.path.isdir(cpp_local):
+                for item in os.listdir(cpp_local):
+                    if item.endswith(".pdb") or item.endswith(".obj") or item.endswith(".tlog"):
+                        continue
+                    s = os.path.join(cpp_local, item)
+                    d = os.path.join(target_dir, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(s, d)
 
-            for item in [
-                "main_gui.py",
-                "core_engine.py",
-                "bridge_server.py",
-                "netflix_resolver.py",
-                "setup_dependencies.py",
-                "extension_manager.py",
-                "ui_icons.py",
-                "window_chrome.py",
-                "app_icon.ico",
-                "app_icon.png",
-                "uninstall.exe",
-            ]:
-                src = os.path.join(DESKTOP_DIR, item)
-                if not os.path.exists(src):
-                    src = os.path.join(INSTALLER_DIR, item)
-                if os.path.exists(src):
-                    shutil.copy2(src, os.path.join(target_dir, item))
-
-            # Copy bin directory
-            src_bin = os.path.join(DESKTOP_DIR, "bin")
-            dst_bin = os.path.join(target_dir, "bin")
-            if os.path.exists(src_bin):
-                os.makedirs(dst_bin, exist_ok=True)
-                for b in os.listdir(src_bin):
-                    s = os.path.join(src_bin, b)
-                    d = os.path.join(dst_bin, b)
-                    if os.path.isfile(s):
+        # Copy bin tools (N_m3u8DL-RE.exe / ffmpeg.exe) to target_dir if not already there
+        for tool_name in ["N_m3u8DL-RE.exe", "ffmpeg.exe", "uninstall.exe", "app_icon.ico", "app_icon.png"]:
+            dst = os.path.join(target_dir, tool_name)
+            if not os.path.isfile(dst):
+                cand_paths = [
+                    os.path.join(INSTALLER_DIR, tool_name),
+                    os.path.join(INSTALLER_DIR, "bin", tool_name),
+                    os.path.join(DESKTOP_DIR, "bin", tool_name),
+                    os.path.join(DESKTOP_DIR, tool_name),
+                ]
+                for cp in cand_paths:
+                    if os.path.isfile(cp):
                         try:
-                            shutil.copy2(s, d)
+                            shutil.copy2(cp, dst)
+                            break
                         except Exception:
                             pass
 
-            # Copy compiled executable if present
-            target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
-            candidate_exes = [
-                os.path.join(DESKTOP_DIR, "OmniStream_Pro.exe"),
-                os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe"),
-                os.path.join(INSTALLER_DIR, "desktop", "OmniStream_Pro.exe"),
-                os.path.join(INSTALLER_DIR, "desktop", "dist", "OmniStream_Pro.exe"),
-                os.path.join(INSTALLER_DIR, "OmniStream_Pro.exe"),
-                os.path.join(INSTALLER_DIR, "dist", "OmniStream_Pro.exe"),
-            ]
-            for cand in candidate_exes:
-                if os.path.isfile(cand):
-                    try:
-                        shutil.copy2(cand, target_exe)
-                        break
-                    except Exception:
-                        pass
+        target_exe = os.path.join(target_dir, "OmniStream_Pro.exe")
+        target_uninst = os.path.join(target_dir, "uninstall.exe")
+        icon_file = os.path.join(target_dir, "app_icon.ico")
 
-            # Copy uninstall executable if present
-            target_uninst = os.path.join(target_dir, "uninstall.exe")
-            candidate_uninst = [
-                os.path.join(DESKTOP_DIR, "uninstall.exe"),
-                os.path.join(INSTALLER_DIR, "desktop", "uninstall.exe"),
-                os.path.join(INSTALLER_DIR, "uninstall.exe"),
-            ]
-            for cand in candidate_uninst:
-                if os.path.isfile(cand):
-                    try:
-                        shutil.copy2(cand, target_uninst)
-                        break
-                    except Exception:
-                        pass
+        # 2. Deploy Chrome Extension
+        deploy_extension_files()
 
-            # 2. Deploy Chrome Extension
-            self.status_lbl.configure(text="Deploying browser extension...")
-            self.pbar.set(0.6)
-            self.update_idletasks()
-            deployed_ext_dir = deploy_extension_files()
-
-            # 3. Create Shortcuts
-            self.status_lbl.configure(text="Creating desktop & start menu shortcuts...")
-            self.pbar.set(0.8)
-            self.update_idletasks()
-
+        # 3. Create Shortcuts
+        if create_shortcuts:
             target_run = target_exe if os.path.exists(target_exe) else sys.executable
             desktop_folder = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
-            icon_file = os.path.join(target_dir, "app_icon.ico")
-
-            if self.create_desktop_sc.get():
-                create_windows_shortcut(
-                    target_exe=target_run,
-                    shortcut_path=os.path.join(desktop_folder, "OmniStream Pro.lnk"),
-                    icon_path=icon_file
-                )
+            create_windows_shortcut(
+                target_exe=target_run,
+                shortcut_path=os.path.join(desktop_folder, "OmniStream Pro.lnk"),
+                icon_path=icon_file
+            )
 
             # Start Menu shortcuts
             appdata_roaming = os.environ.get("APPDATA", "")
@@ -436,18 +406,32 @@ class OmniStreamInstaller(ctk.CTk):
                         icon_path=icon_file
                     )
 
-            # 4. Register in Windows Control Panel / Settings
-            self.status_lbl.configure(text="Registering Windows uninstaller...")
-            self.pbar.set(0.9)
-            self.update_idletasks()
-            register_windows_uninstaller(target_dir, version="2.6.0")
+        # 4. Register in Windows Control Panel / Settings
+        register_windows_uninstaller(target_dir, version="2.6.0")
+        return True
+    except Exception as exc:
+        print(f"Error during installation: {exc}")
+        return False
 
-            # 5. Check Extension Status
+
+    def _perform_install_steps(self):
+        try:
+            self.status_lbl.configure(text="Installing C++ Native Engine & Qt Runtime...")
+            self.pbar.set(0.3)
+            self.update_idletasks()
+
+            ok = perform_installation_headless(
+                target_dir=self.install_dir,
+                create_shortcuts=self.create_desktop_sc.get()
+            )
+            if not ok:
+                raise RuntimeError("Failed to extract files or register application.")
+
             self.pbar.set(1.0)
             self.status_lbl.configure(text="Finalizing setup...")
             self.update_idletasks()
 
-            self._show_step_finish(deployed_ext_dir)
+            self._show_step_finish(get_deployed_extension_dir())
         except Exception as e:
             messagebox.showerror("Installation Error", f"Installation failed: {e}")
             self.destroy()
@@ -577,5 +561,15 @@ class OmniStreamInstaller(ctk.CTk):
 
 
 if __name__ == "__main__":
+    if any(arg.lower() in ["--silent", "/s", "-s", "--quiet", "/quiet"] for arg in sys.argv[1:]):
+        print("Running OmniStream Pro silent installation...")
+        success = perform_installation_headless()
+        if success:
+            print("[SUCCESS] OmniStream Pro installed successfully.")
+            sys.exit(0)
+        else:
+            print("[ERROR] Installation failed.")
+            sys.exit(1)
+
     app = OmniStreamInstaller()
     app.mainloop()

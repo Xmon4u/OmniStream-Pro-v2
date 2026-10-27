@@ -2,13 +2,18 @@
 title OmniStream Pro v2.6.0 - Universal Stream Downloader
 cd /d "%~dp0"
 
+if exist "c++ projects\vs_project\Release\OmniStream_Pro.exe" (
+    start "" "c++ projects\vs_project\Release\OmniStream_Pro.exe"
+    exit /b
+)
+
 if exist "release_output\OmniStream_Pro.exe" (
     start "" "release_output\OmniStream_Pro.exe"
     exit /b
 )
 
-if exist "desktop\dist\OmniStream_Pro.exe" (
-    start "" "desktop\dist\OmniStream_Pro.exe"
+if exist "Release Test\OmniStream_Pro.exe" (
+    start "" "Release Test\OmniStream_Pro.exe"
     exit /b
 )
 

@@ -51,56 +51,76 @@ def _ensure_uninstaller():
 
 
 def _stage_payload():
-    """Build a clean payload tree without nested PyInstaller artifacts."""
+    """Build a clean payload tree with deployed C++ Native Application."""
     _clean_stage()
     _ensure_uninstaller()
 
+    stage_cpp = os.path.join(STAGE_DIR, "cpp_app")
+    os.makedirs(stage_cpp, exist_ok=True)
+
+    # 1. Copy deployed C++ application binaries & Qt runtime
+    cpp_rel = os.path.join(ROOT_DIR, "c++ projects", "vs_project", "Release")
+    if os.path.isdir(cpp_rel):
+        for item in os.listdir(cpp_rel):
+            if item.endswith(".pdb") or item.endswith(".obj") or item.endswith(".tlog") or item.endswith(".log"):
+                continue
+            s = os.path.join(cpp_rel, item)
+            d = os.path.join(stage_cpp, item)
+            if os.path.isdir(s):
+                shutil.copytree(s, d, dirs_exist_ok=True)
+            else:
+                shutil.copy2(s, d)
+
+    # 2. Add Downloader tools (N_m3u8DL-RE.exe, ffmpeg.exe)
+    for tool in ["N_m3u8DL-RE.exe", "ffmpeg.exe"]:
+        cand_list = [
+            os.path.join(DESKTOP_DIR, "bin", tool),
+            os.path.join(ROOT_DIR, "release_output", tool),
+            os.path.join(ROOT_DIR, "Release Test", tool),
+        ]
+        for c in cand_list:
+            if os.path.isfile(c):
+                shutil.copy2(c, os.path.join(stage_cpp, tool))
+                break
+
+    # 3. Add uninstaller and icons into stage_cpp
+    uninst_src = os.path.join(DESKTOP_DIR, "uninstall.exe")
+    if os.path.isfile(uninst_src):
+        shutil.copy2(uninst_src, os.path.join(stage_cpp, "uninstall.exe"))
+
+    if os.path.isfile(ICON_PATH):
+        shutil.copy2(ICON_PATH, os.path.join(stage_cpp, "app_icon.ico"))
+        shutil.copy2(ICON_PATH, os.path.join(STAGE_DIR, "app_icon.ico"))
+
+    png_icon = os.path.join(DESKTOP_DIR, "app_icon.png")
+    if os.path.isfile(png_icon):
+        shutil.copy2(png_icon, os.path.join(stage_cpp, "app_icon.png"))
+
+    # Also keep a minimal desktop/ folder with extension_manager, ui_icons, window_chrome so installer UI runs
     stage_desktop = os.path.join(STAGE_DIR, "desktop")
     os.makedirs(stage_desktop, exist_ok=True)
-
-    for name in DESKTOP_FILES:
-        src = os.path.join(DESKTOP_DIR, name)
+    for m in ["extension_manager.py", "ui_icons.py", "window_chrome.py", "app_icon.png", "app_icon.ico"]:
+        src = os.path.join(DESKTOP_DIR, m)
         if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(stage_desktop, name))
-
-    # Tools (ffmpeg / downloader) — required at install time.
-    src_bin = os.path.join(DESKTOP_DIR, "bin")
-    if os.path.isdir(src_bin):
-        shutil.copytree(src_bin, os.path.join(stage_desktop, "bin"))
-
-    # Prefer freshly built portable exe from release_output, else desktop/dist.
-    portable_candidates = [
-        os.path.join(RELEASE_DIR, "OmniStream_Pro.exe"),
-        os.path.join(DESKTOP_DIR, "dist", "OmniStream_Pro.exe"),
-    ]
-    portable = next((p for p in portable_candidates if os.path.isfile(p)), None)
-    if not portable:
-        raise FileNotFoundError(
-            "OmniStream_Pro.exe not found. Build the portable exe before the installer."
-        )
-    # Keep under desktop/ so installer.py candidate paths keep working.
-    shutil.copy2(portable, os.path.join(stage_desktop, "OmniStream_Pro.exe"))
+            shutil.copy2(src, os.path.join(stage_desktop, m))
 
     # Chrome extension sources
     shutil.copytree(EXT_DIR, os.path.join(STAGE_DIR, "extension"))
 
-    # Icon at payload root (also referenced as --add-data)
-    if os.path.isfile(ICON_PATH):
-        shutil.copy2(ICON_PATH, os.path.join(STAGE_DIR, "app_icon.ico"))
-
-    return stage_desktop
+    return stage_cpp, stage_desktop
 
 
 def build():
     print("=" * 65)
-    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.6.0 Windows Installer)...")
+    print(f"Compiling {SETUP_NAME}.exe (OmniStream Pro v2.6.0 C++ Windows Installer)...")
     print("=" * 65)
 
-    stage_desktop = _stage_payload()
+    stage_cpp, stage_desktop = _stage_payload()
     stage_ext = os.path.join(STAGE_DIR, "extension")
     stage_icon = os.path.join(STAGE_DIR, "app_icon.ico")
 
     add_data_args = [
+        "--add-data", f"{stage_cpp};cpp_app",
         "--add-data", f"{stage_desktop};desktop",
         "--add-data", f"{stage_ext};extension",
         "--add-data", f"{stage_icon};.",
