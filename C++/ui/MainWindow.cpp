@@ -12,6 +12,9 @@
 #include <QStandardPaths>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QDialog>
+#include <QProcess>
+#include <QCoreApplication>
 
 namespace OmniStream {
 
@@ -271,11 +274,25 @@ void MainWindow::setupUI() {
     // ── 2. Indigo Bridge Notice Banner ────────────────────────────────────────
     m_bannerWidget = new QWidget(this);
     m_bannerWidget->setObjectName("bannerWidget");
+    m_bannerWidget->setCursor(Qt::PointingHandCursor);
+    m_bannerWidget->installEventFilter(this);
+
     auto *bannerLayout = new QHBoxLayout(m_bannerWidget);
-    bannerLayout->setContentsMargins(16, 7, 16, 7);
+    bannerLayout->setContentsMargins(16, 6, 12, 6);
+    bannerLayout->setSpacing(10);
+
     auto *lblBannerText = new QLabel("\u25CF Chrome Extension Bridge Active \u2014 Ready for 1-Click Stream Capture", this);
     lblBannerText->setObjectName("lblBannerText");
+    lblBannerText->setCursor(Qt::PointingHandCursor);
     bannerLayout->addWidget(lblBannerText);
+    bannerLayout->addStretch();
+
+    m_btnSetupExtension = new QPushButton("\u26A1 Setup Extension (1-Click)", this);
+    m_btnSetupExtension->setObjectName("btnBannerSetup");
+    m_btnSetupExtension->setCursor(Qt::PointingHandCursor);
+    connect(m_btnSetupExtension, &QPushButton::clicked, this, &MainWindow::onSetupExtensionClicked);
+    bannerLayout->addWidget(m_btnSetupExtension);
+
     rootLayout->addWidget(m_bannerWidget);
 
     // ── 3. Card 1: Stream Source ──────────────────────────────────────────────
@@ -757,12 +774,26 @@ void MainWindow::applyStyleSheet(int themeIdx) {
             border-radius: 10px;
         }
         #bannerWidget:hover {
-            border: 1px solid #6366f1;
+            border: 1px solid #818cf8;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #231f5c, stop:0.5 #371477, stop:1 #231f5c);
         }
         #lblBannerText {
             color: #c7d2fe;
             font-size: 12px;
             font-weight: 500;
+        }
+        #btnBannerSetup {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4f46e5, stop:1 #6366f1);
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: bold;
+            border-radius: 6px;
+            padding: 4px 12px;
+            border: 1px solid #818cf8;
+        }
+        #btnBannerSetup:hover {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4338ca, stop:1 #4f46e5);
+            border-color: #a5b4fc;
         }
         #cardWidget {
             background-color: %1;
@@ -1071,6 +1102,134 @@ void MainWindow::onThemeChanged(int index) {
         m_bridgeServer->SetCurrentTheme(index == 1 ? "Midnight Black" : "Cyber Slate");
     }
     update();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_bannerWidget && event->type() == QEvent::MouseButtonRelease) {
+        onSetupExtensionClicked();
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::onSetupExtensionClicked() {
+    // 1. Resolve unpacked extension directory
+    QString extPath;
+    QString appDir = QCoreApplication::applicationDirPath();
+    if (QDir(appDir + "/extension").exists()) {
+        extPath = QDir(appDir + "/extension").absolutePath();
+    } else if (QDir(appDir + "/../extension").exists()) {
+        extPath = QDir(appDir + "/../extension").absolutePath();
+    } else {
+        QString localApp = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        if (QDir(localApp + "/extension").exists()) {
+            extPath = QDir(localApp + "/extension").absolutePath();
+        } else {
+            QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            if (QDir(appData + "/extension").exists()) {
+                extPath = QDir(appData + "/extension").absolutePath();
+            }
+        }
+    }
+
+    if (extPath.isEmpty()) {
+        extPath = QDir(appDir).absoluteFilePath("extension");
+    }
+
+    QString nativeExtPath = QDir::toNativeSeparators(extPath);
+
+    // Auto-copy path to clipboard
+    QGuiApplication::clipboard()->setText(nativeExtPath);
+    handleLogMessage("[Extension] Extension directory copied to clipboard: " + nativeExtPath);
+
+    // 2. Discover Google Chrome, Microsoft Edge, or Brave executable
+    QStringList candidates = {
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        QDir::homePath() + "\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+        "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+    };
+
+    QString browserExe;
+    for (const auto& path : candidates) {
+        if (QFile::exists(path)) {
+            browserExe = path;
+            break;
+        }
+    }
+
+    // 3. Launch browser with extension loaded and open chrome://extensions
+    if (!browserExe.isEmpty()) {
+        QStringList args;
+        args << QString("--load-extension=%1").arg(nativeExtPath);
+        args << "chrome://extensions";
+        QProcess::startDetached(browserExe, args);
+    } else {
+        QDesktopServices::openUrl(QUrl("chrome://extensions"));
+    }
+
+    // Open Explorer highlighting the extension folder
+    QProcess::startDetached("explorer.exe", QStringList() << "/select," + nativeExtPath + "\\manifest.json");
+
+    // 4. Show friendly 1-Click setup guide dialog
+    QDialog dlg(this);
+    dlg.setWindowTitle("Chrome Extension Setup \u2014 1-Click Stream Capture");
+    dlg.setFixedSize(560, 370);
+    dlg.setStyleSheet(R"(
+        QDialog { background-color: #0d1117; color: #f0f6fc; font-family: 'Segoe UI', sans-serif; }
+        QLabel { color: #c9d1d9; font-size: 13px; line-height: 1.5; }
+        QLabel#title { color: #58a6ff; font-size: 17px; font-weight: bold; }
+        QPushButton {
+            background-color: #21262d; color: #f0f6fc; border: 1px solid #30363d;
+            border-radius: 6px; padding: 7px 16px; font-size: 12px; font-weight: 600;
+        }
+        QPushButton:hover { background-color: #30363d; border-color: #58a6ff; }
+        QPushButton#primary { background-color: #238636; border-color: #2ea043; color: white; }
+        QPushButton#primary:hover { background-color: #2ea043; }
+    )");
+
+    auto *vbox = new QVBoxLayout(&dlg);
+    vbox->setContentsMargins(24, 20, 24, 20);
+    vbox->setSpacing(14);
+
+    auto *lblTitle = new QLabel("\u26A1 Chrome Extension 1-Click Setup", &dlg);
+    lblTitle->setObjectName("title");
+    vbox->addWidget(lblTitle);
+
+    auto *lblInfo = new QLabel(
+        "ব্রাউজার চালু করা হয়েছে এবং এক্সটেনশন ফোল্ডারটির পাথ স্বয়ংক্রিয়ভাবে ক্লিপবোর্ডে কপি করা হয়েছে!\n\n"
+        "১. ব্রাউজারের উপরে ডানে <b>Developer mode</b> টগল অন করুন।\n"
+        "২. <b>'Load unpacked'</b> বাটনে ক্লিক করুন।\n"
+        "৩. ওপেন হওয়া ডায়লগে ক্লিপবোর্ডে থাকা পাথটি পেস্ট করুন (বা খোলা ফোল্ডারটি সিলেক্ট করুন)।\n\n"
+        "এক্সটেনশন যুক্ত হওয়ার সাথে সাথেই OmniStream Pro নিজে থেকেই কানেক্ট হয়ে যাবে!", &dlg);
+    lblInfo->setWordWrap(true);
+    vbox->addWidget(lblInfo);
+
+    auto *btnBox = new QHBoxLayout();
+    auto *btnOpenFolder = new QPushButton(QString::fromUtf8("📁 ফোল্ডার খুলুন"), &dlg);
+    connect(btnOpenFolder, &QPushButton::clicked, [&]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(nativeExtPath));
+    });
+
+    auto *btnCopy = new QPushButton(QString::fromUtf8("📋 পাথ কপি করুন"), &dlg);
+    connect(btnCopy, &QPushButton::clicked, [btnCopy, nativeExtPath]() {
+        QGuiApplication::clipboard()->setText(nativeExtPath);
+        btnCopy->setText(QString::fromUtf8("✅ কপি সম্পন্ন!"));
+    });
+
+    auto *btnDone = new QPushButton(QString::fromUtf8("✓ ঠিক আছে"), &dlg);
+    btnDone->setObjectName("primary");
+    connect(btnDone, &QPushButton::clicked, &dlg, &QDialog::accept);
+
+    btnBox->addWidget(btnOpenFolder);
+    btnBox->addWidget(btnCopy);
+    btnBox->addStretch();
+    btnBox->addWidget(btnDone);
+    vbox->addLayout(btnBox);
+
+    dlg.exec();
 }
 
 void MainWindow::onPasteClicked() {

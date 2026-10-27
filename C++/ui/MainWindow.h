@@ -194,8 +194,10 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void changeEvent(QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
+    void onSetupExtensionClicked();
     void onPasteClicked();
     void onBrowseClicked();
     void onStartDownloadClicked();
@@ -257,6 +259,7 @@ private:
 
     // Banner Widget
     QWidget* m_bannerWidget = nullptr;
+    QPushButton* m_btnSetupExtension = nullptr;
 
     // Card 1: Stream Source
     QWidget* m_card1 = nullptr;
