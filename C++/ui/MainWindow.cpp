@@ -61,14 +61,7 @@ MainWindow::MainWindow(QWidget *parent)
         }, Qt::QueuedConnection);
     });
 
-    m_animTimer = new QTimer(this);
-    connect(m_animTimer, &QTimer::timeout, this, [this]() {
-        m_glowAngle += 0.04f;
-        if (m_glowAngle > 6.28318f) m_glowAngle -= 6.28318f;
-        m_pulseValue = 0.5f + 0.5f * std::sin(m_glowAngle);
-        update(); // repaints glowing curved border efficiently
-    });
-    m_animTimer->start(60); // Clean 16 FPS ambient border glow, near-zero CPU
+
 
     if (m_bridgeServer->Start()) {
         handleLogMessage("[Bridge] Extension bridge active \u2014 ready for 1-click capture.");
@@ -94,18 +87,11 @@ void MainWindow::paintEvent(QPaintEvent *event) {
     QRectF r = rect().adjusted(4, 4, -5, -5);
 
     // 1. Outer Soft Glowing Aura (multi-layer neon diffusion)
-    float pulse = 0.5f + 0.5f * std::sin(m_glowAngle);
-
-    QLinearGradient haloGrad(
-        r.center().x() + r.width() * 0.55f * std::cos(m_glowAngle),
-        r.center().y() + r.height() * 0.55f * std::sin(m_glowAngle),
-        r.center().x() - r.width() * 0.55f * std::cos(m_glowAngle),
-        r.center().y() - r.height() * 0.55f * std::sin(m_glowAngle)
-    );
-    haloGrad.setColorAt(0.0, QColor(56, 189, 248, static_cast<int>(40 + 35 * pulse)));  // Electric Cyan
-    haloGrad.setColorAt(0.35, QColor(139, 92, 246, static_cast<int>(35 + 30 * pulse))); // Neon Purple
-    haloGrad.setColorAt(0.7, QColor(236, 72, 153, static_cast<int>(40 + 35 * pulse)));  // Pink Accent
-    haloGrad.setColorAt(1.0, QColor(56, 189, 248, static_cast<int>(40 + 35 * pulse)));  // Electric Cyan
+    QLinearGradient haloGrad(r.topLeft(), r.bottomRight());
+    haloGrad.setColorAt(0.0, QColor(56, 189, 248, 55));  // Electric Cyan
+    haloGrad.setColorAt(0.35, QColor(139, 92, 246, 50)); // Neon Purple
+    haloGrad.setColorAt(0.7, QColor(236, 72, 153, 55));  // Pink Accent
+    haloGrad.setColorAt(1.0, QColor(56, 189, 248, 55));  // Electric Cyan
 
     painter.setPen(QPen(QBrush(haloGrad), 4.5));
     painter.setBrush(Qt::NoBrush);
@@ -117,13 +103,8 @@ void MainWindow::paintEvent(QPaintEvent *event) {
     painter.setPen(Qt::NoPen);
     painter.drawRoundedRect(r, 16, 16);
 
-    // 3. Dynamic Rotating Luminous Border
-    QLinearGradient borderGrad(
-        r.center().x() + r.width() * 0.6f * std::cos(m_glowAngle),
-        r.center().y() + r.height() * 0.6f * std::sin(m_glowAngle),
-        r.center().x() - r.width() * 0.6f * std::cos(m_glowAngle),
-        r.center().y() - r.height() * 0.6f * std::sin(m_glowAngle)
-    );
+    // 3. Crisp Luminous Neon Border
+    QLinearGradient borderGrad(r.topLeft(), r.bottomRight());
     borderGrad.setColorAt(0.0, QColor("#38bdf8")); // Cyan
     borderGrad.setColorAt(0.35, QColor("#818cf8")); // Indigo
     borderGrad.setColorAt(0.7, QColor("#c084fc")); // Purple
@@ -134,7 +115,7 @@ void MainWindow::paintEvent(QPaintEvent *event) {
     painter.drawRoundedRect(r, 16, 16);
 
     // 4. Inner Subtle Rim
-    painter.setPen(QPen(QColor(255, 255, 255, static_cast<int>(12 + 15 * pulse)), 1.0));
+    painter.setPen(QPen(QColor(255, 255, 255, 22), 1.0));
     painter.drawRoundedRect(r.adjusted(1, 1, -1, -1), 15, 15);
 }
 

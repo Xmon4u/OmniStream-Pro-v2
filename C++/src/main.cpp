@@ -164,7 +164,7 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--test") {
             return RunSelfTest();
-        } else if (arg == "--server") {
+        } else if (arg == "--server" || arg == "--daemon") {
             isDaemonServer = true;
             isCliMode = true;
         } else if (arg == "--cli") {
@@ -172,15 +172,23 @@ int main(int argc, char* argv[]) {
         } else if ((arg == "--url" || arg == "-u") && i + 1 < argc) {
             options.inputText = argv[++i];
             isCliMode = true;
-        } else if ((arg == "--out" || arg == "-o") && i + 1 < argc) {
+        } else if ((arg == "--out" || arg == "-o" || arg == "--save-name") && i + 1 < argc) {
             options.saveName = argv[++i];
             isCliMode = true;
-        } else if ((arg == "--dir" || arg == "-d") && i + 1 < argc) {
+        } else if ((arg == "--dir" || arg == "-d" || arg == "--save-dir") && i + 1 < argc) {
             options.saveDir = argv[++i];
+            isCliMode = true;
+        } else if ((arg == "--res" || arg == "-r") && i + 1 < argc) {
+            options.resolution = argv[++i];
             isCliMode = true;
         } else if ((arg == "--threads" || arg == "-t") && i + 1 < argc) {
             options.threadCount = std::atoi(argv[++i]);
             isCliMode = true;
+        } else if (!arg.empty() && arg[0] != '-') {
+            if (options.inputText.empty()) {
+                options.inputText = arg;
+                isCliMode = true;
+            }
         }
     }
 
@@ -210,8 +218,10 @@ int main(int argc, char* argv[]) {
         if (!server.Start()) {
             return 1;
         }
-        std::cout << Color::Green << "\n [Server Active] Press Enter to terminate server...\n" << Color::Reset << std::endl;
-        std::cin.get();
+        std::cout << Color::Green << "\n [Server Active] OmniStream Bridge Daemon listening on port " << BRIDGE_PORT << "\n" << Color::Reset << std::endl;
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
         server.Stop();
         return 0;
     }

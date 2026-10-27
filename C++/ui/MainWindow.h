@@ -33,20 +33,11 @@
 
 namespace OmniStream {
 
-// Custom Widget to render animated cyber blueprint grid background with sweep radar
+// Custom Widget to render subtle cyber blueprint grid background
 class EmptyQueueGridWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit EmptyQueueGridWidget(QWidget *parent = nullptr) : QWidget(parent) {
-        m_timer = new QTimer(this);
-        connect(m_timer, &QTimer::timeout, this, [this]() {
-            m_scanY += 1.8f;
-            if (m_scanY > height() + 40.0f) m_scanY = -30.0f;
-            m_pulse += 0.06f;
-            update();
-        });
-        m_timer->start(30);
-    }
+    explicit EmptyQueueGridWidget(QWidget *parent = nullptr) : QWidget(parent) {}
 protected:
     void paintEvent(QPaintEvent *event) override {
         Q_UNUSED(event);
@@ -64,25 +55,10 @@ protected:
             p.drawLine(0, y, width(), y);
         }
 
-        // Animated subtle cyber radar/scanner light sweep
-        int sY = static_cast<int>(m_scanY);
-        if (sY >= -20 && sY <= height() + 20) {
-            QLinearGradient scanGrad(0, sY - 20, 0, sY + 20);
-            scanGrad.setColorAt(0.0, QColor(56, 189, 248, 0));
-            scanGrad.setColorAt(0.5, QColor(56, 189, 248, 30));
-            scanGrad.setColorAt(1.0, QColor(56, 189, 248, 0));
-            p.fillRect(0, sY - 20, width(), 40, scanGrad);
-        }
-
         // Draw rounded border with cyber glow
-        float glow = 0.5f + 0.5f * std::sin(m_pulse);
-        p.setPen(QPen(QColor(56, 189, 248, static_cast<int>(35 + 45 * glow)), 1.2));
+        p.setPen(QPen(QColor(56, 189, 248, 55), 1.2));
         p.drawRoundedRect(rect().adjusted(1, 1, -2, -2), 8, 8);
     }
-private:
-    QTimer *m_timer = nullptr;
-    float m_scanY = -20.0f;
-    float m_pulse = 0.0f;
 };
 
 enum class CaptionType {
