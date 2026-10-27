@@ -473,6 +473,7 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
 
     std::string fullResponse = resStream.str();
     send(clientSocket, fullResponse.data(), (int)fullResponse.size(), 0);
+    shutdown(clientSocket, SD_SEND);
     closesocket(clientSocket);
 }
 

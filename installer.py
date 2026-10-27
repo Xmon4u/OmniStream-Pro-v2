@@ -58,6 +58,15 @@ except ImportError:
     )
     from ui_icons import apply_window_icon, build_icon_set
 
+# Crucial: If running as a frozen PyInstaller binary, immediately switch working directory
+# away from sys._MEIPASS (to AppData) so that any spawned child process (Chrome, Node,
+# PowerShell, or OmniStream_Pro.exe) never inherits or locks the PyInstaller temporary extraction folder!
+if getattr(sys, 'frozen', False):
+    try:
+        os.chdir(get_app_data_dir())
+    except Exception:
+        pass
+
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
@@ -103,6 +112,7 @@ def create_windows_shortcut(target_exe: str, shortcut_path: str, icon_path: str 
         encoded_cmd = base64.b64encode(ps_cmd.encode("utf-16le")).decode("ascii")
         subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_cmd],
+            cwd=get_app_data_dir(),
             check=True,
             creationflags=creationflags
         )
@@ -576,15 +586,51 @@ class OmniStreamInstaller(ctk.CTk):
     def _finish_and_launch(self):
         target_exe = os.path.join(self.install_dir, "OmniStream_Pro.exe")
         if self.launch_after.get():
-            popen_kwargs = {"close_fds": True}
+            clean_env = os.environ.copy()
+            clean_env.pop("_MEIPASS2", None)
+            clean_env.pop("_MEIPASS", None)
+
             if sys.platform == "win32":
-                popen_kwargs["creationflags"] = 0x00000008  # DETACHED_PROCESS
-            if os.path.exists(target_exe):
-                subprocess.Popen([target_exe], **popen_kwargs)
+                try:
+                    os.chdir(self.install_dir)
+                except Exception:
+                    pass
+                if os.path.exists(target_exe):
+                    try:
+                        # os.startfile hands execution directly to Windows Explorer Shell.
+                        # The newly launched OmniStream_Pro.exe is a separate root process
+                        # with its own clean working directory and ZERO inherited handles from the installer.
+                        os.startfile(target_exe)
+                    except Exception:
+                        subprocess.Popen(
+                            [target_exe],
+                            cwd=self.install_dir,
+                            env=clean_env,
+                            close_fds=True,
+                            creationflags=0x00000008 | 0x00000200
+                        )
+                else:
+                    main_py = os.path.join(self.install_dir, "main_gui.py")
+                    if os.path.exists(main_py):
+                        subprocess.Popen(
+                            [sys.executable, main_py],
+                            cwd=self.install_dir,
+                            env=clean_env,
+                            close_fds=True,
+                            creationflags=0x00000008 | 0x00000200
+                        )
             else:
-                main_py = os.path.join(self.install_dir, "main_gui.py")
-                if os.path.exists(main_py):
-                    subprocess.Popen([sys.executable, main_py], **popen_kwargs)
+                if os.path.exists(target_exe):
+                    subprocess.Popen([target_exe], cwd=self.install_dir, env=clean_env, close_fds=True)
+                else:
+                    main_py = os.path.join(self.install_dir, "main_gui.py")
+                    if os.path.exists(main_py):
+                        subprocess.Popen([sys.executable, main_py], cwd=self.install_dir, env=clean_env, close_fds=True)
+
+        try:
+            os.chdir(self.install_dir)
+        except Exception:
+            pass
         self.destroy()
 
 

@@ -1010,11 +1010,13 @@ def _install_into_open_profile(browser_exe: str, profile_dir: str, ext_dir: str)
 
     Other Chrome windows stay open. This does not close or restart the browser.
     """
+    app_data = get_app_data_dir()
     subprocess.Popen(
         [browser_exe, f"--profile-directory={profile_dir}", "chrome://extensions"],
+        cwd=app_data,
         creationflags=get_creation_flags(),
     )
-    script_path = os.path.join(get_app_data_dir(), "load_unpacked.ps1")
+    script_path = os.path.join(app_data, "load_unpacked.ps1")
     try:
         with open(script_path, "w", encoding="utf-8") as handle:
             handle.write(_LOAD_UNPACKED_PS)
@@ -1026,6 +1028,7 @@ def _install_into_open_profile(browser_exe: str, profile_dir: str, ext_dir: str)
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", script_path, "-Folder", ext_dir,
             ],
+            cwd=app_data,
             capture_output=True, text=True, timeout=30, creationflags=get_creation_flags(),
         )
     except Exception:
@@ -1095,8 +1098,10 @@ def _launch_branded_chrome(browser_exe: str, ext_dir: str, restart_running: bool
         return ""
 
     try:
+        app_data = get_app_data_dir()
         _extension_host_proc = subprocess.Popen(
             [node, host_path, browser_exe, ext_dir, profile_dir, "", result_path, user_data],
+            cwd=app_data,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -1109,25 +1114,36 @@ def _launch_branded_chrome(browser_exe: str, ext_dir: str, restart_running: bool
 
     deadline = time.time() + 20
     loaded = False
-    while time.time() < deadline:
-        if os.path.isfile(result_path):
+    try:
+        while time.time() < deadline:
+            if os.path.isfile(result_path):
+                try:
+                    with open(result_path, "r", encoding="utf-8") as handle:
+                        payload = json.load(handle)
+                except Exception:
+                    time.sleep(0.2)
+                    continue
+                result = payload.get("result") if isinstance(payload, dict) else None
+                if isinstance(result, dict) and result.get("id"):
+                    loaded = True
+                    break
+                err = payload.get("error") if isinstance(payload, dict) else payload
+                _last_launch_error = str(err or "Chrome did not accept the extension.")
+                return ""
+            if _extension_host_proc.poll() is not None:
+                _last_launch_error = "The Chrome extension host exited before the extension loaded."
+                return ""
+            time.sleep(0.25)
+    finally:
+        if _extension_host_proc:
             try:
-                with open(result_path, "r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
+                _extension_host_proc.terminate()
+                _extension_host_proc.wait(timeout=0.5)
             except Exception:
-                time.sleep(0.2)
-                continue
-            result = payload.get("result") if isinstance(payload, dict) else None
-            if isinstance(result, dict) and result.get("id"):
-                loaded = True
-                break
-            err = payload.get("error") if isinstance(payload, dict) else payload
-            _last_launch_error = str(err or "Chrome did not accept the extension.")
-            return ""
-        if _extension_host_proc.poll() is not None:
-            _last_launch_error = "The Chrome extension host exited before the extension loaded."
-            return ""
-        time.sleep(0.25)
+                try:
+                    _extension_host_proc.kill()
+                except Exception:
+                    pass
 
     if not loaded:
         _last_launch_error = "Timed out waiting for Chrome to load the extension."
@@ -1173,9 +1189,10 @@ def launch_browser_with_extension(restart_running: bool = True) -> str:
         return _launch_branded_chrome(browser_exe, ext_dir, restart_running)
 
     image = os.path.basename(browser_exe)
+    app_data = get_app_data_dir()
     try:
         if not is_browser_running(browser_exe):
-            subprocess.Popen(_browser_launch_args(browser_exe, ext_dir))
+            subprocess.Popen(_browser_launch_args(browser_exe, ext_dir), cwd=app_data)
             return "default"
 
         profile = get_app_browser_profile_dir()
@@ -1185,11 +1202,11 @@ def launch_browser_with_extension(restart_running: bool = True) -> str:
                 browser_exe,
                 f"--user-data-dir={profile}",
                 _extensions_page_url(browser_exe),
-            ])
+            ], cwd=app_data)
             return "companion-existing"
 
         _prepare_app_browser_profile(profile)
-        subprocess.Popen(_browser_launch_args(browser_exe, ext_dir, profile))
+        subprocess.Popen(_browser_launch_args(browser_exe, ext_dir, profile), cwd=app_data)
         return "companion"
     except Exception as exc:
         _last_launch_error = str(exc)
@@ -1201,9 +1218,10 @@ def open_chrome_extensions() -> bool:
     """Open Google Chrome directly to the extensions management page and copy path."""
     copy_path_to_clipboard()
     browser_exe = get_browser_executable()
+    app_data = get_app_data_dir()
     if browser_exe and os.path.isfile(browser_exe):
         try:
-            subprocess.Popen([browser_exe, "chrome://extensions"])
+            subprocess.Popen([browser_exe, "chrome://extensions"], cwd=app_data)
             return True
         except Exception:
             pass
@@ -1214,7 +1232,7 @@ def open_chrome_extensions() -> bool:
         except Exception:
             pass
     try:
-        subprocess.Popen(["cmd.exe", "/c", "start", "chrome://extensions"])
+        subprocess.Popen(["cmd.exe", "/c", "start", "chrome://extensions"], cwd=app_data)
         return True
     except Exception:
         pass
@@ -1227,6 +1245,6 @@ def open_extension_folder():
     if os.path.isdir(dest):
         try:
             # Highlight folder in explorer
-            subprocess.Popen(["explorer.exe", dest])
+            subprocess.Popen(["explorer.exe", dest], cwd=get_app_data_dir())
         except Exception:
             os.startfile(dest)
