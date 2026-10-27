@@ -304,7 +304,12 @@ bool DownloadEngine::DownloadTrackSegments(
     std::mutex queueMutex;
     std::atomic<uint64_t> totalDownloadedBytes{ 0 };
     std::atomic<size_t> completedSegments{ 0 };
+    std::atomic<int> initialConsecutiveErrors{ 0 };
     auto startTime = std::chrono::steady_clock::now();
+
+    if (options.onProgress) {
+        options.onProgress(0.0f, "0.0 MB/s", "--", 0, "-- / --");
+    }
 
     size_t numThreads = std::min<size_t>(options.threadCount, playlist.segments.size());
     if (numThreads < 1) numThreads = 1;
@@ -342,7 +347,17 @@ bool DownloadEngine::DownloadTrackSegments(
                     std::this_thread::sleep_for(std::chrono::milliseconds(250 * (retry + 1)));
                 }
                 if (!segOk) {
+                    if (completedSegments.load() == 0) {
+                        int errs = ++initialConsecutiveErrors;
+                        if (errs >= 8) {
+                            if (options.onLog) options.onLog("[Engine] Aborting stream: Initial segments unreachable (HTTP 403/404 or auth expired).");
+                            m_aborted.store(true);
+                            break;
+                        }
+                    }
                     continue;
+                } else {
+                    initialConsecutiveErrors.store(0);
                 }
 
                 std::vector<uint8_t> finalData = std::move(resp.body);
@@ -529,9 +544,8 @@ bool DownloadEngine::DownloadWithNM3U8(
             cmd << "-sv res=\"720*|1280*\":for=best ";
         } else if (options.resolution == "480p") {
             cmd << "-sv res=\"480*|854*\":for=best ";
-        } else if (options.resolution == "1080p") {
-            cmd << "-sv res=\"1080*|1920*\":for=best ";
         } else {
+            // "1080p", "best", or default: pick best available video stream
             cmd << "-sv best ";
         }
 
@@ -655,7 +669,7 @@ bool DownloadEngine::DownloadWithNM3U8(
 
     std::regex pctRegex(R"((\d+(?:\.\d+)?)\s*%)");
     std::regex sizePairRegex(R"((\d+(?:\.\d+)?\s*[KMGT]i?B)\s*/\s*(\d+(?:\.\d+)?\s*[KMGT]i?B))", std::regex::icase);
-    std::regex speedRegex(R"((\d+(?:\.\d+)?)\s*([KMGT]i?B(?:ps|/s)|Bps|B/s))", std::regex::icase);
+    std::regex speedRegex(R"(-?(\d+(?:\.\d+)?)\s*([KMGT]i?B(?:ps|/s)|Bps|B/s))", std::regex::icase);
     std::regex etaRegex(R"((\d{1,2}:\d{2}(?::\d{2})?))");
 
     float lastReportedPct = 0.0f;
@@ -731,6 +745,15 @@ bool DownloadEngine::DownloadWithNM3U8(
             std::smatch mSize;
             if (std::regex_search(sub, mSize, sizePairRegex)) {
                 lastReportedSize = mSize[1].str() + " / " + mSize[2].str();
+                try {
+                    double val = std::stod(mSize[1].str());
+                    std::string unit = mSize[1].str();
+                    std::transform(unit.begin(), unit.end(), unit.begin(), ::toupper);
+                    if (unit.find("GB") != std::string::npos || unit.find("GIB") != std::string::npos) lastReportedBytes = static_cast<uint64_t>(val * 1024 * 1024 * 1024);
+                    else if (unit.find("MB") != std::string::npos || unit.find("MIB") != std::string::npos) lastReportedBytes = static_cast<uint64_t>(val * 1024 * 1024);
+                    else if (unit.find("KB") != std::string::npos || unit.find("KIB") != std::string::npos) lastReportedBytes = static_cast<uint64_t>(val * 1024);
+                    else lastReportedBytes = static_cast<uint64_t>(val);
+                } catch (...) {}
             }
 
             std::smatch mSpeed;
@@ -756,6 +779,10 @@ bool DownloadEngine::DownloadWithNM3U8(
             if (options.onProgress && !m_paused.load()) {
                 options.onProgress(lastReportedPct, lastReportedSpeed, lastReportedEta, lastReportedBytes, lastReportedSize);
             }
+        }
+
+        if (streamAccumulator.size() > 4096) {
+            streamAccumulator = streamAccumulator.substr(streamAccumulator.size() - 2048);
         } else if (searchWindow.find("Muxing") != std::string::npos || searchWindow.find("merging") != std::string::npos) {
             if (options.onProgress && !m_paused.load()) {
                 options.onProgress(99.0f, "Muxing", "0s", lastReportedBytes, lastReportedSize);

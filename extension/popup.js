@@ -368,12 +368,32 @@ function sendToDesktop(item, btn, doneCallback) {
     }
   } catch (e) {}
 
-  let curlCmd = item.curl || `curl "${absoluteUrl}"`;
-  if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
-    try {
-      const origin = new URL(currentTabUrl || item.referer || absoluteUrl).origin;
-      curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
-    } catch (e) {}
+  const effectiveReferer = item.referer || currentTabUrl || '';
+  const effectiveOrigin = item.origin || (effectiveReferer ? new URL(effectiveReferer).origin : '');
+  const effectiveUa = item.userAgent || navigator.userAgent || '';
+
+  let curlCmd = item.curl || '';
+  if (!curlCmd || curlCmd.trim() === `curl "${absoluteUrl}"`) {
+    curlCmd = `curl "${absoluteUrl}"`;
+    if (effectiveReferer) curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    if (effectiveOrigin) curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    if (effectiveUa) curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+  } else {
+    if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
+      try {
+        const origin = new URL(effectiveReferer || absoluteUrl).origin;
+        curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
+      } catch (e) {}
+    }
+    if (effectiveReferer && !curlCmd.includes('Referer:') && !curlCmd.includes('referer:')) {
+      curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    }
+    if (effectiveOrigin && !curlCmd.includes('Origin:') && !curlCmd.includes('origin:')) {
+      curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    }
+    if (effectiveUa && !curlCmd.includes('User-Agent:') && !curlCmd.includes('user-agent:')) {
+      curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+    }
   }
 
   const nid = item.netflixId || extractNetflixId(absoluteUrl) || extractNetflixId(currentTabUrl);
@@ -427,12 +447,32 @@ function sendSubtitlesToDesktop(item, btn) {
     }
   } catch (e) {}
 
-  let curlCmd = item.curl || `curl "${absoluteUrl}"`;
-  if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
-    try {
-      const origin = new URL(currentTabUrl || item.referer || absoluteUrl).origin;
-      curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
-    } catch (e) {}
+  const effectiveReferer = item.referer || currentTabUrl || '';
+  const effectiveOrigin = item.origin || (effectiveReferer ? new URL(effectiveReferer).origin : '');
+  const effectiveUa = item.userAgent || navigator.userAgent || '';
+
+  let curlCmd = item.curl || '';
+  if (!curlCmd || curlCmd.trim() === `curl "${absoluteUrl}"`) {
+    curlCmd = `curl "${absoluteUrl}"`;
+    if (effectiveReferer) curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    if (effectiveOrigin) curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    if (effectiveUa) curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+  } else {
+    if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
+      try {
+        const origin = new URL(effectiveReferer || absoluteUrl).origin;
+        curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
+      } catch (e) {}
+    }
+    if (effectiveReferer && !curlCmd.includes('Referer:') && !curlCmd.includes('referer:')) {
+      curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    }
+    if (effectiveOrigin && !curlCmd.includes('Origin:') && !curlCmd.includes('origin:')) {
+      curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    }
+    if (effectiveUa && !curlCmd.includes('User-Agent:') && !curlCmd.includes('user-agent:')) {
+      curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+    }
   }
 
   const nid = item.netflixId || extractNetflixId(absoluteUrl) || extractNetflixId(currentTabUrl);

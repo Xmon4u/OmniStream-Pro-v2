@@ -452,8 +452,21 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
                       ExtractJsonValue(body, "type") == "subtitles" ||
                       ExtractJsonValue(body, "subtitleOnly") == "true");
 
+        std::string referer = ExtractJsonValue(body, "referer");
+        std::string origin = ExtractJsonValue(body, "origin");
+        std::string userAgent = ExtractJsonValue(body, "userAgent");
+
         // Prefer full curl command with captured headers, fallback to raw url
-        std::string inputToQueue = !curlCmd.empty() ? curlCmd : url;
+        std::string inputToQueue = !curlCmd.empty() ? curlCmd : ("curl \"" + url + "\"");
+        if (!referer.empty() && inputToQueue.find("Referer:") == std::string::npos && inputToQueue.find("referer:") == std::string::npos) {
+            inputToQueue += " -H \"Referer: " + referer + "\"";
+        }
+        if (!origin.empty() && inputToQueue.find("Origin:") == std::string::npos && inputToQueue.find("origin:") == std::string::npos) {
+            inputToQueue += " -H \"Origin: " + origin + "\"";
+        }
+        if (!userAgent.empty() && inputToQueue.find("User-Agent:") == std::string::npos && inputToQueue.find("user-agent:") == std::string::npos) {
+            inputToQueue += " -H \"User-Agent: " + userAgent + "\"";
+        }
 
         if (!inputToQueue.empty()) {
             DownloadOptions opts;
@@ -538,7 +551,20 @@ void BridgeServer::HandleClient(SOCKET clientSocket) {
                               ExtractJsonValue(itemJson, "type") == "subtitles" ||
                               ExtractJsonValue(itemJson, "subtitleOnly") == "true");
 
-                std::string chosen = !curlCmd.empty() ? curlCmd : itUrl;
+                std::string itRef = ExtractJsonValue(itemJson, "referer");
+                std::string itOrig = ExtractJsonValue(itemJson, "origin");
+                std::string itUa = ExtractJsonValue(itemJson, "userAgent");
+
+                std::string chosen = !curlCmd.empty() ? curlCmd : ("curl \"" + itUrl + "\"");
+                if (!itRef.empty() && chosen.find("Referer:") == std::string::npos && chosen.find("referer:") == std::string::npos) {
+                    chosen += " -H \"Referer: " + itRef + "\"";
+                }
+                if (!itOrig.empty() && chosen.find("Origin:") == std::string::npos && chosen.find("origin:") == std::string::npos) {
+                    chosen += " -H \"Origin: " + itOrig + "\"";
+                }
+                if (!itUa.empty() && chosen.find("User-Agent:") == std::string::npos && chosen.find("user-agent:") == std::string::npos) {
+                    chosen += " -H \"User-Agent: " + itUa + "\"";
+                }
                 if (!chosen.empty()) {
                     DownloadOptions opts;
                     opts.inputText = chosen;

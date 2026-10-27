@@ -18,6 +18,8 @@
 
 namespace OmniStream {
 
+static constexpr int MAX_CONCURRENT_DOWNLOADS = 3;
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent) {
     // Frameless window with rounded curved borders
@@ -673,6 +675,28 @@ void MainWindow::setupUI() {
     connect(m_tableQueue, &QTableWidget::customContextMenuRequested, this, &MainWindow::showQueueContextMenu);
     connect(m_tableQueue, &QTableWidget::cellDoubleClicked, this, [this](int row, int /*col*/) {
         playQueueItemFile(row);
+    });
+    connect(m_tableQueue, &QTableWidget::cellClicked, this, [this](int row, int /*col*/) {
+        if (row >= 0 && row < static_cast<int>(m_queueItems.size())) {
+            m_activeQueueIndex = row;
+            const auto& item = m_queueItems[row];
+            m_progBar->setValue(static_cast<int>(item.progressPercent));
+            m_lblProgPct->setText(QString::number(item.progressPercent, 'f', 1) + "%");
+            m_lblProgSpeed->setText(item.speed.isEmpty() ? "0.0 MB/s" : item.speed);
+            m_lblProgSize->setText("Downloaded: " + (item.downloadedSize.isEmpty() ? "--" : item.downloadedSize));
+            m_lblProgTitle->setText(item.options.saveName.empty() ? QString("Stream Item #%1").arg(row + 1) : QString::fromStdString(item.options.saveName));
+            if (item.status == "Done") {
+                m_lblProgStatus->setText("Completed \u2014 File saved successfully.");
+            } else if (item.status == "Downloading") {
+                m_lblProgStatus->setText("Downloading segments \u2022 ETA: " + (item.eta.isEmpty() ? "--" : item.eta));
+            } else if (item.status == "Paused") {
+                m_lblProgStatus->setText("Download Paused.");
+            } else if (item.status == "Failed") {
+                m_lblProgStatus->setText("Download failed: Stream unreachable or host offline.");
+            } else {
+                m_lblProgStatus->setText("Queued \u2014 waiting to download.");
+            }
+        }
     });
     m_tableQueue->setVisible(false);
     queuePageLayout->addWidget(m_tableQueue);
@@ -1336,6 +1360,7 @@ void MainWindow::onDownloadModeChanged(int modeIdx) {
 }
 
 void MainWindow::onTabQueueClicked() {
+    bool wasAlreadyQueue = (m_stackedPages->currentIndex() == 0);
     m_btnTabQueue->setObjectName("btnTabActive");
     m_btnTabTerminal->setObjectName("btnTabInactive");
     m_btnTabQueue->style()->unpolish(m_btnTabQueue);
@@ -1345,6 +1370,10 @@ void MainWindow::onTabQueueClicked() {
 
     m_stackedPages->setCurrentIndex(0);
     m_btnClearLogs->setVisible(false);
+
+    if (wasAlreadyQueue) {
+        onDownloadAllClicked();
+    }
 }
 
 void MainWindow::onTabTerminalClicked() {
@@ -1396,26 +1425,24 @@ void MainWindow::onClearQueueClicked() {
 }
 
 void MainWindow::onDownloadAllClicked() {
-    bool hasActive = false;
+    int activeCount = 0;
     for (const auto& it : m_queueItems) {
-        if (it.status == "Downloading") {
-            hasActive = true;
-            break;
+        if (it.status == "Downloading") activeCount++;
+    }
+
+    int started = 0;
+    for (size_t i = 0; i < m_queueItems.size(); ++i) {
+        if (activeCount >= MAX_CONCURRENT_DOWNLOADS) break;
+        if (m_queueItems[i].status == "Queued" || m_queueItems[i].status == "Stopped" ||
+            m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
+            m_queueItems[i].status = "Queued";
+            startQueueItem(static_cast<int>(i), m_queueItems[i].options.subtitleOnly);
+            activeCount++;
+            started++;
         }
     }
 
-    if (!hasActive) {
-        for (size_t i = 0; i < m_queueItems.size(); ++i) {
-            if (m_queueItems[i].status == "Queued" || m_queueItems[i].status == "Stopped" ||
-                m_queueItems[i].status == "Failed" || m_queueItems[i].status == "Cancelled") {
-                m_queueItems[i].status = "Queued";
-                startQueueItem(static_cast<int>(i), m_queueItems[i].options.subtitleOnly);
-                break;
-            }
-        }
-    }
-
-    if (!hasActive && m_queueItems.empty()) {
+    if (started == 0 && activeCount == 0 && m_queueItems.empty()) {
         QString inputUrl = m_editUrl ? m_editUrl->toPlainText().trimmed() : "";
         if (!inputUrl.isEmpty()) {
             onStartDownloadClicked();
@@ -1583,20 +1610,24 @@ void MainWindow::startQueueItem(int row, bool subtitleOnly) {
         return; // Already downloading
     }
 
-    // Ensure sequential IDM-grade queueing: if any other item is actively downloading, keep this item Queued
+    // Concurrency guard: allow up to MAX_CONCURRENT_DOWNLOADS active downloads concurrently
+    int activeCount = 0;
     for (size_t i = 0; i < m_queueItems.size(); ++i) {
         if (static_cast<int>(i) != row && m_queueItems[i].status == "Downloading") {
-            item.status = "Queued";
-            if (m_tableQueue && row < m_tableQueue->rowCount()) {
-                if (auto *stItem = m_tableQueue->item(row, 5)) {
-                    stItem->setText("Queued");
-                    stItem->setForeground(QBrush(QColor("#94a3b8")));
-                }
-            }
-            updateQueueStats();
-            handleLogMessage(QString("[Queue] Download #%1 queued (waiting for active download to finish).").arg(row + 1));
-            return;
+            activeCount++;
         }
+    }
+    if (activeCount >= MAX_CONCURRENT_DOWNLOADS) {
+        item.status = "Queued";
+        if (m_tableQueue && row < m_tableQueue->rowCount()) {
+            if (auto *stItem = m_tableQueue->item(row, 5)) {
+                stItem->setText("Queued");
+                stItem->setForeground(QBrush(QColor("#94a3b8")));
+            }
+        }
+        updateQueueStats();
+        handleLogMessage(QString("[Queue] Download #%1 queued (download slots full: %2/%3 active).").arg(row + 1).arg(activeCount).arg(MAX_CONCURRENT_DOWNLOADS));
+        return;
     }
 
     if (item.status == "Paused" && item.engine && item.engine->IsPaused()) {
@@ -2006,20 +2037,24 @@ void MainWindow::handleItemComplete(int row, bool success, const QString& finalP
         handleLogMessage(QString("[Engine] Download #%1 Failed: Stream offline, host unreachable, or no media was produced for %2").arg(row + 1).arg(QString::fromStdString(item.options.saveName)));
     }
 
-    // Auto-advance: automatically start the next queued download in the queue
-    bool hasActive = false;
+    // Auto-advance: automatically start next queued download(s) up to MAX_CONCURRENT_DOWNLOADS
+    int activeCount = 0;
     for (const auto& it : m_queueItems) {
-        if (it.status == "Downloading") {
-            hasActive = true;
-            break;
-        }
+        if (it.status == "Downloading") activeCount++;
     }
-    if (!hasActive) {
+    while (activeCount < MAX_CONCURRENT_DOWNLOADS) {
+        int nextToStart = -1;
         for (size_t i = 0; i < m_queueItems.size(); ++i) {
             if (m_queueItems[i].status == "Queued") {
-                startQueueItem(static_cast<int>(i), m_queueItems[i].options.subtitleOnly);
+                nextToStart = static_cast<int>(i);
                 break;
             }
+        }
+        if (nextToStart >= 0) {
+            startQueueItem(nextToStart, m_queueItems[nextToStart].options.subtitleOnly);
+            activeCount++;
+        } else {
+            break;
         }
     }
 }
