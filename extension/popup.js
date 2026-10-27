@@ -356,13 +356,28 @@ function copyLink(url) {
 }
 
 function sendToDesktop(item, btn) {
-  const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
-  const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
-  const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
+  let absoluteUrl = item.url;
+  try {
+    if (absoluteUrl.startsWith('/') || !absoluteUrl.includes('://')) {
+      absoluteUrl = new URL(item.url, currentTabUrl || item.referer || 'https://net77.cc').href;
+    }
+  } catch (e) {}
+
+  let curlCmd = item.curl || `curl "${absoluteUrl}"`;
+  if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
+    try {
+      const origin = new URL(currentTabUrl || item.referer || absoluteUrl).origin;
+      curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
+    } catch (e) {}
+  }
+
+  const nid = item.netflixId || extractNetflixId(absoluteUrl) || extractNetflixId(currentTabUrl);
+  const imdbId = item.imdbId || extractImdbId(absoluteUrl) || extractImdbId(currentTabUrl);
+  const tmdbId = item.tmdbId || extractTmdbId(absoluteUrl) || extractTmdbId(currentTabUrl);
   const payload = {
-    url: item.url,
-    title: fileLabel(item.url),
-    curl: item.curl || `curl "${item.url}"`,
+    url: absoluteUrl,
+    title: fileLabel(absoluteUrl),
+    curl: curlCmd,
     referer: item.referer || currentTabUrl,
     origin: item.origin || '',
     userAgent: item.userAgent || navigator.userAgent,
@@ -397,13 +412,28 @@ function sendToDesktop(item, btn) {
 }
 
 function sendSubtitlesToDesktop(item, btn) {
-  const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
-  const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
-  const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
+  let absoluteUrl = item.url;
+  try {
+    if (absoluteUrl.startsWith('/') || !absoluteUrl.includes('://')) {
+      absoluteUrl = new URL(item.url, currentTabUrl || item.referer || 'https://net77.cc').href;
+    }
+  } catch (e) {}
+
+  let curlCmd = item.curl || `curl "${absoluteUrl}"`;
+  if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
+    try {
+      const origin = new URL(currentTabUrl || item.referer || absoluteUrl).origin;
+      curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
+    } catch (e) {}
+  }
+
+  const nid = item.netflixId || extractNetflixId(absoluteUrl) || extractNetflixId(currentTabUrl);
+  const imdbId = item.imdbId || extractImdbId(absoluteUrl) || extractImdbId(currentTabUrl);
+  const tmdbId = item.tmdbId || extractTmdbId(absoluteUrl) || extractTmdbId(currentTabUrl);
   const payload = {
-    url: item.url,
-    title: fileLabel(item.url),
-    curl: item.curl || `curl "${item.url}"`,
+    url: absoluteUrl,
+    title: fileLabel(absoluteUrl),
+    curl: curlCmd,
     referer: item.referer || currentTabUrl,
     origin: item.origin || '',
     userAgent: item.userAgent || navigator.userAgent,

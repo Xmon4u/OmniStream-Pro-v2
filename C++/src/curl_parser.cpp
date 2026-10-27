@@ -62,11 +62,28 @@ StreamInfo CurlParser::Parse(const std::string& rawInput) {
     bool isCurl = (cleaned.find("curl ") != std::string::npos || cleaned.find("curl.exe") != std::string::npos);
 
     if (isCurl) {
-        // 1. Extract URL: --url "..." or standard curl argument
-        std::regex urlRegex(R"((?:--url|-u)?\s*["']?(https?://[^\s"'\\]+)["']?)", std::regex::icase);
+        // 1. Explicit --url argument: --url "..."
+        std::regex explicitUrlRegex(R"(--url\s+["']?([^\s"'\\]+)["']?)", std::regex::icase);
         std::smatch urlMatch;
-        if (std::regex_search(cleaned, urlMatch, urlRegex)) {
+        if (std::regex_search(cleaned, urlMatch, explicitUrlRegex)) {
             info.url = urlMatch[1].str();
+        } else {
+            // Positional URL argument after curl (excluding option flags like -s, -H "...")
+            std::regex posUrlRegex(R"(curl(?:\.exe)?(?:\s+(?:--?[a-zA-Z0-9_\-]+(?:\s+["'][^"']*["']|\s+[^\s"'\\]+)?))*\s+["']?([^\s"'\\]+)["']?)", std::regex::icase);
+            if (std::regex_search(cleaned, urlMatch, posUrlRegex)) {
+                std::string cand = urlMatch[1].str();
+                if (!cand.empty() && cand[0] != '-') {
+                    info.url = cand;
+                }
+            }
+            // Fallback: match first URL or relative path from command after stripping -H headers
+            if (info.url.empty()) {
+                std::string noHeaders = std::regex_replace(cleaned, std::regex(R"(-H\s+["'][^"']*["'])", std::regex::icase), "");
+                std::regex candRegex(R"(["']?(https?://[^\s"'\\]+|\/[^\s"'\\]+)["']?)");
+                if (std::regex_search(noHeaders, urlMatch, candRegex)) {
+                    info.url = urlMatch[1].str();
+                }
+            }
         }
 
         // 2. Extract Headers: -H "Key: Value" or -H 'Key: Value'
@@ -101,11 +118,41 @@ StreamInfo CurlParser::Parse(const std::string& rawInput) {
             }
         }
     } else {
-        // Plain URL passed
+        // Plain URL passed (supports absolute and relative URLs)
         std::regex urlRegex(R"(https?://[^\s"']+)");
         std::smatch urlMatch;
         if (std::regex_search(rawInput, urlMatch, urlRegex)) {
             info.url = urlMatch[0].str();
+        } else {
+            std::regex relUrlRegex(R"(\/[^\s"']+)");
+            if (std::regex_search(rawInput, urlMatch, relUrlRegex)) {
+                info.url = urlMatch[0].str();
+            }
+        }
+    }
+
+    auto refIt = info.headers.find("referer");
+    auto origIt = info.headers.find("origin");
+
+    // If info.url is relative, resolve it using referer or origin
+    if (!info.url.empty() && (info.url.rfind("/", 0) == 0 || info.url.find("://") == std::string::npos)) {
+        std::string baseHost;
+        if (origIt != info.headers.end() && !origIt->second.empty()) {
+            baseHost = ExtractOrigin(origIt->second);
+        }
+        if (baseHost.empty() && refIt != info.headers.end() && !refIt->second.empty()) {
+            baseHost = ExtractOrigin(refIt->second);
+        }
+        // Fallback: search for any https?:// in cleaned or rawInput
+        if (baseHost.empty()) {
+            std::regex hostFinder(R"(https?://[a-zA-Z0-9.\-]+(?::\d+)?)", std::regex::icase);
+            std::smatch mH;
+            if (std::regex_search(cleaned, mH, hostFinder)) {
+                baseHost = mH[0].str();
+            }
+        }
+        if (!baseHost.empty()) {
+            info.url = ResolveUrl(baseHost, info.url);
         }
     }
 
@@ -113,10 +160,7 @@ StreamInfo CurlParser::Parse(const std::string& rawInput) {
     std::string originFromUrl = ExtractOrigin(info.url);
     std::string defaultReferer = originFromUrl.empty() ? "" : (originFromUrl + "/");
 
-    auto refIt = info.headers.find("referer");
     info.referer = (refIt != info.headers.end()) ? refIt->second : defaultReferer;
-
-    auto origIt = info.headers.find("origin");
     info.origin = (origIt != info.headers.end()) ? origIt->second : originFromUrl;
 
     auto uaIt = info.headers.find("user-agent");

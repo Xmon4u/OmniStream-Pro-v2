@@ -465,13 +465,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!tabMediaMap.has(tabId)) tabMediaMap.set(tabId, []);
       const mediaList = tabMediaMap.get(tabId);
 
-      if (!isDuplicate(mediaList, url)) {
-        const tabUrl = sender.tab ? sender.tab.url : '';
+      const tabUrl = sender.tab ? sender.tab.url : '';
+      let absUrl = url;
+      try {
+        if (absUrl.startsWith('/') || !absUrl.includes('://')) {
+          absUrl = new URL(url, tabUrl || 'https://net77.cc').href;
+        }
+      } catch (e) {}
+
+      if (!isDuplicate(mediaList, absUrl)) {
         const mediaItem = {
           id: 'stream_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-          url,
-          type: detectType(url),
-          curl: `curl "${url}" \\\n  -H "Referer: ${tabUrl}"`,
+          url: absUrl,
+          type: detectType(absUrl),
+          curl: `curl "${absUrl}" \\\n  -H "Referer: ${tabUrl}"`,
           title: message.title || (sender.tab ? sender.tab.title : ''),
           domain: tabUrl ? new URL(tabUrl).hostname : '',
           isGodMode: true,

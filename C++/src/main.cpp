@@ -38,11 +38,20 @@ int RunSelfTest() {
     test("cURL Referer extracted", parsed.referer == "https://myreferer.com/");
     test("cURL Cookie extracted", parsed.cookie == "token=xyz");
 
+    // Test relative cURL auto-resolution with Referer (e.g. net77.cc player streams)
+    std::string relCurl = R"(curl "/hls/80166369.m3u8?in=2313b603d8" \ -H "Referer: https://net77.cc/movies")";
+    StreamInfo parsedRel = CurlParser::Parse(relCurl);
+    test("Relative cURL URL auto-resolved with Referer", parsedRel.url == "https://net77.cc/hls/80166369.m3u8?in=2313b603d8");
+
     // 2. Dynamic Origin & Referer Fallback
     std::string directUrl = "https://cdn.videohost.org/video_1080p/master.m3u8";
     StreamInfo autoOrigin = CurlParser::Parse(directUrl);
     test("Dynamic Origin derived", autoOrigin.origin == "https://cdn.videohost.org");
     test("Dynamic Referer derived", autoOrigin.referer == "https://cdn.videohost.org/");
+
+    // Official TMDB API Lookup Verification
+    std::string tmdbById = NetflixResolver::ResolveOnlineTmdbId("tt0111161");
+    test("TMDB API resolved Shawshank Redemption by IMDb ID -> 278", tmdbById == "278");
 
     // 3. AES-128 BCrypt Decryption Round-Trip
     std::vector<uint8_t> testKey = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,

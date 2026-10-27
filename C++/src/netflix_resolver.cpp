@@ -630,12 +630,79 @@ std::string NetflixResolver::ResolveOnlineImdbId(const std::string& title, const
 }
 
 std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, const std::string& title, const std::string& year) {
-    // Source 1: Wikidata SPARQL mapping from IMDb ID (P345) to TMDB Movie (P4947) or TV (P4983)
+    static const std::string TMDB_API_KEY = "aa570acb787a4d697216a583cd692c73";
+    static const std::string TMDB_BEARER = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJHYTU3MGFjYjc4N2E0ZDY5NzIxNmE1ODNjZDY5MmM3MyIsIm5iZiI6MTc5MzEwOTE4MC400Tc5OTk4LCJzdWIiOiI2YWUwYWNiY2I4OWVhYjQzMjNlNmVhZTMxMjY2M2MxM2I0YmE0Iiwic2NvcGVzIjpbImFwaV9yZWFkIl0sInZlc2lvbiI6MX0.GsMQzH2k4oUGZVyTccZoMsXThbVGtmczr4GugONwqfk";
+
+    // ── Primary Source: Official TMDB API v3 ──────────────────────────────────
+    // A. Query TMDB by IMDb ID (/find/{imdb_id})
+    if (!imdbId.empty() && imdbId.rfind("tt", 0) == 0) {
+        std::string tmdbUrl = "https://api.themoviedb.org/3/find/" + imdbId + "?api_key=" + TMDB_API_KEY + "&external_source=imdb_id";
+        std::string cmd = "curl.exe -s -L --max-time 3 -H \"Authorization: Bearer " + TMDB_BEARER + "\" -H \"Accept: application/json\" \"" + tmdbUrl + "\"";
+        FILE* pipe = _popen(cmd.c_str(), "rb");
+        if (pipe) {
+            std::string result;
+            char buf[8192];
+            while (size_t bytes = fread(buf, 1, sizeof(buf), pipe)) {
+                result.append(buf, bytes);
+            }
+            _pclose(pipe);
+
+            std::smatch m;
+            std::regex regMovie(R"("movie_results"\s*:\s*\[\s*\{[^}]*?"id"\s*:\s*(\d+))");
+            if (std::regex_search(result, m, regMovie)) {
+                return m[1].str();
+            }
+            std::regex regTv(R"("tv_results"\s*:\s*\[\s*\{[^}]*?"id"\s*:\s*(\d+))");
+            if (std::regex_search(result, m, regTv)) {
+                return m[1].str();
+            }
+            std::regex regEp(R"("tv_episode_results"\s*:\s*\[\s*\{[^}]*?"id"\s*:\s*(\d+))");
+            if (std::regex_search(result, m, regEp)) {
+                return m[1].str();
+            }
+        }
+    }
+
+    // B. Query TMDB by Title (/search/multi)
+    if (!title.empty()) {
+        std::string clean = title;
+        std::regex regParen(R"(\s*\([^)]*\))");
+        clean = std::regex_replace(clean, regParen, "");
+        std::regex regEp(R"(\s*S\d{1,2}E\d{1,2}.*)", std::regex::icase);
+        clean = std::regex_replace(clean, regEp, "");
+        clean.erase(0, clean.find_first_not_of(" -:_"));
+        clean.erase(clean.find_last_not_of(" -:_") + 1);
+
+        if (!clean.empty()) {
+            std::string q = UrlEncodeSlug(clean);
+            std::string tmdbUrl = "https://api.themoviedb.org/3/search/multi?api_key=" + TMDB_API_KEY + "&query=" + q;
+            if (!year.empty()) {
+                tmdbUrl += "&year=" + year;
+            }
+            std::string cmd = "curl.exe -s -L --max-time 3 -H \"Authorization: Bearer " + TMDB_BEARER + "\" -H \"Accept: application/json\" \"" + tmdbUrl + "\"";
+            FILE* pipe = _popen(cmd.c_str(), "rb");
+            if (pipe) {
+                std::string result;
+                char buf[8192];
+                while (size_t bytes = fread(buf, 1, sizeof(buf), pipe)) {
+                    result.append(buf, bytes);
+                }
+                _pclose(pipe);
+
+                std::smatch m;
+                std::regex regRes(R"("results"\s*:\s*\[\s*\{[^}]*?"id"\s*:\s*(\d+))");
+                if (std::regex_search(result, m, regRes)) {
+                    return m[1].str();
+                }
+            }
+        }
+    }
+
+    // ── Fallback 1: Wikidata SPARQL mapping from IMDb ID (P345) to TMDB ──────
     if (!imdbId.empty() && imdbId.rfind("tt", 0) == 0) {
         std::string query = "SELECT ?tmdb WHERE { ?item wdt:P345 \"" + imdbId + "\" . { ?item wdt:P4947 ?tmdb } UNION { ?item wdt:P4983 ?tmdb } }";
         std::string url = "https://query.wikidata.org/sparql?query=" + UrlEncodeSlug(query) + "&format=json";
         
-        // Use curl.exe with 4-second timeout for fast response
         std::string cmd = "curl.exe -s -L --max-time 4 -H \"Accept: application/json\" -H \"User-Agent: OmniStreamPro/2.6\" \"" + url + "\"";
         FILE* pipe = _popen(cmd.c_str(), "rb");
         if (pipe) {
@@ -654,7 +721,7 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
         }
     }
 
-    // Source 2: Wikipedia pageprops -> Wikidata claims fallback
+    // ── Fallback 2: Wikipedia pageprops -> Wikidata claims ───────────────────
     if (!title.empty()) {
         std::string clean = title;
         std::regex regParen(R"(\s*\([^)]*\))");
@@ -671,7 +738,6 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
             std::smatch mQ;
             if (std::regex_search(wpContent, mQ, qReg)) {
                 std::string qId = mQ[1].str();
-                // Query claims for Movie ID P4947
                 std::string claimMovie = "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=" + qId + "&property=P4947&format=json";
                 std::string cmContent = FetchUrlContent(claimMovie, "OmniStreamPro/2.6");
                 std::regex regVal("\"value\"\\s*:\\s*\"(\\d+)\"");
@@ -679,7 +745,6 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
                 if (std::regex_search(cmContent, mV, regVal)) {
                     return mV[1].str();
                 }
-                // Query claims for TV series ID P4983
                 std::string claimTv = "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=" + qId + "&property=P4983&format=json";
                 std::string ctContent = FetchUrlContent(claimTv, "OmniStreamPro/2.6");
                 if (std::regex_search(ctContent, mV, regVal)) {
@@ -689,7 +754,7 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
         }
     }
 
-    // Source 3: DuckDuckGo search fallback
+    // ── Fallback 3: DuckDuckGo HTML Search ──────────────────────────────────
     if (!title.empty()) {
         std::string clean = title;
         std::regex regParen(R"(\s*\([^)]*\))");
@@ -700,13 +765,18 @@ std::string NetflixResolver::ResolveOnlineTmdbId(const std::string& imdbId, cons
         clean.erase(clean.find_last_not_of(" -:_") + 1);
 
         if (!clean.empty()) {
-            std::string url = "https://lite.duckduckgo.com/lite/";
             std::string q = "\"" + clean + "\" " + year + " site:themoviedb.org";
-            std::string postData = "q=" + UrlEncodeSlug(q);
-            HttpClient client("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-            HttpResponse res = client.Post(url, postData, "application/x-www-form-urlencoded");
-            if (res.IsSuccess()) {
-                std::string body = res.Text();
+            std::string ddgUrl = "https://html.duckduckgo.com/html/?q=" + UrlEncodeSlug(q);
+            std::string cmd = "curl.exe -s -L --max-time 3 -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64)\" \"" + ddgUrl + "\"";
+            FILE* pipe = _popen(cmd.c_str(), "rb");
+            if (pipe) {
+                std::string body;
+                char buf[8192];
+                while (size_t bytes = fread(buf, 1, sizeof(buf), pipe)) {
+                    body.append(buf, bytes);
+                }
+                _pclose(pipe);
+
                 std::regex regTmdb(R"(themoviedb\.org\/(?:movie|tv)\/(\d+))", std::regex::icase);
                 std::smatch m;
                 if (std::regex_search(body, m, regTmdb)) {
