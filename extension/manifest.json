@@ -29,8 +29,7 @@
     "scripting",
     "clipboardWrite",
     "notifications",
-    "alarms",
-    "tabs"
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>",
@@ -50,7 +49,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["godmode.js"],
+      "resources": ["godmode.js", "bridge_token.json"],
       "matches": ["<all_urls>"]
     }
   ]

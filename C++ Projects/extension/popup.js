@@ -1,0 +1,1324 @@
+let currentTabId = null;
+let currentTabUrl = '';
+let detectedStreams = [];
+let scanPollTimer = null;
+let bridgePollTimer = null;
+let currentFilterMode = 'all'; // 'all' | 'multi'
+
+const $ = (id) => document.getElementById(id);
+const currentDomainEl = $('currentDomain');
+const bridgeStatusEl = $('bridgeStatus');
+const detectedListEl = $('detectedList');
+const godScanBtn = $('godScanBtn');
+const godScanLabel = $('godScanLabel');
+const toastEl = $('toast');
+const modeNormalBtn = $('modeNormalBtn');
+const modeNetflixBtn = $('modeNetflixBtn');
+const modeTitleOnlyBtn = $('modeTitleOnlyBtn');
+const modeImdbBtn = $('modeImdbBtn');
+const modeTmdbBtn = $('modeTmdbBtn');
+const modeTitleIdBtn = $('modeTitleIdBtn');
+const modeSubMergeBtn = $('modeSubMergeBtn');
+const modeAutoBtn = $('modeAutoBtn');
+const playerSectionEl = $('playerSection');
+const autoPanelEl = $('autoPanel');
+const autoTargetUrlEl = $('autoTargetUrl');
+const autoScanBtn = $('autoScanBtn');
+const autoScanLabel = $('autoScanLabel');
+const autoCountBadgeEl = $('autoCountBadge');
+const exportExcelBtn = $('exportExcelBtn');
+const sendBatchToDesktopBtn = $('sendBatchToDesktopBtn');
+const autoMovieListEl = $('autoMovieList');
+let detectedAutoMovies = [];
+const filterAllBtn = $('filterAllBtn');
+const filterMultiBtn = $('filterMultiBtn');
+const batchDownloadBtn = $('batchDownloadBtn');
+const clearRefreshBtn = $('clearRefreshBtn');
+const clearRefreshLabel = $('clearRefreshLabel');
+const clearOnlyBtn = $('clearOnlyBtn');
+const themeSelectorEl = $('themeSelector');
+let currentDownloadMode = 'normal';
+let currentTheme = 'cyber';
+let lastUserModeChangeTime = 0;
+
+function setTheme(theme, save = true) {
+  const safeTheme = (theme === 'black' || String(theme).toLowerCase().includes('black')) ? 'black' : 'cyber';
+  currentTheme = safeTheme;
+  document.body.classList.remove('theme-cyber', 'theme-black');
+  document.body.classList.add(`theme-${safeTheme}`);
+  if (themeSelectorEl) {
+    themeSelectorEl.value = safeTheme;
+  }
+  if (save) {
+    chrome.storage.local.set({ omni_theme: safeTheme });
+    const label = safeTheme === 'black' ? 'Midnight Black Theme' : 'Cyber Slate Theme';
+    showToast(label);
+    chrome.runtime.sendMessage({
+      action: 'SET_DESKTOP_THEME',
+      theme: safeTheme === 'black' ? 'Midnight Black' : 'Cyber Slate'
+    }, () => { void chrome.runtime.lastError; });
+  }
+}
+
+function setFilterMode(mode, save = true, syncToDesktop = true) {
+  currentFilterMode = (mode === 'multi') ? 'multi' : 'all';
+  if (filterAllBtn) filterAllBtn.classList.toggle('active', currentFilterMode === 'all');
+  if (filterMultiBtn) filterMultiBtn.classList.toggle('active', currentFilterMode === 'multi');
+  if (save) {
+    chrome.storage.local.set({ omni_filter_mode: currentFilterMode });
+    showToast(currentFilterMode === 'multi' ? 'Only Multi-Audio Streams' : 'All Videos Mode');
+  }
+  if (syncToDesktop) {
+    chrome.runtime.sendMessage({
+      action: 'SET_DESKTOP_FILTER',
+      filter: currentFilterMode
+    }, () => { void chrome.runtime.lastError; });
+  }
+  renderDetected();
+}
+
+const downloadIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
+const subIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 10h4"/><path d="M6 14h8"/><path d="M14 10h4"/></svg>';
+const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+const playIcon = '<svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M9 7.5v9l8-4.5-8-4.5z"/></svg>';
+
+let toastTimer = null;
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fileLabel(url) {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    let label = decodeURIComponent(parts[parts.length - 1] || 'player');
+    label = label.replace(/\.(m3u8|mpd|mp4|webm|mkv|m4s)(\?.*)?$/i, '');
+    return label || 'player';
+  } catch (e) {
+    return 'player';
+  }
+}
+
+function kindLabel(item) {
+  const mime = String((item && item.mime) || '').toLowerCase();
+  const lo = String((item && (item.type || item.url)) || '').toLowerCase();
+  if (lo.includes('m3u8') || mime.includes('mpegurl') || lo.includes('hls')) return 'HLS';
+  if (lo.includes('mpd') || mime.includes('dash') || lo.includes('dash')) return 'DASH';
+  if (lo.includes('mp4') || mime.includes('mp4')) return 'MP4';
+  if (lo.includes('webm') || mime.includes('webm')) return 'WEBM';
+  if (lo.includes('mkv') || mime.includes('matroska')) return 'MKV';
+  return 'Stream';
+}
+
+function getAudioLanguages(item, allStreams = []) {
+  if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0) {
+    return item.audioLanguages;
+  }
+  try {
+    const parentKey = (item.url || '').split('?')[0].replace(/\/(player|video|\d+p?|master)\.(m3u8|mpd)/i, '');
+    const companionAudios = allStreams.filter((s) => {
+      const u = s.url || '';
+      return /\/(a|aud|audio)\/\d+\//i.test(u) && (!parentKey || u.includes(parentKey));
+    });
+    if (companionAudios.length >= 2) {
+      const tracks = companionAudios.map((a, idx) => {
+        const m = a.url.match(/\/a\/(\d+)\//);
+        return m ? `Track ${m[1]}` : `Audio ${idx + 1}`;
+      });
+      return [...new Set(tracks)];
+    }
+  } catch (e) {}
+  return [];
+}
+
+function audioLabel(item, langsList = []) {
+  const langs = (langsList && langsList.length) ? langsList : (item.audioLanguages || []);
+  if (langs.length >= 2) return `${langs.length} audio`;
+  if (langs.length === 1) return '1 audio';
+  return item.isGodMode ? 'god scan' : 'player';
+}
+
+function normalizeMode(mode) {
+  if (!mode) return 'normal';
+  const m = String(mode).toLowerCase().replace('✓', '').trim();
+  if (m.includes('auto')) return 'auto';
+  if (m.includes('netflix')) return 'netflix_rename';
+  if (m.includes('title_only') || m === 'title') return 'title_only';
+  if (m.includes('imdb')) return 'imdb';
+  if (m.includes('tmdb')) return 'tmdb';
+  if (m.includes('title_id') || m === 'title + id' || m === 't+id') return 'title_id';
+  if (m.includes('sub') || m.includes('merge')) return 'sub_merge';
+  return 'normal';
+}
+
+function setMode(mode, save = true) {
+  currentDownloadMode = normalizeMode(mode);
+  if (modeNormalBtn) modeNormalBtn.classList.toggle('active', currentDownloadMode === 'normal');
+  if (modeNetflixBtn) modeNetflixBtn.classList.toggle('active', currentDownloadMode === 'netflix_rename');
+  if (modeTitleOnlyBtn) modeTitleOnlyBtn.classList.toggle('active', currentDownloadMode === 'title_only');
+  if (modeImdbBtn) modeImdbBtn.classList.toggle('active', currentDownloadMode === 'imdb');
+  if (modeTmdbBtn) modeTmdbBtn.classList.toggle('active', currentDownloadMode === 'tmdb');
+  if (modeTitleIdBtn) modeTitleIdBtn.classList.toggle('active', currentDownloadMode === 'title_id');
+  if (modeSubMergeBtn) modeSubMergeBtn.classList.toggle('active', currentDownloadMode === 'sub_merge');
+  if (modeAutoBtn) modeAutoBtn.classList.toggle('active', currentDownloadMode === 'auto');
+
+  if (currentDownloadMode === 'auto') {
+    if (playerSectionEl) playerSectionEl.style.display = 'none';
+    if (autoPanelEl) autoPanelEl.style.display = 'flex';
+    if (autoTargetUrlEl && !autoTargetUrlEl.value) {
+      autoTargetUrlEl.value = currentTabUrl;
+    }
+    if (!detectedAutoMovies.length) {
+      scanActiveTabMovies();
+    }
+  } else {
+    if (playerSectionEl) playerSectionEl.style.display = 'block';
+    if (autoPanelEl) autoPanelEl.style.display = 'none';
+  }
+
+  if (save) {
+    lastUserModeChangeTime = Date.now();
+    chrome.storage.local.set({ omni_download_mode: currentDownloadMode });
+    let label = 'Normal Mode';
+    if (currentDownloadMode === 'netflix_rename') label = 'Netflix Mode: Auto-renames from Netflix ID';
+    else if (currentDownloadMode === 'title_only') label = 'Title Only Mode: Movie (Year).mkv';
+    else if (currentDownloadMode === 'imdb') label = 'IMDb Mode: tt1234567.mkv';
+    else if (currentDownloadMode === 'tmdb') label = 'TMDB Mode: 8273726.mkv';
+    else if (currentDownloadMode === 'title_id') label = 'Title + ID Mode: Movie (Year) [ID].mkv';
+    else if (currentDownloadMode === 'sub_merge') label = 'Sub Merge Mode (MKV)';
+    else if (currentDownloadMode === 'auto') label = 'Auto Mode: Movie Scanner & Sequential Queue';
+    showToast(label);
+    chrome.runtime.sendMessage({
+      action: 'SET_DESKTOP_MODE',
+      mode: currentDownloadMode
+    }, () => { void chrome.runtime.lastError; });
+    renderDetected();
+  }
+}
+
+function extractNetflixId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i);
+  if (m) return m[1];
+  const m2 = url.match(/(?:movieid|titleid|netflix_id)[=:_\-](\d{6,10})/i);
+  if (m2) return m2[1];
+  const mNetmirror = url.match(/(?:watch|title|movie|series)\/(\d{6,10})/i);
+  if (mNetmirror) return mNetmirror[1];
+  const m3 = url.match(/\b(\d{7,9})\b/);
+  if (m3) return m3[1];
+  return null;
+}
+
+function extractImdbId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/\b(tt\d{7,10})\b/i);
+  if (m) return m[1].toLowerCase();
+  return null;
+}
+
+function extractTmdbId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+  if (m) return m[1];
+  const m2 = url.match(/(?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+)/i);
+  if (m2) return m2[1];
+  return null;
+}
+
+async function init() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  currentTabId = tab.id;
+  currentTabUrl = tab.url || '';
+  try {
+    currentDomainEl.textContent = new URL(currentTabUrl).hostname;
+  } catch (e) {
+    currentDomainEl.textContent = 'This tab';
+  }
+
+  chrome.storage.local.get(['omni_download_mode', 'omni_theme', 'omni_filter_mode'], (res) => {
+    if (res && res.omni_download_mode) {
+      setMode(res.omni_download_mode, false);
+    }
+    if (res && res.omni_theme) {
+      setTheme(res.omni_theme, false);
+    } else {
+      setTheme('cyber', false);
+    }
+    if (res && res.omni_filter_mode) {
+      setFilterMode(res.omni_filter_mode, false, false);
+    }
+  });
+
+  if (themeSelectorEl) {
+    themeSelectorEl.onchange = (e) => setTheme(e.target.value, true);
+  }
+
+  if (modeNormalBtn) modeNormalBtn.onclick = () => setMode('normal', true);
+  if (modeNetflixBtn) modeNetflixBtn.onclick = () => setMode('netflix_rename', true);
+  if (modeTitleOnlyBtn) modeTitleOnlyBtn.onclick = () => setMode('title_only', true);
+  if (modeImdbBtn) modeImdbBtn.onclick = () => setMode('imdb', true);
+  if (modeTmdbBtn) modeTmdbBtn.onclick = () => setMode('tmdb', true);
+  if (modeTitleIdBtn) modeTitleIdBtn.onclick = () => setMode('title_id', true);
+  if (modeSubMergeBtn) modeSubMergeBtn.onclick = () => setMode('sub_merge', true);
+  if (modeAutoBtn) modeAutoBtn.onclick = () => setMode('auto', true);
+
+  if (autoScanBtn) autoScanBtn.onclick = () => scanActiveTabMovies();
+  if (autoTargetUrlEl) {
+    autoTargetUrlEl.onkeydown = (e) => {
+      if (e.key === 'Enter') scanActiveTabMovies();
+    };
+  }
+  if (exportExcelBtn) exportExcelBtn.onclick = exportAutoMoviesToExcel;
+  if (sendBatchToDesktopBtn) sendBatchToDesktopBtn.onclick = sendAutoMoviesToDesktop;
+
+  if (filterAllBtn) filterAllBtn.onclick = () => setFilterMode('all', true, true);
+  if (filterMultiBtn) filterMultiBtn.onclick = () => setFilterMode('multi', true, true);
+
+  if (batchDownloadBtn) batchDownloadBtn.onclick = sendAllToDesktop;
+  if (clearRefreshBtn) clearRefreshBtn.onclick = clearAndRefreshTab;
+  if (clearOnlyBtn) clearOnlyBtn.onclick = clearOnlyStreams;
+
+  if (autoTargetUrlEl && currentTabUrl && (!autoTargetUrlEl.value || autoTargetUrlEl.value.startsWith('http'))) {
+    autoTargetUrlEl.value = currentTabUrl;
+  }
+  updateAutoButtonsState();
+
+  runGodScan(false);
+  checkBridge();
+  clearInterval(bridgePollTimer);
+  bridgePollTimer = setInterval(checkBridge, 2000);
+}
+
+function runGodScan(showFeedback) {
+  if (!currentTabId || godScanBtn.classList.contains('scanning')) return;
+  godScanBtn.classList.add('scanning');
+  godScanLabel.textContent = 'Scanning...';
+  chrome.scripting.executeScript({
+    target: { tabId: currentTabId, allFrames: true },
+    func: () => {
+      window.postMessage({ target: 'OMNISTREAM_GODMODE_INJECT', action: 'FORCE_SCAN' }, '*');
+    }
+  }).catch(() => {
+    chrome.tabs.sendMessage(currentTabId, { action: 'TRIGGER_GOD_MODE_SCAN' }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+  let tries = 0;
+  clearInterval(scanPollTimer);
+  scanPollTimer = setInterval(() => {
+    loadDetectedStreams();
+    tries += 1;
+    if (tries >= 8) {
+      clearInterval(scanPollTimer);
+      godScanBtn.classList.remove('scanning');
+      godScanLabel.textContent = 'God Mode scan';
+      if (showFeedback) showToast('God Mode scan finished');
+    }
+  }, 500);
+  setTimeout(loadDetectedStreams, 250);
+}
+
+function loadDetectedStreams() {
+  if (!currentTabId) return;
+  chrome.runtime.sendMessage({ action: 'GET_TAB_MEDIA', tabId: currentTabId }, (res) => {
+    if (chrome.runtime.lastError) return; // Service worker asleep or extension reloaded
+    if (res && res.success) {
+      detectedStreams = res.list || [];
+      renderDetected();
+    }
+  });
+}
+
+let desktopQueueMap = new Map();
+
+function computeMovieUniqueId(m) {
+  if (!m) return '';
+  let candUrl = (m.page_url || m.url || '').trim();
+  if (candUrl.toLowerCase().includes('curl')) {
+    const refMatch = candUrl.match(/-H\s+['"](?:Referer|referer):\s*([^\s'"\\]+)/i);
+    if (refMatch) {
+      candUrl = refMatch[1].trim();
+    } else {
+      const urlMatch = candUrl.match(/https?:\/\/[^\s'"\\]+/i);
+      if (urlMatch) candUrl = urlMatch[0];
+    }
+  }
+
+  if (candUrl && /^https?:\/\//i.test(candUrl)) {
+    try {
+      const u = new URL(candUrl);
+      const host = u.hostname.toLowerCase().replace(/^www\./, '');
+      const path = u.pathname.replace(/\/+$/, '').toLowerCase();
+      if (/\.(m3u8|mpd|mp4|mkv|webm|m4s)$/i.test(path)) {
+        return `stream:${host}${path}`;
+      } else if (path && path !== '/') {
+        return `page:${host}${path}`;
+      }
+    } catch (e) {}
+  }
+
+  let cleanT = (m.title || '').toLowerCase();
+  cleanT = cleanT.replace(/\b(?:download|full\s*movie|watch\s*online|hindi\s*dubbed|dual\s*audio|hd\s*rip|web\s*rip|720p|1080p|480p|prmovies|free\s*movies|tv\s*shows\s*online)\b/gi, ' ');
+  cleanT = cleanT.replace(/[^a-z0-9]/g, '');
+  const year = (m.year || '').toString().trim();
+  if (year && !cleanT.includes(year)) {
+    cleanT = `${cleanT}${year}`;
+  }
+  if (cleanT) {
+    return `title:${cleanT}`;
+  }
+  return '';
+}
+
+function getMovieQueueStatus(m) {
+  if (!m) return null;
+  const uId = computeMovieUniqueId(m);
+  if (uId && desktopQueueMap.has(uId)) {
+    return desktopQueueMap.get(uId);
+  }
+  let pageUrl = (m.page_url || m.url || '').trim();
+  if (pageUrl) {
+    try {
+      const u = new URL(pageUrl);
+      const host = u.hostname.toLowerCase().replace(/^www\./, '');
+      const path = u.pathname.replace(/\/+$/, '').toLowerCase();
+      if (desktopQueueMap.has(`page:${host}${path}`)) {
+        return desktopQueueMap.get(`page:${host}${path}`);
+      }
+      if (path && path !== '/' && desktopQueueMap.has(`slug:${path}`)) {
+        return desktopQueueMap.get(`slug:${path}`);
+      }
+    } catch (e) {}
+  }
+  let cleanT = (m.title || '').toLowerCase();
+  cleanT = cleanT.replace(/\b(?:download|full\s*movie|watch\s*online|hindi\s*dubbed|dual\s*audio|hd\s*rip|web\s*rip|720p|1080p|480p|prmovies|free\s*movies|tv\s*shows\s*online)\b/gi, ' ');
+  cleanT = cleanT.replace(/[^a-z0-9]/g, '');
+  if (cleanT && desktopQueueMap.has(`title:${cleanT}`)) {
+    return desktopQueueMap.get(`title:${cleanT}`);
+  }
+  return null;
+}
+
+function syncDesktopQueue(callback) {
+  chrome.runtime.sendMessage({ action: 'GET_DESKTOP_QUEUE' }, (res) => {
+    if (chrome.runtime.lastError) {
+      if (callback) callback(false);
+      return;
+    }
+    if (res && res.success && Array.isArray(res.queue)) {
+      desktopQueueMap.clear();
+      res.queue.forEach(item => {
+        const uId = item.unique_id || '';
+        if (uId) desktopQueueMap.set(uId, item);
+        const pageUrl = (item.page_url || '').trim();
+        if (pageUrl && /^https?:\/\//i.test(pageUrl)) {
+          try {
+            const u = new URL(pageUrl);
+            const host = u.hostname.toLowerCase().replace(/^www\./, '');
+            const path = u.pathname.replace(/\/+$/, '').toLowerCase();
+            desktopQueueMap.set(`page:${host}${path}`, item);
+            if (path && path !== '/') {
+              desktopQueueMap.set(`slug:${path}`, item);
+            }
+          } catch (e) {}
+        }
+        let cleanT = (item.title || '').toLowerCase();
+        cleanT = cleanT.replace(/\b(?:download|full\s*movie|watch\s*online|hindi\s*dubbed|dual\s*audio|hd\s*rip|web\s*rip|720p|1080p|480p|prmovies|free\s*movies|tv\s*shows\s*online)\b/gi, ' ');
+        cleanT = cleanT.replace(/[^a-z0-9]/g, '');
+        if (cleanT) {
+          desktopQueueMap.set(`title:${cleanT}`, item);
+        }
+      });
+      if (currentDownloadMode === 'auto') {
+        renderAutoMovies();
+      }
+      if (callback) callback(true);
+    } else {
+      if (callback) callback(false);
+    }
+  });
+}
+
+function checkBridge() {
+  chrome.runtime.sendMessage({ action: 'CHECK_OMNISTREAM_BRIDGE' }, (res) => {
+    if (chrome.runtime.lastError) return; // Service worker not ready
+    const connected = !!(res && res.connected);
+    const authed = !!(connected && res.data && res.data.authenticated !== false);
+    bridgeStatusEl.classList.toggle('connected', connected && authed);
+    if (connected && !authed) {
+      bridgeStatusEl.title = 'Authentication failed. Please restart OmniStream Pro app.';
+    } else if (connected) {
+      bridgeStatusEl.title = 'Connected to OmniStream Pro v2.6.0';
+      syncDesktopQueue();
+    } else {
+      bridgeStatusEl.title = 'Desktop app offline (127.0.0.1:28795)';
+    }
+    if (connected && res.data && res.data.mode) {
+      // CRITICAL: When the user is in Auto Mode, NEVER automatically switch them to Normal/Subs or any other mode!
+      // Auto Mode is an intentional movie scanner view that remains active until the user manually clicks another mode tab.
+      if (currentDownloadMode !== 'auto') {
+        const serverMode = normalizeMode(res.data.mode);
+        if (serverMode && serverMode !== 'auto' && serverMode !== currentDownloadMode) {
+          if (Date.now() - lastUserModeChangeTime > 4000) {
+            setMode(serverMode, false);
+          }
+        }
+      }
+    }
+    if (connected && res.data && res.data.filter_mode && res.data.filter_mode !== currentFilterMode) {
+      setFilterMode(res.data.filter_mode, false, false);
+    }
+    if (connected && res.data && res.data.theme) {
+      const desktopTheme = res.data.theme.toLowerCase().includes('black') ? 'black' : 'cyber';
+      chrome.storage.local.get(['omni_theme'], (storageRes) => {
+        if (!storageRes || !storageRes.omni_theme) {
+          setTheme(desktopTheme, false);
+        }
+      });
+    }
+  });
+}
+
+function renderDetected(isRefreshing = false) {
+  if (isRefreshing) {
+    detectedListEl.innerHTML = '<div class="empty"><svg class="play-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:omni-spin 0.85s linear infinite;margin:0 auto 8px;display:block;"><path d="M21 2v6h-6"/><path d="M21 13a9 9 0 1 1-3-7.7L21 8"/></svg><strong>Refreshing page...</strong><span>Old files cleared. Reloading page to sniff new streams...</span></div>';
+    return;
+  }
+
+  if (!detectedStreams.length) {
+    detectedListEl.innerHTML = '<div class="empty"><svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5-4.5-2.5z" fill="#64748b" stroke="none"/></svg><strong>No stream yet</strong><span>Play the video, then tap <strong>God Mode scan</strong> or <strong>Clear & Refresh</strong>. Download appears when a playlist is found.</span></div>';
+    return;
+  }
+
+  let streamsToRender = detectedStreams;
+  if (currentFilterMode === 'multi') {
+    streamsToRender = detectedStreams.filter((s) => {
+      const l = getAudioLanguages(s, detectedStreams);
+      return l && l.length >= 2;
+    });
+  }
+
+  if (!streamsToRender.length) {
+    detectedListEl.innerHTML = `
+      <div class="empty">
+        <svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.7">
+          <rect x="3" y="5" width="18" height="14" rx="2"/>
+          <path d="M10 9.5v5l4.5-2.5-4.5-2.5z" fill="#64748b" stroke="none"/>
+        </svg>
+        <strong>No Multi-Audio Streams Detected</strong>
+        <span>Found ${detectedStreams.length} stream(s), but none have 2+ audio tracks. Switch to "All" mode to view all detected streams.</span>
+      </div>
+    `;
+    return;
+  }
+
+  detectedListEl.innerHTML = '';
+  streamsToRender.forEach((item) => {
+    const card = document.createElement('article');
+    card.className = 'card';
+    const label = escapeHtml((item.title && item.title.trim()) || fileLabel(item.url));
+    const url = escapeHtml(item.url);
+    const langsList = getAudioLanguages(item, detectedStreams);
+    const langs = langsList.join(' · ');
+    const langLine = langs
+      ? `<div class="url" title="${escapeHtml(langs)}">${escapeHtml(langs)}</div>`
+      : '';
+    const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
+    const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
+    const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
+
+    let modePill = '';
+    if (currentDownloadMode === 'netflix_rename') {
+      modePill = nid
+        ? `<span class="kind" style="background:#e50914;color:#fff;border-color:#b91c1c;font-weight:700;">NF: ${escapeHtml(nid)}</span>`
+        : `<span class="kind" style="background:#e50914;color:#fff;font-weight:600;">Netflix</span>`;
+    } else if (currentDownloadMode === 'title_only') {
+      modePill = `<span class="kind" style="background:#0284c7;color:#fff;font-weight:600;">Title</span>`;
+    } else if (currentDownloadMode === 'tmdb_rename' || currentDownloadMode === 'tmdb') {
+      modePill = tmdbId
+        ? `<span class="kind" style="background:#01b4e4;color:#032541;border-color:#0284c7;font-weight:700;">TMDB: ${escapeHtml(tmdbId)}</span>`
+        : `<span class="kind" style="background:#0e7490;color:#cffafe;font-weight:600;">TMDB</span>`;
+    } else if (currentDownloadMode === 'imdb_rename' || currentDownloadMode === 'imdb') {
+      modePill = imdbId
+        ? `<span class="kind" style="background:#f5c518;color:#000;border-color:#d97706;font-weight:700;">IMDb: ${escapeHtml(imdbId)}</span>`
+        : `<span class="kind" style="background:#78350f;color:#fef3c7;font-weight:600;">IMDb</span>`;
+    } else if (currentDownloadMode === 'title_id') {
+      modePill = `<span class="kind" style="background:#8b5cf6;color:#fff;border-color:#7c3aed;font-weight:700;">T+ID</span>`;
+    } else if (currentDownloadMode === 'sub_merge') {
+      modePill = `<span class="kind" style="background:#059669;color:#fff;font-weight:600;">Subs</span>`;
+    } else {
+      modePill = `<span class="kind" style="background:rgba(99,102,241,0.15);color:#818cf8;border-color:rgba(99,102,241,0.3);font-weight:600;">Normal</span>`;
+    }
+
+    card.innerHTML = `
+      <div class="card-top">
+        ${playIcon}
+        <div class="title" title="${url}">${label}</div>
+        ${modePill}
+        <span class="kind">${kindLabel(item)} · ${audioLabel(item, langsList)}</span>
+      </div>
+      ${langLine}
+      <div class="url" title="${url}">${url}</div>
+      <div class="btn-row">
+        <button class="download" type="button">${downloadIcon}<span>Download</span></button>
+        <button class="sub-btn" type="button" title="Download Subtitles 1-Click">${subIcon}<span>Subs</span></button>
+        <button class="copy-btn" type="button" title="Copy link">${copyIcon}<span>Copy</span></button>
+      </div>
+    `;
+    card.querySelector('.download').onclick = (e) => sendToDesktop(item, e.currentTarget);
+    card.querySelector('.sub-btn').onclick = (e) => sendSubtitlesToDesktop(item, e.currentTarget);
+    card.querySelector('.copy-btn').onclick = () => copyLink(item.url);
+    detectedListEl.appendChild(card);
+  });
+}
+
+function copyLink(url) {
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('Link copied!');
+  }).catch(() => {
+    // Fallback for older Chrome
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('Link copied!'); }
+    catch (e) { showToast('Copy failed'); }
+    document.body.removeChild(ta);
+  });
+}
+
+function sendToDesktop(item, btn, doneCallback) {
+  let absoluteUrl = item.url;
+  try {
+    if (absoluteUrl.startsWith('/') || !absoluteUrl.includes('://')) {
+      absoluteUrl = new URL(item.url, currentTabUrl || item.referer || 'https://net77.cc').href;
+    }
+  } catch (e) {}
+
+  const effectiveReferer = item.referer || currentTabUrl || '';
+  const effectiveOrigin = item.origin || (effectiveReferer ? new URL(effectiveReferer).origin : '');
+  const effectiveUa = item.userAgent || navigator.userAgent || '';
+
+  let curlCmd = item.curl || '';
+  if (!curlCmd || curlCmd.trim() === `curl "${absoluteUrl}"`) {
+    curlCmd = `curl "${absoluteUrl}"`;
+    if (effectiveReferer) curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    if (effectiveOrigin) curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    if (effectiveUa) curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+  } else {
+    if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
+      try {
+        const origin = new URL(effectiveReferer || absoluteUrl).origin;
+        curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
+      } catch (e) {}
+    }
+    if (effectiveReferer && !curlCmd.includes('Referer:') && !curlCmd.includes('referer:')) {
+      curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    }
+    if (effectiveOrigin && !curlCmd.includes('Origin:') && !curlCmd.includes('origin:')) {
+      curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    }
+    if (effectiveUa && !curlCmd.includes('User-Agent:') && !curlCmd.includes('user-agent:')) {
+      curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+    }
+  }
+
+  const nid = item.netflixId || extractNetflixId(absoluteUrl) || extractNetflixId(currentTabUrl);
+  const imdbId = item.imdbId || extractImdbId(absoluteUrl) || extractImdbId(currentTabUrl);
+  const tmdbId = item.tmdbId || extractTmdbId(absoluteUrl) || extractTmdbId(currentTabUrl);
+  const langsList = getAudioLanguages(item, detectedStreams);
+  const payload = {
+    url: absoluteUrl,
+    title: (item.title && item.title.trim()) || fileLabel(absoluteUrl),
+    curl: curlCmd,
+    referer: item.referer || currentTabUrl,
+    origin: item.origin || '',
+    userAgent: item.userAgent || navigator.userAgent,
+    headers: item.headers || {},
+    size: item.size || 0,
+    type: kindLabel(item),
+    mime: item.mime || '',
+    mode: currentDownloadMode,
+    netflixId: nid || undefined,
+    imdbId: imdbId || undefined,
+    tmdbId: tmdbId || undefined,
+    isMulti: langsList.length >= 2,
+    audioLanguages: langsList,
+    audioCount: langsList.length || 1
+  };
+  chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
+    if (chrome.runtime.lastError) {
+      showToast('Extension error — try again');
+      if (doneCallback) doneCallback(false);
+      return;
+    }
+    if (res && res.success) {
+      showToast('Sent to OmniStream');
+      if (btn) {
+        btn.classList.add('sent');
+        btn.innerHTML = `${checkIcon}<span>Queued</span>`;
+        setTimeout(() => {
+          btn.classList.remove('sent');
+          btn.innerHTML = `${downloadIcon}<span>Download</span>`;
+        }, 2500);
+      }
+      checkBridge();
+      if (doneCallback) doneCallback(true);
+    } else {
+      showToast((res && res.error) ? res.error : 'Open the OmniStream app first');
+      if (doneCallback) doneCallback(false);
+    }
+  });
+}
+
+function sendSubtitlesToDesktop(item, btn) {
+  let absoluteUrl = item.url;
+  try {
+    if (absoluteUrl.startsWith('/') || !absoluteUrl.includes('://')) {
+      absoluteUrl = new URL(item.url, currentTabUrl || item.referer || 'https://net77.cc').href;
+    }
+  } catch (e) {}
+
+  const effectiveReferer = item.referer || currentTabUrl || '';
+  const effectiveOrigin = item.origin || (effectiveReferer ? new URL(effectiveReferer).origin : '');
+  const effectiveUa = item.userAgent || navigator.userAgent || '';
+
+  let curlCmd = item.curl || '';
+  if (!curlCmd || curlCmd.trim() === `curl "${absoluteUrl}"`) {
+    curlCmd = `curl "${absoluteUrl}"`;
+    if (effectiveReferer) curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    if (effectiveOrigin) curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    if (effectiveUa) curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+  } else {
+    if (curlCmd.includes('curl "/') || curlCmd.includes("curl '/")) {
+      try {
+        const origin = new URL(effectiveReferer || absoluteUrl).origin;
+        curlCmd = curlCmd.replace(/curl\s+["'](\/[^"']+)["']/, (m, p) => `curl "${origin}${p}"`);
+      } catch (e) {}
+    }
+    if (effectiveReferer && !curlCmd.includes('Referer:') && !curlCmd.includes('referer:')) {
+      curlCmd += ` -H "Referer: ${effectiveReferer}"`;
+    }
+    if (effectiveOrigin && !curlCmd.includes('Origin:') && !curlCmd.includes('origin:')) {
+      curlCmd += ` -H "Origin: ${effectiveOrigin}"`;
+    }
+    if (effectiveUa && !curlCmd.includes('User-Agent:') && !curlCmd.includes('user-agent:')) {
+      curlCmd += ` -H "User-Agent: ${effectiveUa}"`;
+    }
+  }
+
+  const nid = item.netflixId || extractNetflixId(absoluteUrl) || extractNetflixId(currentTabUrl);
+  const imdbId = item.imdbId || extractImdbId(absoluteUrl) || extractImdbId(currentTabUrl);
+  const tmdbId = item.tmdbId || extractTmdbId(absoluteUrl) || extractTmdbId(currentTabUrl);
+  const langsList = getAudioLanguages(item, detectedStreams);
+  const payload = {
+    url: absoluteUrl,
+    title: (item.title && item.title.trim()) || fileLabel(absoluteUrl),
+    curl: curlCmd,
+    referer: item.referer || currentTabUrl,
+    origin: item.origin || '',
+    userAgent: item.userAgent || navigator.userAgent,
+    headers: item.headers || {},
+    isSubtitleJob: true,
+    type: 'subtitles',
+    autoStart: true,
+    mode: currentDownloadMode,
+    netflixId: nid || undefined,
+    imdbId: imdbId || undefined,
+    tmdbId: tmdbId || undefined,
+    isMulti: langsList.length >= 2,
+    audioLanguages: langsList,
+    audioCount: langsList.length || 1
+  };
+  chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
+    if (chrome.runtime.lastError) {
+      showToast('Extension error — try again');
+      return;
+    }
+    if (res && res.success) {
+      showToast('Subtitles sent to OmniStream');
+      if (btn) {
+        btn.classList.add('sent');
+        btn.innerHTML = `${checkIcon}<span>Started</span>`;
+        setTimeout(() => {
+          btn.classList.remove('sent');
+          btn.innerHTML = `${subIcon}<span>Subs</span>`;
+        }, 2500);
+      }
+      checkBridge();
+    } else {
+      showToast((res && res.error) ? res.error : 'Open the OmniStream app first');
+    }
+  });
+}
+
+async function sendAllToDesktop() {
+  if (!detectedStreams || !detectedStreams.length) {
+    showToast('No streams detected yet');
+    return;
+  }
+  let count = 0;
+  const cards = detectedListEl.querySelectorAll('.card');
+  for (let idx = 0; idx < detectedStreams.length; idx++) {
+    const item = detectedStreams[idx];
+    const btn = cards[idx] ? cards[idx].querySelector('.download') : null;
+    await new Promise(resolve => {
+      sendToDesktop(item, btn, resolve);
+    });
+    count++;
+    await new Promise(r => setTimeout(r, 80));
+  }
+  showToast(`Queued ${count} stream(s) to OmniStream`);
+}
+
+godScanBtn.addEventListener('click', () => runGodScan(true));
+
+function clearAndRefreshTab() {
+  if (!currentTabId || (clearRefreshBtn && clearRefreshBtn.classList.contains('refreshing'))) return;
+
+  if (clearRefreshBtn) clearRefreshBtn.classList.add('refreshing');
+  if (clearRefreshLabel) clearRefreshLabel.textContent = 'Refreshing...';
+
+  // Immediately wipe detected list in UI & show refreshing animation
+  detectedStreams = [];
+  renderDetected(true);
+
+  chrome.runtime.sendMessage({ action: 'CLEAR_AND_REFRESH_TAB', tabId: currentTabId }, () => {
+    if (chrome.runtime.lastError) {}
+    setTimeout(() => {
+      if (clearRefreshBtn) clearRefreshBtn.classList.remove('refreshing');
+      if (clearRefreshLabel) clearRefreshLabel.textContent = 'Clear & Refresh';
+      showToast('Cleared & refreshed tab');
+      setTimeout(() => {
+        runGodScan(false);
+      }, 1500);
+    }, 1500);
+  });
+}
+
+function clearOnlyStreams() {
+  if (!currentTabId) return;
+  detectedStreams = [];
+  renderDetected(false);
+  chrome.runtime.sendMessage({ action: 'CLEAR_TAB_MEDIA', tabId: currentTabId }, () => {
+    showToast('Stream list cleared');
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Download Mode: Scanner, Excel Exporter (.xlsx) & Desktop Bridge Sync
+// ─────────────────────────────────────────────────────────────────────────────
+
+function updateAutoButtonsState() {
+  const hasMovies = detectedAutoMovies && detectedAutoMovies.length > 0;
+  if (exportExcelBtn) {
+    exportExcelBtn.disabled = !hasMovies;
+    exportExcelBtn.style.opacity = hasMovies ? '1' : '0.45';
+    exportExcelBtn.style.cursor = hasMovies ? 'pointer' : 'not-allowed';
+  }
+  if (sendBatchToDesktopBtn) {
+    sendBatchToDesktopBtn.disabled = !hasMovies;
+    sendBatchToDesktopBtn.style.opacity = hasMovies ? '1' : '0.45';
+    sendBatchToDesktopBtn.style.cursor = hasMovies ? 'pointer' : 'not-allowed';
+  }
+}
+
+// Standalone in-tab DOM movie extractor function (executed via chrome.scripting.executeScript)
+function scrapeActivePageMovies() {
+  const movies = [];
+  const seenUrls = new Set();
+
+  function cleanTitle(str) {
+    if (!str) return '';
+    return str
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/\b(Watch Online|Full Movie|Watch Free|Download|Hindi Dubbed|Dual Audio|All Episodes|Free Download|HD 720p|HD 1080p|1080p|720p|480p|Web-DL|BluRay|HDRip|Pre-DVDRip|DVDRip|HDTC|HDCAM)\b/gi, '')
+      .replace(/[\|\-\:\/•]+\s*$/g, '')
+      .replace(/^\s*[\|\-\:\/•]+/g, '')
+      .trim();
+  }
+
+  function extractYear(text) {
+    const m = String(text || '').match(/\b(19\d{2}|20\d{2})\b/);
+    return m ? m[1] : '';
+  }
+
+  function getAbsoluteUrl(href) {
+    if (!href) return '';
+    try {
+      return new URL(href, window.location.href).href;
+    } catch (e) {
+      return href;
+    }
+  }
+
+  function isValidMovieUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+    const u = url.toLowerCase();
+    const excludedPatterns = [
+      '/category/', '/genre/', '/genres/', '/tag/', '/tags/', '/author/',
+      '/page/', '/search/', '/feed', '/rss', '/contact', '/about', '/dmca',
+      '/privacy', '/terms', '/login', '/register', '/wp-admin', '/wp-content',
+      '/wp-includes', '/xmlrpc', '#', 'javascript:', 'mailto:'
+    ];
+    if (excludedPatterns.some(p => u.includes(p))) return false;
+    try {
+      const parsed = new URL(url);
+      if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '') return false;
+    } catch (e) {
+      return false;
+    }
+    return true;
+  }
+
+  function extractImgSrc(container) {
+    if (!container) return '';
+    const img = container.querySelector('img');
+    if (img) {
+      const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset');
+      if (srcset) {
+        const first = srcset.split(',')[0].trim().split(' ')[0];
+        if (first && !first.startsWith('data:image')) return getAbsoluteUrl(first);
+      }
+      const src = img.getAttribute('data-src') ||
+                  img.getAttribute('data-original') ||
+                  img.getAttribute('data-lazy-src') ||
+                  img.getAttribute('src') ||
+                  img.src;
+      if (src && !src.startsWith('data:image')) {
+        return getAbsoluteUrl(src);
+      }
+    }
+    const bgEl = container.querySelector('[style*="background-image"], .poster, .thumb');
+    if (bgEl && bgEl.style && bgEl.style.backgroundImage) {
+      const m = bgEl.style.backgroundImage.match(/url\(["']?([^"']+)["']?\)/i);
+      if (m && m[1] && !m[1].startsWith('data:image')) {
+        return getAbsoluteUrl(m[1]);
+      }
+    }
+    return '';
+  }
+
+  // 1. Flexible Card Selectors (DooPlay, WordPress, PsyPlay, prmovies, etc.)
+  const cardSelectors = [
+    'article',
+    '.item',
+    '.movies-list .item',
+    '.item-movies',
+    '.item-tvshows',
+    '.ml-item',
+    '.flw-item',
+    '.film-detail',
+    '.movie-item',
+    '.item-movie',
+    '.browse-movie-wrap',
+    '.movie-card',
+    '.film_list-wrap .flw-item',
+    '.featured-item',
+    '.post-item',
+    'li.movie-item'
+  ];
+
+  const cardElements = document.querySelectorAll(cardSelectors.join(', '));
+  cardElements.forEach(card => {
+    const linkEl = card.querySelector('h3 a, h2 a, h4 a, .data h3 a, .title a, .film-name a, .entry-title a, a[href*="/movie/"], a[href*="/watch/"], a[href*="/film/"], a[href*="/series/"]') ||
+                   card.querySelector('a.poster, .poster a, a');
+    if (!linkEl) return;
+
+    const rawHref = linkEl.getAttribute('href') || linkEl.href;
+    const fullUrl = getAbsoluteUrl(rawHref);
+    if (!isValidMovieUrl(fullUrl) || seenUrls.has(fullUrl)) return;
+
+    let rawTitle = linkEl.getAttribute('title') ||
+                   card.querySelector('h3, h2, h4, .title, .film-name, .entry-title')?.textContent ||
+                   linkEl.textContent ||
+                   '';
+    if (!rawTitle || rawTitle.trim().length < 2) {
+      const img = card.querySelector('img');
+      rawTitle = img?.getAttribute('alt') || img?.getAttribute('title') || '';
+    }
+
+    const title = cleanTitle(rawTitle);
+    if (!title || title.length < 2) return;
+
+    const posterUrl = extractImgSrc(card);
+
+    const qualityEl = card.querySelector('.quality, .calidad, .badge, .film-poster-quality, .featu, .hd, .mepo span');
+    const quality = qualityEl ? qualityEl.textContent.trim() : 'HD';
+
+    const yearEl = card.querySelector('.year, .release-year, .metadata span, .data span, .date');
+    const yearText = yearEl ? yearEl.textContent.trim() : '';
+    const year = extractYear(yearText) || extractYear(rawTitle) || '';
+
+    seenUrls.add(fullUrl);
+    movies.push({
+      id: `auto_${Date.now()}_${movies.length + 1}`,
+      title: title,
+      page_url: fullUrl,
+      poster_url: posterUrl,
+      quality: quality || '1080p',
+      year: year,
+      status: 'Pending'
+    });
+  });
+
+  // 2. Fallback: Search all anchor tags if card-based detection found 0 movies
+  if (movies.length === 0) {
+    const anchors = document.querySelectorAll('a[href*="/movie/"], a[href*="/watch/"], a[href*="/film/"], a[href*="/series/"]');
+    anchors.forEach(a => {
+      const href = a.getAttribute('href') || a.href;
+      const fullUrl = getAbsoluteUrl(href);
+      if (!isValidMovieUrl(fullUrl) || seenUrls.has(fullUrl)) return;
+
+      let title = a.getAttribute('title') || a.textContent.trim();
+      if (!title || title.length < 2) {
+        const img = a.querySelector('img');
+        if (img) title = img.getAttribute('alt') || img.getAttribute('title') || '';
+      }
+      title = cleanTitle(title);
+      if (!title || title.length < 2) return;
+
+      const posterUrl = extractImgSrc(a) || extractImgSrc(a.closest('div, li, article'));
+      const year = extractYear(title);
+
+      seenUrls.add(fullUrl);
+      movies.push({
+        id: `auto_${Date.now()}_${movies.length + 1}`,
+        title: title,
+        page_url: fullUrl,
+        poster_url: posterUrl,
+        quality: 'HD',
+        year: year,
+        status: 'Pending'
+      });
+    });
+  }
+
+  return movies;
+}
+
+async function scanActiveTabMovies(overrideUrl) {
+  if (autoScanBtn) autoScanBtn.classList.add('scanning');
+  if (autoScanLabel) autoScanLabel.textContent = 'Scanning...';
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) {
+      throw new Error('No active browser tab found.');
+    }
+
+    const inputUrl = overrideUrl || (autoTargetUrlEl && autoTargetUrlEl.value.trim()) || '';
+    
+    // If user provided a different URL in the input box, navigate the active tab to it
+    if (inputUrl && inputUrl.startsWith('http')) {
+      const cleanInput = inputUrl.replace(/\/+$/, '');
+      const cleanTab = (tab.url || '').replace(/\/+$/, '');
+      if (cleanInput !== cleanTab && !cleanTab.startsWith(cleanInput)) {
+        showToast('Navigating tab to URL...');
+        await chrome.tabs.update(tab.id, { url: inputUrl });
+        await new Promise((resolve) => {
+          const onUpdated = (tId, change) => {
+            if (tId === tab.id && change.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(onUpdated);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(onUpdated);
+          setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            resolve();
+          }, 10000);
+        });
+      }
+    }
+
+    // Directly execute script in the active tab DOM - NO background fetch, avoids CORS / Cloudflare blocking
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: scrapeActivePageMovies
+    });
+
+    const movies = (results && results[0] && results[0].result) || [];
+    console.log('[OmniStream Auto Scan] Successfully detected:', movies.length, 'movies');
+    handleScannedMovies(movies);
+  } catch (err) {
+    console.error('[OmniStream Auto Scan Error]:', err);
+    showToast('Scan error: ' + (err.message || 'Failed'));
+  } finally {
+    if (autoScanBtn) autoScanBtn.classList.remove('scanning');
+    if (autoScanLabel) autoScanLabel.textContent = 'Scan Movies';
+  }
+}
+
+function handleScannedMovies(movies) {
+  detectedAutoMovies = movies || [];
+  if (autoCountBadgeEl) {
+    autoCountBadgeEl.textContent = `🎯 ${detectedAutoMovies.length} Movies Detected`;
+  }
+  updateAutoButtonsState();
+  renderAutoMovies();
+  showToast(`Found ${detectedAutoMovies.length} movies on page`);
+}
+
+function renderAutoMovies() {
+  if (!autoMovieListEl) return;
+  if (!detectedAutoMovies.length) {
+    autoMovieListEl.innerHTML = `
+      <div class="empty">
+        <svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.7">
+          <rect x="3" y="5" width="18" height="14" rx="2"/>
+          <path d="M10 9.5v5l4.5-2.5-4.5-2.5z" fill="#64748b" stroke="none"/>
+        </svg>
+        <strong>No movies detected</strong>
+        <span>Open a movie listing page (e.g. prmovies) or enter a URL above and click <strong>Scan Movies</strong>.</span>
+      </div>
+    `;
+    return;
+  }
+
+  autoMovieListEl.innerHTML = '';
+  detectedAutoMovies.forEach((m, idx) => {
+    const card = document.createElement('div');
+    card.className = 'auto-card';
+
+    const posterHtml = m.poster_url
+      ? `<img class="auto-poster" src="${escapeHtml(m.poster_url)}" alt="${escapeHtml(m.title)}" onerror="this.style.display='none'"/>`
+      : `<div class="auto-poster" style="display:flex;align-items:center;justify-content:center;color:#64748b;font-size:10px;">#${idx+1}</div>`;
+
+    const queuedItem = getMovieQueueStatus(m);
+    let statusBadgeClass = 'auto-tag ready';
+    let statusText = 'Ready to Download';
+    let isQueued = false;
+
+    if (queuedItem) {
+      isQueued = true;
+      const st = (queuedItem.status || '').toLowerCase();
+      if (st.includes('downloading') || st.includes('active')) {
+        statusBadgeClass = 'auto-tag downloading';
+        statusText = '⏳ Downloading';
+      } else if (st.includes('completed') || st.includes('done')) {
+        statusBadgeClass = 'auto-tag completed';
+        statusText = '✅ Downloaded';
+      } else if (st.includes('failed') || st.includes('error')) {
+        statusBadgeClass = 'auto-tag failed';
+        statusText = '⚠️ Failed';
+      } else {
+        statusBadgeClass = 'auto-tag in-queue';
+        statusText = '✔ In Queue';
+      }
+    }
+
+    card.innerHTML = `
+      ${posterHtml}
+      <div class="auto-info">
+        <div class="auto-title-row">
+          <span class="auto-title" title="${escapeHtml(m.title)}">${escapeHtml(m.title)}</span>
+          <span class="auto-tag">${escapeHtml(m.year || 'N/A')}</span>
+        </div>
+        <div class="auto-pills">
+          <span class="auto-tag quality">${escapeHtml(m.quality || 'HD')}</span>
+          <span class="${statusBadgeClass}">${escapeHtml(statusText)}</span>
+        </div>
+        <div class="auto-url" title="${escapeHtml(m.page_url)}">${escapeHtml(m.page_url)}</div>
+      </div>
+      <div class="auto-card-actions">
+        <button type="button" class="auto-card-send-btn ${isQueued ? 'queued' : ''}" ${isQueued ? 'disabled' : ''}>
+          ${isQueued ? '✔ Queued' : 'Send to Desktop'}
+        </button>
+      </div>
+    `;
+
+    const singleBtn = card.querySelector('.auto-card-send-btn');
+    if (singleBtn && !isQueued) {
+      singleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sendSingleAutoMovieToDesktop(m, singleBtn);
+      });
+    }
+
+    autoMovieListEl.appendChild(card);
+  });
+}
+
+function sendSingleAutoMovieToDesktop(m, btn) {
+  if (!m) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner" style="width:10px;height:10px;border-width:2px;display:inline-block;margin-right:3px;"></span>Sending...`;
+  }
+  const uId = computeMovieUniqueId(m) || `auto_${Date.now()}`;
+  const itemPayload = {
+    id: uId,
+    unique_id: uId,
+    title: m.title,
+    page_url: m.page_url,
+    poster_url: m.poster_url || '',
+    quality: m.quality || 'HD',
+    year: m.year || '',
+    status: 'Waiting',
+    is_auto: true
+  };
+
+  chrome.runtime.sendMessage({ action: 'SEND_SINGLE_AUTO_MOVIE', data: itemPayload }, (res) => {
+    if (chrome.runtime.lastError) {
+      showToast('Error communicating with extension worker');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Send to Desktop';
+      }
+      return;
+    }
+    if (res && res.success) {
+      desktopQueueMap.set(uId, { id: uId, unique_id: uId, title: m.title, page_url: m.page_url, status: 'Waiting' });
+      const titleNorm = (m.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (titleNorm) desktopQueueMap.set(`title:${titleNorm}`, { unique_id: uId, status: 'Waiting' });
+      showToast(`Added '${m.title}' to OmniStream Pro!`);
+      renderAutoMovies();
+    } else {
+      showToast((res && res.error) ? res.error : 'Failed to send to desktop');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Send to Desktop';
+      }
+    }
+  });
+}
+
+function exportAutoMoviesToExcel() {
+  if (!detectedAutoMovies.length) {
+    showToast('No movies to export. Scan a page first.');
+    return;
+  }
+  if (typeof XLSX === 'undefined') {
+    showToast('Excel library not loaded.');
+    return;
+  }
+
+  try {
+    const wb = XLSX.utils.book_new();
+    const rows = [
+      ["SL No", "Movie Title", "Target Page URL", "Quality / Year", "Scanned Date & Time", "Download Status"]
+    ];
+
+    detectedAutoMovies.forEach((m, idx) => {
+      rows.push([
+        idx + 1,
+        m.title,
+        m.page_url,
+        `${m.quality || 'HD'} / ${m.year || 'N/A'}`,
+        new Date().toLocaleString(),
+        m.status || "Pending"
+      ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 8 },
+      { wch: 40 },
+      { wch: 60 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 15 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, "Detected Movies");
+    const domain = (currentDomainEl && currentDomainEl.textContent) || 'movies';
+    const filename = `OmniStream_${domain.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.xlsx`;
+    XLSX.writeFile(wb, filename);
+    showToast(`Excel exported: ${filename}`);
+  } catch (err) {
+    showToast('Excel Export Error: ' + err.message);
+  }
+}
+
+function sendAutoMoviesToDesktop() {
+  if (!detectedAutoMovies.length) {
+    showToast('No movies to send. Scan a page first.');
+    return;
+  }
+
+  // Filter out movies that are already queued in the desktop app
+  const newMovies = detectedAutoMovies.filter(m => !getMovieQueueStatus(m));
+  if (!newMovies.length) {
+    showToast('All detected movies are already in the OmniStream Pro queue!');
+    return;
+  }
+
+  if (sendBatchToDesktopBtn) {
+    sendBatchToDesktopBtn.disabled = true;
+    sendBatchToDesktopBtn.innerHTML = `<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;margin-right:4px;"></span><span>Sending ${newMovies.length}...</span>`;
+  }
+
+  const payload = {
+    action: "ADD_AUTO_DOWNLOAD_BATCH",
+    source_url: (autoTargetUrlEl && autoTargetUrlEl.value) || currentTabUrl,
+    total_count: newMovies.length,
+    items: newMovies.map((m, idx) => {
+      const uId = computeMovieUniqueId(m) || `auto_${Date.now()}_${idx + 1}`;
+      return {
+        id: uId,
+        unique_id: uId,
+        title: m.title,
+        page_url: m.page_url,
+        poster_url: m.poster_url,
+        quality: m.quality,
+        year: m.year,
+        status: "Waiting",
+        is_auto: true
+      };
+    })
+  };
+
+  chrome.runtime.sendMessage({ action: 'SEND_AUTO_BATCH_TO_DESKTOP', data: payload }, (res) => {
+    if (sendBatchToDesktopBtn) sendBatchToDesktopBtn.disabled = false;
+    if (chrome.runtime.lastError) {
+      showToast('Error communicating with extension worker');
+      return;
+    }
+    if (res && res.success) {
+      // Register newly added items in desktopQueueMap
+      payload.items.forEach(it => {
+        desktopQueueMap.set(it.unique_id, it);
+        const titleNorm = (it.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (titleNorm) desktopQueueMap.set(`title:${titleNorm}`, it);
+      });
+      const addedCount = res.data && typeof res.data.count === 'number' ? res.data.count : newMovies.length;
+      showToast(`Added ${addedCount} new movies to OmniStream Pro!`);
+      if (sendBatchToDesktopBtn) {
+        sendBatchToDesktopBtn.innerHTML = `${checkIcon}<span>Sent ${addedCount}</span>`;
+        setTimeout(() => {
+          sendBatchToDesktopBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14"/><path d="M12 5l7 7-7 7"/>
+            </svg>
+            <span>Send to Desktop</span>
+          `;
+        }, 3000);
+      }
+      renderAutoMovies();
+    } else {
+      showToast((res && res.error) ? res.error : 'Desktop app not connected');
+    }
+  });
+}
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (currentTabId && changes['omni_tab_' + currentTabId]) loadDetectedStreams();
+});
+
+document.addEventListener('DOMContentLoaded', init);

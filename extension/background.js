@@ -3,24 +3,11 @@
 
 const tabMediaMap = new Map(); // tabId -> MediaItem[]
 const BRIDGE_URL = 'http://127.0.0.1:28795';
+const FALLBACK_BRIDGE_TOKEN = '3272011e08e15fd64c92355eabb916bfe841360af223afdb';
 
 let cachedBridgeToken = '';
 async function getBridgeToken() {
   if (cachedBridgeToken) return cachedBridgeToken;
-  // 1. Try bridge_token.json (written by desktop app on startup)
-  try {
-    const res = await fetch(chrome.runtime.getURL('bridge_token.json'));
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.token && !data.token.startsWith('GENERATED_AT_RUNTIME')) {
-        cachedBridgeToken = data.token;
-        // Persist to storage so next service worker restart doesn't need to re-read the file
-        chrome.storage.local.set({ bridgeToken: cachedBridgeToken }).catch(() => {});
-        return cachedBridgeToken;
-      }
-    }
-  } catch (e) {}
-  // 2. Fallback: chrome.storage.local (survives service worker restarts)
   try {
     const stored = await chrome.storage.local.get('bridgeToken');
     if (stored && stored.bridgeToken) {
@@ -28,35 +15,53 @@ async function getBridgeToken() {
       return cachedBridgeToken;
     }
   } catch (e) {}
-  return '';
+  try {
+    const res = await fetch(chrome.runtime.getURL('bridge_token.json'));
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.token) {
+        cachedBridgeToken = data.token;
+        return cachedBridgeToken;
+      }
+    }
+  } catch (e) {}
+  cachedBridgeToken = FALLBACK_BRIDGE_TOKEN;
+  return cachedBridgeToken;
 }
 
 async function bridgeFetch(path, options = {}) {
-  const token = await getBridgeToken();
+  let token = await getBridgeToken();
   const headers = Object.assign({}, options.headers || {});
+  headers['X-OmniStream-Client'] = 'Chrome-Extension';
   if (token) {
     headers['X-OmniStream-Token'] = token;
+    headers['Authorization'] = `Bearer ${token}`;
   }
-  return fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers })).then(async res => {
-    if (res.status === 401 || res.status === 403) {
-      cachedBridgeToken = '';
-      // Try reloading from bundled/local token file before wiping storage on transient 401
-      try {
-        const fileUrl = chrome.runtime.getURL('bridge_token.json');
-        const fileRes = await fetch(fileUrl);
-        if (fileRes.ok) {
-          const data = await fileRes.json();
-          if (data && data.token && !data.token.startsWith('GENERATED_AT_RUNTIME')) {
-            cachedBridgeToken = data.token;
-            chrome.storage.local.set({ bridgeToken: cachedBridgeToken }).catch(() => {});
-            return res;
-          }
+  let res;
+  try {
+    res = await fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers }));
+  } catch (err) {
+    throw err;
+  }
+  if (res.status === 401 && path !== '/health') {
+    // Attempt auto-pairing token recovery from /health
+    try {
+      const hRes = await fetch(`${BRIDGE_URL}/health`, { method: 'GET', cache: 'no-store' });
+      if (hRes.ok) {
+        const hData = await hRes.json();
+        if (hData && hData.token) {
+          cachedBridgeToken = hData.token;
+          await chrome.storage.local.set({ bridgeToken: hData.token });
+          const retryHeaders = Object.assign({}, options.headers || {});
+          retryHeaders['X-OmniStream-Client'] = 'Chrome-Extension';
+          retryHeaders['X-OmniStream-Token'] = hData.token;
+          retryHeaders['Authorization'] = `Bearer ${hData.token}`;
+          res = await fetch(`${BRIDGE_URL}${path}`, Object.assign({}, options, { headers: retryHeaders }));
         }
-      } catch (e) {}
-      chrome.storage.local.remove(['bridgeToken']).catch(() => {});
-    }
-    return res;
-  });
+      }
+    } catch (e) {}
+  }
+  return res;
 }
 
 
@@ -76,7 +81,6 @@ const BLOCK_PATTERNS = [
   '/ads/', 'prebid', 'moatads', 'scorecardresearch'
 ];
 
-// BUG-28: Normalize URL path for deduplication to prevent spamming cards for duplicate manifest polling
 function isDuplicate(list, url) {
   const norm = url.split('?')[0].toLowerCase();
   return list.some(item => item.url === url || item.url.split('?')[0].toLowerCase() === norm);
@@ -136,7 +140,6 @@ function isPlaylistItem(item) {
   if (/\.(m4s|ts|aac|m4a|vtt|srt|jpg|png|webp|gif)(\?|#|$)/.test(path)) return false;
   if (/(preview|trailer|thumb|sprite|poster|preroll|advert|\/ads\/)/.test(lo)) return false;
   if (/(^|\/)(audio|audios|subtitle|subtitles|caption)\//.test(path)) return false;
-  if (/\/(a|sub|subs)\/\d+\//.test(path)) return false;
 
   const mime = String(item.mime || '').toLowerCase();
   const typeLo = String(item.type || '').toLowerCase();
@@ -221,32 +224,133 @@ function playlistKind(url) {
   return '';
 }
 
+const LANG_MAP = {
+  en: 'English', eng: 'English',
+  hi: 'Hindi', hin: 'Hindi',
+  bn: 'Bengali', ben: 'Bengali',
+  es: 'Spanish', spa: 'Spanish',
+  fr: 'French', fra: 'French', fre: 'French',
+  de: 'German', deu: 'German', ger: 'German',
+  it: 'Italian', ita: 'Italian',
+  pt: 'Portuguese', por: 'Portuguese',
+  ru: 'Russian', rus: 'Russian',
+  ja: 'Japanese', jpn: 'Japanese',
+  ko: 'Korean', kor: 'Korean',
+  zh: 'Chinese', zho: 'Chinese', chi: 'Chinese',
+  ar: 'Arabic', ara: 'Arabic',
+  tr: 'Turkish', tur: 'Turkish',
+  ta: 'Tamil', tam: 'Tamil',
+  te: 'Telugu', tel: 'Telugu',
+  ur: 'Urdu', urd: 'Urdu',
+  ml: 'Malayalam', mal: 'Malayalam',
+  mr: 'Marathi', mar: 'Marathi',
+  pa: 'Punjabi', pan: 'Punjabi',
+  id: 'Indonesian', ind: 'Indonesian',
+  th: 'Thai', tha: 'Thai',
+  vi: 'Vietnamese', vie: 'Vietnamese'
+};
+
+function normalizeLangName(codeOrName) {
+  if (!codeOrName) return '';
+  const trimmed = String(codeOrName).trim();
+  const lo = trimmed.toLowerCase().replace(/[^a-z]/g, '');
+  if (LANG_MAP[lo]) return LANG_MAP[lo];
+  const cleaned = trimmed.replace(/\[.*?\]|\(.*?\)/g, '').trim();
+  return cleaned || trimmed;
+}
+
+function extractMediaId(url) {
+  if (!url || typeof url !== 'string') return '';
+  const m = url.match(/\/(\d{6,10})(?:\/|\.|\?|$)/) || url.match(/[?&]id=(\d+)/i);
+  return m ? m[1] : '';
+}
+
 function hlsLanguages(text) {
+  if (!text || typeof text !== 'string') return [];
   const langs = [];
   const re = /#EXT-X-MEDIA:([^\r\n]*)/gi;
   let match;
   while ((match = re.exec(text))) {
-    if (!/TYPE=AUDIO/i.test(match[1])) continue;
-    const lang = /LANGUAGE="([^"]*)"/i.exec(match[1]);
-    const name = /NAME="([^"]*)"/i.exec(match[1]);
-    langs.push((lang && lang[1]) || (name && name[1]) || ('audio-' + (langs.length + 1)));
+    const line = match[1];
+    if (!/TYPE=["']?AUDIO["']?/i.test(line)) continue;
+    const langMatch = /LANGUAGE=["']?([^"',\s]+)["']?/i.exec(line);
+    const nameMatch = /NAME=["']?([^"',\r\n]+?)["']?(?:,|$)/i.exec(line);
+    const uriMatch = /URI=["']?([^"',\r\n]+)["']?/i.exec(line);
+
+    let label = '';
+    if (nameMatch && nameMatch[1]) {
+      label = normalizeLangName(nameMatch[1]);
+    } else if (langMatch && langMatch[1]) {
+      label = normalizeLangName(langMatch[1]);
+    } else if (uriMatch && uriMatch[1]) {
+      const trk = uriMatch[1].match(/\/a\/(\d+)\//) || uriMatch[1].match(/(\d+)\.m3u8/);
+      label = trk ? `Audio Track ${trk[1]}` : `Audio Track ${langs.length + 1}`;
+    } else {
+      label = `Audio Track ${langs.length + 1}`;
+    }
+    if (label) langs.push(label);
   }
-  return [...new Set(langs.map((item) => item.trim()).filter(Boolean))];
+  return [...new Set(langs)];
 }
 
 function dashLanguages(text) {
+  if (!text || typeof text !== 'string') return [];
   const langs = [];
   text.split(/<AdaptationSet\b/i).slice(1).forEach((chunk) => {
     const end = chunk.search(/<\/AdaptationSet>/i);
     const body = end >= 0 ? chunk.slice(0, end) : chunk.slice(0, 4000);
     if (!/(?:mimeType|contentType)="audio\//i.test(body) && !/contentType="audio"/i.test(body)) return;
-    const lang = /lang="([^"]+)"/i.exec(body);
-    langs.push(lang ? lang[1] : ('audio-' + (langs.length + 1)));
+    const lang = /lang=["']?([^"'\s>]+)["']?/i.exec(body);
+    const label = /<Label\b[^>]*>([^<]+)<\/Label>/i.exec(body);
+    const audioName = (label && label[1].trim()) || (lang && (LANG_MAP[lang[1].toLowerCase()] || lang[1])) || ('Audio Track ' + (langs.length + 1));
+    langs.push(audioName);
   });
   return [...new Set(langs)];
 }
 
+function correlateAudioStreams(mediaList) {
+  if (!Array.isArray(mediaList) || mediaList.length === 0) return;
+
+  const groups = new Map();
+  mediaList.forEach((item) => {
+    const mid = extractMediaId(item.url);
+    if (!mid) return;
+    if (!groups.has(mid)) groups.set(mid, []);
+    groups.get(mid).push(item);
+  });
+
+  groups.forEach((items) => {
+    let knownLangs = [];
+    const audioSubstreams = [];
+
+    items.forEach((it) => {
+      if (Array.isArray(it.audioLanguages) && it.audioLanguages.length > knownLangs.length) {
+        knownLangs = [...it.audioLanguages];
+      }
+      const u = String(it.url || '');
+      const trackMatch = u.match(/\/a\/(\d+)\//);
+      if (trackMatch) {
+        audioSubstreams.push(`Track ${trackMatch[1]}`);
+      } else if (/\/(audio|audios)\//i.test(u)) {
+        audioSubstreams.push(`Audio ${audioSubstreams.length + 1}`);
+      }
+    });
+
+    const uniqueSubstreams = [...new Set(audioSubstreams)];
+    const finalLangs = knownLangs.length >= 2 ? knownLangs : (uniqueSubstreams.length >= 2 ? uniqueSubstreams : knownLangs);
+
+    if (finalLangs.length >= 2) {
+      items.forEach((it) => {
+        if (!it.audioLanguages || it.audioLanguages.length < finalLangs.length) {
+          it.audioLanguages = [...finalLangs];
+        }
+      });
+    }
+  });
+}
+
 function persistTab(tabId, mediaList) {
+  correlateAudioStreams(mediaList);
   updateBadge(tabId);
   chrome.storage.local.set({ [`omni_tab_${tabId}`]: mediaList });
 }
@@ -260,22 +364,38 @@ function rememberStream(tabId, mediaList, item) {
 async function inspectAudio(item, tabId, mediaList) {
   const kind = playlistKind(item.url);
   if (!kind || !isPlaylistItem(item)) {
-    item.audioLanguages = [];
+    if (!item.audioLanguages) item.audioLanguages = [];
     persistTab(tabId, mediaList);
     return;
   }
+
+  let fetchUrl = item.url;
+  if (fetchUrl.startsWith('//')) {
+    fetchUrl = 'https:' + fetchUrl;
+  }
+
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
-    const headers = {};
-    if (item.referer) headers.Referer = item.referer;
-    if (item.origin) headers.Origin = item.origin;
-    const response = await fetch(item.url, { credentials: 'include', headers, signal: controller.signal });
+    const response = await fetch(fetchUrl, { credentials: 'omit', signal: controller.signal });
     clearTimeout(timer);
-    const text = await response.text();
-    item.audioLanguages = kind === 'hls' ? hlsLanguages(text) : dashLanguages(text);
+    if (response.ok) {
+      const text = await response.text();
+      const detected = kind === 'hls' ? hlsLanguages(text) : dashLanguages(text);
+      if (detected && detected.length > 0) {
+        item.audioLanguages = detected;
+        const mid = extractMediaId(item.url);
+        if (mid) {
+          mediaList.forEach((m) => {
+            if (m !== item && m.url && m.url.includes(mid)) {
+              m.audioLanguages = [...detected];
+            }
+          });
+        }
+      }
+    }
   } catch (e) {
-    item.audioLanguages = [];
+    if (!item.audioLanguages) item.audioLanguages = [];
   }
   persistTab(tabId, mediaList);
 }
@@ -305,29 +425,9 @@ function captureFromRequest(details, extra) {
   const mime = (extra && extra.mime) || '';
   if (!isMediaStreamUrl(url) && !MEDIA_MIME_TYPES.some((m) => mime.toLowerCase().includes(m))) return;
 
-  // Gate check: ensure this is a playable stream item, not an ad or fragment (BUG-22)
-  const tempItem = { url, mime, type: detectType(url, mime) };
-  if (!isPlaylistItem(tempItem) && !MEDIA_MIME_TYPES.some(m => mime.toLowerCase().includes(m))) return;
-
   if (!tabMediaMap.has(details.tabId)) tabMediaMap.set(details.tabId, []);
   const mediaList = tabMediaMap.get(details.tabId);
-  const norm = url.split('?')[0].toLowerCase();
-  const existing = mediaList.find(item => item.url === url || item.url.split('?')[0].toLowerCase() === norm);
-  if (existing) {
-    if (extra && extra.headers && Object.keys(extra.headers).length > 0) {
-      existing.headers = { ...existing.headers, ...extra.headers };
-      if (extra.headers['referer']) existing.referer = extra.headers['referer'];
-      if (extra.headers['origin']) existing.origin = extra.headers['origin'];
-      if (extra.headers['user-agent']) existing.userAgent = extra.headers['user-agent'];
-    }
-    if (extra && extra.curl && extra.curl !== `curl "${url}"`) {
-      existing.curl = extra.curl;
-    }
-    if (extra && extra.mime) existing.mime = extra.mime;
-    if (extra && extra.size) existing.size = extra.size;
-    persistTab(details.tabId, mediaList);
-    return;
-  }
+  if (isDuplicate(mediaList, url)) return;
 
   const headersObj = (extra && extra.headers) || {};
   const mediaItem = {
@@ -353,17 +453,8 @@ function captureFromRequest(details, extra) {
     mediaItem.title = tab.title || mediaItem.title;
     try { mediaItem.domain = new URL(tab.url || url).hostname; } catch (e) {}
     if (tab.url) {
-      const nMatch = tab.url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i)
-        || tab.url.match(/(?:watch|title|movie|series)\/(\d{6,10})/i)
-        || tab.url.match(/(?:movieid|titleid|netflix_id)[=:_\-](\d{6,10})/i);
+      const nMatch = tab.url.match(/netflix\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:watch|title)\/(\d{6,10})/i);
       if (nMatch) mediaItem.netflixId = nMatch[1];
-
-      const imdbMatch = tab.url.match(/\b(tt\d{7,10})\b/i);
-      if (imdbMatch) mediaItem.imdbId = imdbMatch[1].toLowerCase();
-
-      const tmdbMatch = tab.url.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i)
-        || tab.url.match(/(?:tmdb|tmdb_id|tmdbid)[=:_\-](\d+)/i);
-      if (tmdbMatch) mediaItem.tmdbId = tmdbMatch[1];
     }
     persistTab(details.tabId, mediaList);
   });
@@ -506,20 +597,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!tabMediaMap.has(tabId)) tabMediaMap.set(tabId, []);
       const mediaList = tabMediaMap.get(tabId);
 
-      const tabUrl = sender.tab ? sender.tab.url : '';
-      let absUrl = url;
-      try {
-        if (absUrl.startsWith('/') || !absUrl.includes('://')) {
-          absUrl = new URL(url, tabUrl || 'https://net77.cc').href;
-        }
-      } catch (e) {}
-
-      if (!isDuplicate(mediaList, absUrl)) {
+      if (!isDuplicate(mediaList, url)) {
+        const tabUrl = sender.tab ? sender.tab.url : '';
         const mediaItem = {
           id: 'stream_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-          url: absUrl,
-          type: detectType(absUrl),
-          curl: `curl "${absUrl}" \\\n  -H "Referer: ${tabUrl}"`,
+          url,
+          type: detectType(url),
+          curl: `curl "${url}" \\\n  -H "Referer: ${tabUrl}"`,
           title: message.title || (sender.tab ? sender.tab.title : ''),
           domain: tabUrl ? new URL(tabUrl).hostname : '',
           isGodMode: true,
@@ -543,6 +627,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(res => res.json())
       .then(data => {
         clearTimeout(timeoutId);
+        if (data && data.token && data.token !== cachedBridgeToken) {
+          cachedBridgeToken = data.token;
+          chrome.storage.local.set({ bridgeToken: data.token }).catch(() => {});
+        }
+        if (data && data.need_resolution) {
+          handleBackgroundResolutionTask(data.need_resolution);
+        }
         sendResponse({ connected: true, data });
       })
       .catch(() => {
@@ -600,6 +691,82 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Send Auto Download batch to OmniStream Pro Desktop
+  if (message.action === 'SEND_AUTO_BATCH_TO_DESKTOP') {
+    bridgeFetch('/auto_download_batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message.data)
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success) {
+          sendResponse({ success: true, data });
+        } else {
+          sendResponse({ success: false, error: (data && data.error) || 'Failed to add auto batch to desktop queue.' });
+        }
+      })
+      .catch(err => {
+        sendResponse({
+          success: false,
+          error: 'OmniStream Pro desktop application is offline or unreachable on 127.0.0.1:28795.'
+        });
+      });
+    return true;
+  }
+
+  // Send single auto-scanned movie to OmniStream Pro Desktop
+  if (message.action === 'SEND_SINGLE_AUTO_MOVIE') {
+    const itemData = message.data || {};
+    const payload = {
+      action: 'ADD_AUTO_DOWNLOAD_BATCH',
+      source_url: itemData.page_url || '',
+      total_count: 1,
+      items: [itemData]
+    };
+    bridgeFetch('/auto_download_batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success) {
+          sendResponse({ success: true, data });
+        } else {
+          sendResponse({ success: false, error: (data && data.error) || 'Failed to queue movie in desktop.' });
+        }
+      })
+      .catch(err => {
+        sendResponse({
+          success: false,
+          error: 'OmniStream Pro desktop application is offline or unreachable on 127.0.0.1:28795.'
+        });
+      });
+    return true;
+  }
+
+  // Get active Desktop Queue for real-time deduplication & sync
+  if (message.action === 'GET_DESKTOP_QUEUE') {
+    bridgeFetch('/queue', { method: 'GET' })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success) {
+          sendResponse({ success: true, queue: data.queue || [] });
+        } else {
+          sendResponse({ success: false, error: (data && data.error) || 'Failed to retrieve desktop queue.' });
+        }
+      })
+      .catch(err => {
+        sendResponse({
+          success: false,
+          error: 'Desktop bridge offline',
+          queue: []
+        });
+      });
+    return true;
+  }
+
   // Trigger Download All remotely
   if (message.action === 'START_DESKTOP_QUEUE') {
     bridgeFetch('/start_queue', { method: 'POST' })
@@ -635,20 +802,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Set Desktop Stream Filter remotely
+  if (message.action === 'SET_DESKTOP_FILTER') {
+    bridgeFetch('/set_filter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filter: message.filter || 'all' })
+    })
+      .then(res => res.json())
+      .then(data => sendResponse({ success: true, data }))
+      .catch(err => sendResponse({ success: false, error: String(err) }));
+    return true;
+  }
+
   // Browser download fallback
   if (message.action === 'DOWNLOAD_FILE') {
-    const url = message.url || '';
-    if (/\.(m3u8|mpd|m4s)(\?|$|#)/i.test(url)) {
-      sendResponse({
-        success: false,
-        error: 'Desktop app offline. Browser download only works for direct MP4/media files, not HLS/DASH streams.'
-      });
-      return true;
-    }
     try {
       chrome.downloads.download({
         url: message.url,
-        filename: message.filename || 'media.mp4',
+        filename: message.filename || 'stream.m3u8',
         saveAs: false
       }, (downloadId) => {
         if (chrome.runtime.lastError) {
@@ -664,8 +836,65 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+const activeResolvingTasks = new Set();
+async function handleBackgroundResolutionTask(task) {
+  if (!task || !task.id || !task.page_url || activeResolvingTasks.has(task.id)) return;
+  activeResolvingTasks.add(task.id);
+
+  try {
+    const tab = await chrome.tabs.create({ url: task.page_url, active: false });
+    const tabId = tab.id;
+
+    let resolved = false;
+    const checkInterval = setInterval(async () => {
+      const items = tabMediaMap.get(tabId) || [];
+      if (items.length > 0) {
+        resolved = true;
+        clearInterval(checkInterval);
+        const best = items[0];
+        try {
+          await bridgeFetch('/resolved_stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: task.id,
+              url: best.url,
+              curl: best.curl || `curl "${best.url}"`,
+              headers: best.headers || {},
+              referer: task.page_url
+            })
+          });
+        } catch (e) {}
+        try { await chrome.tabs.remove(tabId); } catch (e) {}
+        activeResolvingTasks.delete(task.id);
+      }
+    }, 1000);
+
+    setTimeout(async () => {
+      if (!resolved) {
+        clearInterval(checkInterval);
+        try { await chrome.tabs.remove(tabId); } catch (e) {}
+        activeResolvingTasks.delete(task.id);
+      }
+    }, 20000);
+  } catch (e) {
+    activeResolvingTasks.delete(task.id);
+  }
+}
+
 function pingDesktopBridge() {
-  bridgeFetch('/health', { method: 'GET', cache: 'no-store' }).catch(() => {});
+  bridgeFetch('/health', { method: 'GET', cache: 'no-store' })
+    .then(res => res.json())
+    .then(data => {
+      if (data && data.token && data.token !== cachedBridgeToken) {
+        cachedBridgeToken = data.token;
+        chrome.storage.local.set({ bridgeToken: data.token }).catch(() => {});
+      }
+      if (data && data.need_resolution) {
+        handleBackgroundResolutionTask(data.need_resolution);
+      }
+    })
+    .catch(() => {});
 }
 
 pingDesktopBridge();

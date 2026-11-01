@@ -17,20 +17,16 @@ injectGodModeScript();
 
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
-  if (!event.data || typeof event.data !== 'object') return;
-  if (event.data.source !== 'OMNISTREAM_GODMODE') return;
 
-  if (event.data.action === 'MEDIA_DETECTED' && event.data.url && typeof event.data.url === 'string') {
-    chrome.runtime.sendMessage({
-      action: 'GODMODE_MEDIA_CAPTURED',
-      url: event.data.url,
-      mediaType: event.data.mediaType,
-      title: event.data.title || document.title
-    }).catch((err) => {
-      if (typeof console !== 'undefined' && console.debug) {
-        console.debug('[OmniStream Pro] Service worker capture delivery note:', err?.message || err);
-      }
-    });
+  if (event.data && event.data.source === 'OMNISTREAM_GODMODE') {
+    if (event.data.action === 'MEDIA_DETECTED') {
+      chrome.runtime.sendMessage({
+        action: 'GODMODE_MEDIA_CAPTURED',
+        url: event.data.url,
+        mediaType: event.data.mediaType,
+        title: event.data.title || document.title
+      }).catch(() => {});
+    }
   }
 });
 
@@ -61,4 +57,189 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (message.action === 'SCAN_PAGE_MOVIES') {
+    try {
+      const movies = extractPageMovies();
+      sendResponse({ success: true, movies: movies });
+    } catch (err) {
+      sendResponse({ success: false, error: String(err), movies: [] });
+    }
+    return true;
+  }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Universal Movie & Series DOM Scraper
+// ─────────────────────────────────────────────────────────────────────────────
+function extractPageMovies() {
+  const movies = [];
+  const seenUrls = new Set();
+
+  function cleanMovieTitle(str) {
+    if (!str) return '';
+    return str
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/\b(Watch Online|Full Movie|Watch Free|Download|Hindi Dubbed|Dual Audio|All Episodes|Free Download|HD 720p|HD 1080p|1080p|720p|480p|Web-DL|BluRay|HDRip|Pre-DVDRip|DVDRip|HDTC|HDCAM)\b/gi, '')
+      .replace(/[\|\-\:\/•]+\s*$/g, '')
+      .replace(/^\s*[\|\-\:\/•]+/g, '')
+      .trim();
+  }
+
+  function extractYear(text) {
+    const m = String(text || '').match(/\b(19\d{2}|20\d{2})\b/);
+    return m ? m[1] : '';
+  }
+
+  function getAbsoluteUrl(href) {
+    if (!href) return '';
+    try {
+      return new URL(href, window.location.href).href;
+    } catch (e) {
+      return href;
+    }
+  }
+
+  function isValidMovieUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+    const u = url.toLowerCase();
+    const excludedPatterns = [
+      '/category/', '/genre/', '/genres/', '/tag/', '/tags/', '/author/',
+      '/page/', '/search/', '/feed', '/rss', '/contact', '/about', '/dmca',
+      '/privacy', '/terms', '/login', '/register', '/wp-admin', '/wp-content',
+      '/wp-includes', '/xmlrpc', '#', 'javascript:', 'mailto:'
+    ];
+    if (excludedPatterns.some(p => u.includes(p))) return false;
+    try {
+      const parsed = new URL(url);
+      if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '') return false;
+    } catch (e) {
+      return false;
+    }
+    return true;
+  }
+
+  function extractImgSrc(container) {
+    if (!container) return '';
+    const img = container.querySelector('img');
+    if (img) {
+      const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset');
+      if (srcset) {
+        const first = srcset.split(',')[0].trim().split(' ')[0];
+        if (first && !first.startsWith('data:image')) return getAbsoluteUrl(first);
+      }
+      const src = img.getAttribute('data-src') ||
+                  img.getAttribute('data-original') ||
+                  img.getAttribute('data-lazy-src') ||
+                  img.getAttribute('src') ||
+                  img.src;
+      if (src && !src.startsWith('data:image')) {
+        return getAbsoluteUrl(src);
+      }
+    }
+    const bgEl = container.querySelector('[style*="background-image"], .poster, .thumb');
+    if (bgEl && bgEl.style && bgEl.style.backgroundImage) {
+      const m = bgEl.style.backgroundImage.match(/url\(["']?([^"']+)["']?\)/i);
+      if (m && m[1] && !m[1].startsWith('data:image')) {
+        return getAbsoluteUrl(m[1]);
+      }
+    }
+    return '';
+  }
+
+  // 1. Flexible Card Selectors (DooPlay, WordPress, PsyPlay, prmovies, etc.)
+  const cardSelectors = [
+    'article',
+    '.item',
+    '.movies-list .item',
+    '.item-movies',
+    '.item-tvshows',
+    '.ml-item',
+    '.flw-item',
+    '.film-detail',
+    '.movie-item',
+    '.item-movie',
+    '.browse-movie-wrap',
+    '.movie-card',
+    '.film_list-wrap .flw-item',
+    '.featured-item',
+    '.post-item',
+    'li.movie-item'
+  ];
+
+  const cards = document.querySelectorAll(cardSelectors.join(', '));
+  cards.forEach(card => {
+    const linkEl = card.querySelector('h3 a, h2 a, h4 a, .data h3 a, .title a, .film-name a, .entry-title a, a[href*="/movie/"], a[href*="/watch/"], a[href*="/film/"], a[href*="/series/"]') ||
+                   card.querySelector('a.poster, .poster a, a');
+    if (!linkEl) return;
+
+    const rawHref = linkEl.getAttribute('href') || linkEl.href;
+    const fullUrl = getAbsoluteUrl(rawHref);
+    if (!isValidMovieUrl(fullUrl) || seenUrls.has(fullUrl)) return;
+
+    let rawTitle = linkEl.getAttribute('title') ||
+                   card.querySelector('h3, h2, h4, .title, .film-name, .entry-title')?.textContent ||
+                   linkEl.textContent ||
+                   '';
+    if (!rawTitle || rawTitle.trim().length < 2) {
+      const img = card.querySelector('img');
+      rawTitle = img?.getAttribute('alt') || img?.getAttribute('title') || '';
+    }
+
+    const title = cleanMovieTitle(rawTitle);
+    if (!title || title.length < 2) return;
+
+    const poster = extractImgSrc(card);
+    const yearEl = card.querySelector('.year, .release-year, .metadata span, .data span, .date');
+    const yearText = yearEl ? yearEl.textContent.trim() : '';
+    const year = extractYear(yearText) || extractYear(rawTitle) || '';
+
+    const qualEl = card.querySelector('.quality, .calidad, .badge, .film-poster-quality, .featu, .hd, .mepo span');
+    const quality = qualEl ? qualEl.textContent.trim() : 'HD';
+
+    seenUrls.add(fullUrl);
+    movies.push({
+      id: `auto_${Date.now()}_${movies.length + 1}`,
+      title: title,
+      page_url: fullUrl,
+      poster_url: poster,
+      year: year,
+      quality: quality || '1080p',
+      status: 'Pending'
+    });
+  });
+
+  // 2. Generic fallback if specific card selectors found 0 movies
+  if (movies.length === 0) {
+    document.querySelectorAll('a[href*="/movie/"], a[href*="/watch/"], a[href*="/series/"], a[href*="/film/"]').forEach(a => {
+      const href = a.getAttribute('href') || a.href;
+      const fullUrl = getAbsoluteUrl(href);
+      if (!isValidMovieUrl(fullUrl) || seenUrls.has(fullUrl)) return;
+      let title = a.getAttribute('title') || a.textContent || '';
+      if (!title || title.length < 2) {
+        const img = a.querySelector('img');
+        if (img) title = img.getAttribute('alt') || img.getAttribute('title') || '';
+      }
+      title = cleanMovieTitle(title);
+      if (title.length < 2) return;
+
+      const poster = extractImgSrc(a) || extractImgSrc(a.closest('div, li, article'));
+      const year = extractYear(title);
+
+      seenUrls.add(fullUrl);
+      movies.push({
+        id: `auto_${Date.now()}_${movies.length + 1}`,
+        title: title,
+        page_url: fullUrl,
+        poster_url: poster,
+        year: year,
+        quality: 'HD',
+        status: 'Pending'
+      });
+    });
+  }
+
+  return movies;
+}

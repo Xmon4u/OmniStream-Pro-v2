@@ -1,0 +1,604 @@
+"""
+OmniStream Pro v2.6.0 — Professional Windows Setup Installer
+Installs OmniStream Pro Native C++20 Core, Qt6 runtimes, streaming binaries,
+browser extension, shortcuts, and registers system uninstaller.
+Author: XMON4U (https://github.com/Xmon4u)
+"""
+
+import os
+import sys
+import shutil
+import subprocess
+import glob
+import json
+try:
+    import webbrowser
+except ImportError:
+    webbrowser = None
+import tkinter as tk
+from tkinter import messagebox
+import customtkinter as ctk
+
+# Ensure desktop module can be imported properly both during dev and when packaged
+if getattr(sys, 'frozen', False):
+    INSTALLER_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+else:
+    INSTALLER_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DESKTOP_DIR = os.path.join(INSTALLER_DIR, "desktop")
+sys.path.insert(0, DESKTOP_DIR)
+sys.path.insert(0, INSTALLER_DIR)
+
+try:
+    from desktop.extension_manager import (
+        get_app_data_dir,
+        get_deployed_extension_dir,
+        deploy_extension_files,
+        is_extension_installed,
+        mark_extension_installed,
+        invalidate_extension_cache,
+        open_chrome_extensions,
+        open_extension_folder,
+        launch_browser_with_extension,
+        is_chrome_running
+    )
+    from desktop.ui_icons import apply_window_icon, build_icon_set
+except ImportError:
+    from extension_manager import (
+        get_app_data_dir,
+        get_deployed_extension_dir,
+        deploy_extension_files,
+        is_extension_installed,
+        mark_extension_installed,
+        invalidate_extension_cache,
+        open_chrome_extensions,
+        open_extension_folder,
+        launch_browser_with_extension,
+        is_chrome_running
+    )
+    from ui_icons import apply_window_icon, build_icon_set
+
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
+
+BG_ROOT        = "#0d1117"
+BG_CARD        = "#161b22"
+BG_CARD2       = "#21262d"
+BG_INPUT       = "#090d13"
+ACCENT_PRIMARY = "#2563eb"
+ACCENT_HOVER   = "#1d4ed8"
+ACCENT_CYAN    = "#38bdf8"
+ACCENT_EMERALD = "#10b981"
+ACCENT_GLOW    = "#60a5fa"
+BORDER_MAIN    = "#30363d"
+BORDER_SUB     = "#21262d"
+TEXT_TITLE     = "#f0f6fc"
+TEXT_BODY      = "#8b949e"
+TEXT_MUTED     = "#6e7681"
+FONT_MAIN      = "Segoe UI"
+FONT_CODE      = "Cascadia Code"
+
+
+def create_windows_shortcut(target_exe: str, shortcut_path: str, icon_path: str = ""):
+    """Create a native Windows .lnk shortcut using PowerShell WScript.Shell safely,
+    supporting paths with spaces, single quotes, and Bengali/non-ASCII Unicode characters."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import base64
+        clean_sc = shortcut_path.replace("'", "''")
+        clean_target = target_exe.replace("'", "''")
+        clean_work = os.path.dirname(target_exe).replace("'", "''")
+        ps_cmd = (
+            f"$ws = New-Object -ComObject WScript.Shell; "
+            f"$s = $ws.CreateShortcut('{clean_sc}'); "
+            f"$s.TargetPath = '{clean_target}'; "
+            f"$s.WorkingDirectory = '{clean_work}'; "
+        )
+        if icon_path and os.path.exists(icon_path):
+            clean_icon = icon_path.replace("'", "''")
+            ps_cmd += f"$s.IconLocation = '{clean_icon}'; "
+        ps_cmd += "$s.Save()"
+        creationflags = 0x08000000 if sys.platform == "win32" else 0
+        encoded_cmd = base64.b64encode(ps_cmd.encode("utf-16le")).decode("ascii")
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_cmd],
+            check=True,
+            creationflags=creationflags
+        )
+        return True
+    except Exception:
+        return False
+
+
+def register_windows_uninstaller(target_dir: str, version: str = "2.6.0") -> bool:
+    """Register OmniStream Pro in Windows Registry so it appears in Control Panel and Settings."""
+    try:
+        import winreg
+        import datetime
+
+        uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\OmniStreamPro"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, uninstall_key) as k:
+            winreg.SetValueEx(k, "DisplayName", 0, winreg.REG_SZ, "OmniStream Pro")
+            winreg.SetValueEx(k, "DisplayVersion", 0, winreg.REG_SZ, version)
+            winreg.SetValueEx(k, "Publisher", 0, winreg.REG_SZ, "Xmon4u")
+
+            icon_path = os.path.join(target_dir, "app_icon.ico")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(target_dir, "OmniStreamPro.exe")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(target_dir, "OmniStream_Pro.exe")
+            winreg.SetValueEx(k, "DisplayIcon", 0, winreg.REG_SZ, icon_path)
+
+            winreg.SetValueEx(k, "InstallLocation", 0, winreg.REG_SZ, target_dir)
+
+            uninstaller_exe = os.path.join(target_dir, "uninstall.exe")
+            winreg.SetValueEx(k, "UninstallString", 0, winreg.REG_SZ, f'"{uninstaller_exe}"')
+            winreg.SetValueEx(k, "QuietUninstallString", 0, winreg.REG_SZ, f'"{uninstaller_exe}" --quiet')
+
+            today = datetime.datetime.now().strftime("%Y%m%d")
+            winreg.SetValueEx(k, "InstallDate", 0, winreg.REG_SZ, today)
+
+            total_size_kb = 0
+            for root, _, files in os.walk(target_dir):
+                for f in files:
+                    try:
+                        total_size_kb += os.path.getsize(os.path.join(root, f)) // 1024
+                    except Exception:
+                        pass
+            winreg.SetValueEx(k, "EstimatedSize", 0, winreg.REG_DWORD, max(total_size_kb, 90000))
+
+            winreg.SetValueEx(k, "NoModify", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(k, "NoRepair", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(k, "HelpLink", 0, winreg.REG_SZ, "https://github.com/Xmon4u/OmniStream-Pro-v2")
+            winreg.SetValueEx(k, "URLInfoAbout", 0, winreg.REG_SZ, "https://github.com/Xmon4u/OmniStream-Pro-v2")
+        return True
+    except Exception as exc:
+        print(f"Warning: could not register Windows uninstaller: {exc}")
+        return False
+
+
+def unregister_windows_uninstaller() -> bool:
+    """Remove OmniStream Pro from Windows Registry."""
+    try:
+        import winreg
+        uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\OmniStreamPro"
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, uninstall_key)
+        return True
+    except Exception:
+        return False
+
+
+class OmniStreamInstaller(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("OmniStream Pro Setup")
+        self.geometry("640x510")
+        self.resizable(False, False)
+        self.configure(fg_color=BG_ROOT)
+
+        icon_dir = DESKTOP_DIR if os.path.isfile(os.path.join(DESKTOP_DIR, "app_icon.png")) else INSTALLER_DIR
+        apply_window_icon(self, icon_dir)
+        self.icons = build_icon_set(icon_dir)
+
+        self.install_dir = get_app_data_dir()
+        self.create_desktop_sc = tk.BooleanVar(value=True)
+        self.launch_after = tk.BooleanVar(value=True)
+
+        self._build_ui()
+
+    def _build_ui(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Header Banner
+        header = ctk.CTkFrame(self, fg_color="#0c1220", corner_radius=0, height=80)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_propagate(False)
+
+        ctk.CTkLabel(header, text="", image=self.icons["logo_sm"]).place(x=16, y=16)
+
+        ctk.CTkLabel(
+            header, text="OmniStream Pro v2.6.0 Setup",
+            font=ctk.CTkFont(family=FONT_MAIN, size=18, weight="bold"),
+            text_color=TEXT_TITLE
+        ).place(x=78, y=16)
+
+        ctk.CTkLabel(
+            header, text="High-Speed Stream Downloader & Extension Suite Installation",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            text_color=TEXT_MUTED
+        ).place(x=78, y=42)
+
+        # Main Body Container
+        self.main_body = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_body.grid(row=1, column=0, sticky="nsew", padx=24, pady=16)
+
+        self._show_step_welcome()
+
+        # Footer Button Bar
+        self.footer = ctk.CTkFrame(self, fg_color="#0c1220", corner_radius=0, height=56)
+        self.footer.grid(row=2, column=0, sticky="ew")
+        self.footer.grid_propagate(False)
+
+        self.cancel_btn = ctk.CTkButton(
+            self.footer, text="Cancel", width=90, height=34,
+            fg_color=BG_CARD, hover_color=BORDER_MAIN, text_color=TEXT_BODY,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), corner_radius=6,
+            command=self.destroy
+        )
+        self.cancel_btn.pack(side="right", padx=(8, 20), pady=11)
+
+        self.next_btn = ctk.CTkButton(
+            self.footer, text="Install Now", width=120, height=34,
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER, text_color="white",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"), corner_radius=6,
+            command=self._start_installation
+        )
+        self.next_btn.pack(side="right", pady=11)
+
+    def _show_step_welcome(self):
+        for widget in self.main_body.winfo_children():
+            widget.destroy()
+
+        ctk.CTkLabel(
+            self.main_body,
+            text="Welcome to the OmniStream Pro Installation Wizard",
+            font=ctk.CTkFont(family=FONT_MAIN, size=14, weight="bold"),
+            text_color=TEXT_TITLE, anchor="w"
+        ).pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(
+            self.main_body,
+            text="This wizard will set up OmniStream Pro on your system and deploy the Chrome extension.",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11),
+            text_color=TEXT_BODY, anchor="w"
+        ).pack(fill="x", pady=(0, 14))
+
+        # Destination Box
+        card = ctk.CTkFrame(self.main_body, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
+        card.pack(fill="x", pady=(0, 14))
+
+        ctk.CTkLabel(
+            card, text="Installation Location:",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+            text_color=ACCENT_GLOW
+        ).pack(anchor="w", padx=14, pady=(12, 4))
+
+        loc_entry = ctk.CTkEntry(
+            card, fg_color=BG_INPUT, border_color=BORDER_SUB, border_width=1,
+            height=32, text_color="#c8deff", font=ctk.CTkFont(family=FONT_CODE, size=10), corner_radius=6
+        )
+        loc_entry.pack(fill="x", padx=14, pady=(0, 12))
+        loc_entry.insert(0, self.install_dir)
+        loc_entry.configure(state="readonly")
+
+        # Options Box
+        opt_card = ctk.CTkFrame(self.main_body, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
+        opt_card.pack(fill="x", pady=(0, 10))
+
+        ctk.CTkCheckBox(
+            opt_card, text="Create Desktop Shortcut", variable=self.create_desktop_sc,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_TITLE,
+            checkbox_height=18, checkbox_width=18, corner_radius=4,
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER
+        ).pack(anchor="w", padx=14, pady=10)
+
+        ctk.CTkCheckBox(
+            opt_card, text="Launch OmniStream Pro after installation", variable=self.launch_after,
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_TITLE,
+            checkbox_height=18, checkbox_width=18, corner_radius=4,
+            fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER
+        ).pack(anchor="w", padx=14, pady=(0, 10))
+
+    def _start_installation(self):
+        self.next_btn.configure(state="disabled", text="Installing...")
+        self.cancel_btn.configure(state="disabled")
+
+        for widget in self.main_body.winfo_children():
+            widget.destroy()
+
+        ctk.CTkLabel(
+            self.main_body, text="Installing OmniStream Pro...",
+            font=ctk.CTkFont(family=FONT_MAIN, size=14, weight="bold"),
+            text_color=TEXT_TITLE, anchor="w"
+        ).pack(fill="x", pady=(0, 8))
+
+        self.pbar = ctk.CTkProgressBar(self.main_body, height=8, corner_radius=4, progress_color=ACCENT_CYAN, fg_color=BG_INPUT)
+        self.pbar.pack(fill="x", pady=(0, 10))
+        self.pbar.set(0.1)
+
+        self.status_lbl = ctk.CTkLabel(
+            self.main_body, text="Extracting core files and binaries...",
+            font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_MUTED, anchor="w"
+        )
+        self.status_lbl.pack(fill="x")
+
+        self.after(300, self._perform_install_steps)
+
+    def _perform_install_steps(self):
+        try:
+            target_dir = self.install_dir
+            os.makedirs(target_dir, exist_ok=True)
+
+            # Terminate running app instances to avoid Windows file locks (PermissionError)
+            if sys.platform == "win32":
+                for proc in ["OmniStreamPro.exe", "OmniStream_Pro.exe", "N_m3u8DL-RE.exe", "ffmpeg.exe"]:
+                    try:
+                        subprocess.run(["taskkill", "/F", "/IM", proc], capture_output=True, creationflags=0x08000000)
+                    except Exception:
+                        pass
+
+            # 1. Copy desktop application files & runtime dependencies
+            self.status_lbl.configure(text="Installing application engine & runtime libraries...")
+            self.pbar.set(0.3)
+            self.update_idletasks()
+
+            stage_src = os.path.join(INSTALLER_DIR, "desktop")
+            if not os.path.exists(stage_src):
+                stage_src = DESKTOP_DIR
+
+            if os.path.exists(stage_src):
+                for item in os.listdir(stage_src):
+                    s = os.path.join(stage_src, item)
+                    d = os.path.join(target_dir, item)
+                    if os.path.isdir(s):
+                        try:
+                            if os.path.exists(d):
+                                shutil.rmtree(d, ignore_errors=True)
+                            shutil.copytree(s, d)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            shutil.copy2(s, d)
+                        except Exception:
+                            pass
+
+            # Ensure both executable alias names exist for maximum compatibility
+            target_exe = os.path.join(target_dir, "OmniStreamPro.exe")
+            target_exe_alt = os.path.join(target_dir, "OmniStream_Pro.exe")
+            if os.path.exists(target_exe) and not os.path.exists(target_exe_alt):
+                try: shutil.copy2(target_exe, target_exe_alt)
+                except Exception: pass
+            elif os.path.exists(target_exe_alt) and not os.path.exists(target_exe):
+                try: shutil.copy2(target_exe_alt, target_exe)
+                except Exception: pass
+
+            target_uninst = os.path.join(target_dir, "uninstall.exe")
+            target_uninst_alt = os.path.join(target_dir, "OmniStreamPro-Uninstaller.exe")
+            if os.path.exists(target_uninst) and not os.path.exists(target_uninst_alt):
+                try: shutil.copy2(target_uninst, target_uninst_alt)
+                except Exception: pass
+            elif os.path.exists(target_uninst_alt) and not os.path.exists(target_uninst):
+                try: shutil.copy2(target_uninst_alt, target_uninst)
+                except Exception: pass
+
+            # 2. Deploy Browser Extension
+            self.status_lbl.configure(text="Deploying browser extension & native messaging...")
+            self.pbar.set(0.6)
+            self.update_idletasks()
+            deployed_ext_dir = deploy_extension_files()
+
+            # Register Chrome / Edge / Brave Native Messaging Host
+            target_run = target_exe if os.path.exists(target_exe) else (target_exe_alt if os.path.exists(target_exe_alt) else sys.executable)
+            nm_manifest = {
+                "name": "com.xmon4u.omnistream",
+                "description": "OmniStream Pro Native Messaging Bridge Host",
+                "path": target_run,
+                "type": "stdio",
+                "allowed_origins": [
+                    "chrome-extension://*",
+                    "moz-extension://*"
+                ]
+            }
+            nm_manifest_path = os.path.join(target_dir, "com.xmon4u.omnistream.json")
+            try:
+                with open(nm_manifest_path, "w", encoding="utf-8") as f:
+                    json.dump(nm_manifest, f, indent=2)
+                
+                import winreg
+                for reg_key_path in [
+                    r"Software\Google\Chrome\NativeMessagingHosts\com.xmon4u.omnistream",
+                    r"Software\Microsoft\Edge\NativeMessagingHosts\com.xmon4u.omnistream",
+                    r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.xmon4u.omnistream"
+                ]:
+                    try:
+                        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, reg_key_path) as k:
+                            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, nm_manifest_path)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # 3. Create Shortcuts
+            self.status_lbl.configure(text="Creating desktop & start menu shortcuts...")
+            self.pbar.set(0.8)
+            self.update_idletasks()
+
+            desktop_folder = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
+            icon_file = os.path.join(target_dir, "app_icon.ico")
+
+            if self.create_desktop_sc.get():
+                create_windows_shortcut(
+                    target_exe=target_run,
+                    shortcut_path=os.path.join(desktop_folder, "OmniStream Pro.lnk"),
+                    icon_path=icon_file
+                )
+
+            # Start Menu shortcuts
+            appdata_roaming = os.environ.get("APPDATA", "")
+            if appdata_roaming:
+                start_menu_dir = os.path.join(appdata_roaming, "Microsoft", "Windows", "Start Menu", "Programs", "OmniStream Pro")
+                os.makedirs(start_menu_dir, exist_ok=True)
+                create_windows_shortcut(
+                    target_exe=target_run,
+                    shortcut_path=os.path.join(start_menu_dir, "OmniStream Pro.lnk"),
+                    icon_path=icon_file
+                )
+                if os.path.exists(target_uninst):
+                    create_windows_shortcut(
+                        target_exe=target_uninst,
+                        shortcut_path=os.path.join(start_menu_dir, "Uninstall OmniStream Pro.lnk"),
+                        icon_path=icon_file
+                    )
+
+            # 4. Register in Windows Control Panel / Settings
+            self.status_lbl.configure(text="Registering Windows uninstaller...")
+            self.pbar.set(0.9)
+            self.update_idletasks()
+            register_windows_uninstaller(target_dir, version="2.6.0")
+
+            # 5. Check Extension Status
+            self.pbar.set(1.0)
+            self.status_lbl.configure(text="Finalizing setup...")
+            self.update_idletasks()
+
+            self._show_step_finish(deployed_ext_dir)
+        except Exception as e:
+            messagebox.showerror("Installation Error", f"Installation failed: {e}")
+            self.destroy()
+
+    def _show_step_finish(self, deployed_ext_dir: str):
+        for widget in self.main_body.winfo_children():
+            widget.destroy()
+
+        invalidate_extension_cache()
+        ext_already_installed = is_extension_installed()
+
+        ctk.CTkLabel(
+            self.main_body, text="Installation Completed Successfully!",
+            font=ctk.CTkFont(family=FONT_MAIN, size=15, weight="bold"),
+            text_color=ACCENT_EMERALD, anchor="w"
+        ).pack(fill="x", pady=(0, 6))
+
+        if ext_already_installed:
+            card = ctk.CTkFrame(self.main_body, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
+            card.pack(fill="x", pady=10)
+            ctk.CTkLabel(
+                card, text="Chrome extension detected", image=self.icons["check"], compound="left",
+                font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
+                text_color=ACCENT_EMERALD
+            ).pack(anchor="w", padx=14, pady=(12, 4))
+            ctk.CTkLabel(
+                card, text="The browser extension is already installed. You're ready to capture & download streams!",
+                font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY
+            ).pack(anchor="w", padx=14, pady=(0, 12))
+        else:
+            card = ctk.CTkFrame(self.main_body, fg_color=BG_CARD, corner_radius=10, border_width=1, border_color=BORDER_MAIN)
+            card.pack(fill="x", pady=10)
+
+            ctk.CTkLabel(
+                card, text="Browser extension setup", image=self.icons["extension"], compound="left",
+                font=ctk.CTkFont(family=FONT_MAIN, size=12, weight="bold"),
+                text_color=ACCENT_GLOW
+            ).pack(anchor="w", padx=14, pady=(10, 4))
+
+            ext_status_var = {"lbl": None}
+
+            ext_status_lbl = ctk.CTkLabel(
+                card, text="🔄 Preparing to launch Chrome with Extension...",
+                font=ctk.CTkFont(family=FONT_MAIN, size=11), text_color=TEXT_BODY, anchor="w"
+            )
+            ext_status_lbl.pack(fill="x", padx=14, pady=(0, 6))
+            ext_status_var["lbl"] = ext_status_lbl
+
+            def _update_status(msg: str):
+                try:
+                    ext_status_var["lbl"].configure(text=msg)
+                except Exception:
+                    pass
+
+            def _do_launch(btn=None):
+                import threading
+                if btn:
+                    btn.configure(state="disabled")
+                _update_status("🔄 Launching Chrome with OmniStream Extension...")
+
+                def _bg():
+                    ok = launch_browser_with_extension()
+                    def _update_ui():
+                        try:
+                            if ok:
+                                _update_status("Chrome launched. Use that window for streaming.")
+                                if btn:
+                                    btn.configure(
+                                        text="Extension active", image=self.icons["check"], fg_color="#065f46", state="disabled"
+                                    )
+                            else:
+                                _update_status("Auto-launch failed. Use the buttons below to set it up.")
+                                if btn:
+                                    btn.configure(state="normal")
+                        except Exception:
+                            pass
+                    self.after(0, _update_ui)
+                threading.Thread(target=_bg, daemon=True).start()
+
+            launch_btn = ctk.CTkButton(
+                card, text="Launch Chrome", image=self.icons["chrome"], compound="left", height=34,
+                fg_color=ACCENT_PRIMARY, hover_color=ACCENT_HOVER,
+                font=ctk.CTkFont(family=FONT_MAIN, size=11, weight="bold"),
+                corner_radius=8
+            )
+            launch_btn.configure(command=lambda: _do_launch(launch_btn))
+            launch_btn.pack(fill="x", padx=14, pady=(0, 8))
+
+            btn_box = ctk.CTkFrame(card, fg_color="transparent")
+            btn_box.pack(fill="x", padx=14, pady=(0, 10))
+
+            ctk.CTkButton(
+                btn_box, text="Open chrome://extensions", width=180, height=30,
+                fg_color=BG_CARD2, hover_color=BORDER_MAIN, text_color=TEXT_TITLE,
+                border_width=1, border_color=BORDER_SUB, font=ctk.CTkFont(family=FONT_MAIN, size=10),
+                command=open_chrome_extensions
+            ).pack(side="left", padx=(0, 6))
+
+            ctk.CTkButton(
+                btn_box, text="Open Extension Folder", width=160, height=30,
+                fg_color=BG_CARD2, hover_color=BORDER_MAIN, text_color=TEXT_TITLE,
+                border_width=1, border_color=BORDER_SUB, font=ctk.CTkFont(family=FONT_MAIN, size=10),
+                command=open_extension_folder
+            ).pack(side="left")
+
+            # Auto-trigger after a short delay so the UI renders first
+            self.after(800, lambda: _do_launch(launch_btn))
+
+        # Update footer buttons
+        self.cancel_btn.pack_forget()
+        self.next_btn.configure(
+            state="normal", text="Finish", fg_color=ACCENT_EMERALD, hover_color="#047857",
+            command=self._finish_and_launch
+        )
+
+
+    def _finish_and_launch(self):
+        target_exe = os.path.join(self.install_dir, "OmniStream_Pro.exe")
+        if not os.path.exists(target_exe):
+            target_exe = os.path.join(self.install_dir, "OmniStreamPro.exe")
+
+        if self.launch_after.get():
+            if os.path.exists(target_exe):
+                try:
+                    # Use ShellExecute (os.startfile) so child process doesn't inherit any file handles
+                    # from the PyInstaller _MEI temporary extraction directory.
+                    os.startfile(target_exe)
+                except Exception:
+                    subprocess.Popen(
+                        [target_exe],
+                        cwd=self.install_dir,
+                        close_fds=True,
+                        creationflags=0x00000008 | 0x00000200 # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+                    )
+            else:
+                main_py = os.path.join(self.install_dir, "main_gui.py")
+                if os.path.exists(main_py):
+                    try:
+                        os.startfile(main_py)
+                    except Exception:
+                        subprocess.Popen([sys.executable, main_py], cwd=self.install_dir, close_fds=True)
+        self.destroy()
+
+
+if __name__ == "__main__":
+    app = OmniStreamInstaller()
+    app.mainloop()

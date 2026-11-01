@@ -37,10 +37,26 @@
     return 'Media Stream';
   }
 
+  function toAbsoluteUrl(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
+    let u = rawUrl.trim();
+    if (u.startsWith('//')) {
+      return window.location.protocol + u;
+    }
+    if (u.startsWith('/') && !u.startsWith('//')) {
+      return window.location.origin + u;
+    }
+    try {
+      return new URL(u, window.location.href).href;
+    } catch (e) {
+      return u;
+    }
+  }
+
   function notifyDetected(url, type) {
     if (!isStreamUrl(url)) return;
-    const cleanUrl = url.trim();
-    if (capturedUrls.has(cleanUrl)) return;
+    const cleanUrl = toAbsoluteUrl(url);
+    if (!cleanUrl || capturedUrls.has(cleanUrl)) return;
     capturedUrls.add(cleanUrl);
 
     window.postMessage({
@@ -52,84 +68,29 @@
     }, '*');
   }
 
-  // 1. Anti-DevTools & Anti-F12 Blocker Neutralizer
-  const origFunction = window.Function;
-  const FunctionHandler = function(...args) {
-    if (args.length > 0) {
-      const code = args[args.length - 1];
-      if (typeof code === 'string' && /debugger\s*;?/i.test(code)) {
-        args[args.length - 1] = code.replace(/debugger\s*;?/gi, '/* [OmniStream neutralized debugger] */');
-      }
-    }
-    return origFunction.apply(this, args);
-  };
-  FunctionHandler.prototype = origFunction.prototype;
-  window.Function = FunctionHandler;
-
-  console.clear = function() {
-    console.info('[OmniStream Pro] Preserved DevTools console from webpage clear.');
-  };
-
-  const origAddEventListener = EventTarget.prototype.addEventListener;
-  EventTarget.prototype.addEventListener = function(type, listener, options) {
-    if (['contextmenu', 'keydown', 'keyup'].includes(type) && typeof listener === 'function') {
-      const wrappedListener = function(event) {
-        const isF12 = event.key === 'F12' || event.keyCode === 123;
-        const isDevToolsShortcut = (event.ctrlKey || event.metaKey) && (
-          event.shiftKey && ['I', 'J', 'C', 'i', 'j', 'c'].includes(event.key) ||
-          ['U', 'u'].includes(event.key)
-        );
-        const isContextMenu = event.type === 'contextmenu';
-
-        if (isF12 || isDevToolsShortcut || isContextMenu) {
-          const origPreventDefault = event.preventDefault;
-          const origStopPropagation = event.stopPropagation;
-          const origStopImmediatePropagation = event.stopImmediatePropagation;
-          event.preventDefault = () => {};
-          event.stopPropagation = () => {};
-          event.stopImmediatePropagation = () => {};
-
-          try {
-            return listener.apply(this, arguments);
-          } finally {
-            event.preventDefault = origPreventDefault;
-            event.stopPropagation = origStopPropagation;
-            event.stopImmediatePropagation = origStopImmediatePropagation;
-          }
-        }
-        return listener.apply(this, arguments);
-      };
-      return origAddEventListener.call(this, type, wrappedListener, options);
-    }
-    return origAddEventListener.call(this, type, listener, options);
-  };
-
+  // 1. Anti-DevTools / Right-Click & F12 Unlocker (Safe capture-phase listeners, zero prototype tampering)
   window.addEventListener('contextmenu', (e) => {
-    e.stopImmediatePropagation ? e.stopImmediatePropagation() : null;
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
   }, true);
 
-  // 2. Network Hooks (XHR & Fetch)
-  const origXHROpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url) {
-    try { this.__omniUrl = url; notifyDetected(url); } catch (e) {}
-    return origXHROpen.apply(this, arguments);
-  };
-  const origXHRSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.send = function() {
-    try { notifyDetected(this.__omniUrl || ''); } catch (e) {}
-    return origXHRSend.apply(this, arguments);
-  };
+  window.addEventListener('keydown', (e) => {
+    const isF12 = e.key === 'F12' || e.keyCode === 123;
+    const isDevTools = (e.ctrlKey || e.metaKey) && (
+      (e.shiftKey && ['I', 'J', 'C', 'i', 'j', 'c'].includes(e.key)) ||
+      ['U', 'u'].includes(e.key)
+    );
+    if (isF12 || isDevTools) {
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    }
+  }, true);
 
-  const origFetch = window.fetch;
-  window.fetch = function(input, init) {
-    try {
-      const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-      notifyDetected(url);
-    } catch (e) {}
-    return origFetch.apply(this, arguments);
-  };
+  try {
+    console.clear = function() {
+      console.info('[OmniStream Pro] Preserved DevTools console from webpage clear.');
+    };
+  } catch (e) {}
 
-  // 3. HTMLMediaElement src hook
+  // 2. HTMLMediaElement src hook
   const originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
   if (originalSrcDescriptor && originalSrcDescriptor.set) {
     Object.defineProperty(HTMLMediaElement.prototype, 'src', {
@@ -213,8 +174,8 @@
     document.querySelectorAll('video').forEach((video) => {
       try {
         const src = video.currentSrc || video.src;
-        if (src) notifyDetected(src);
-        if (video.paused && video.currentSrc && video.readyState >= 2) {
+        notifyDetected(src);
+        if (video.paused) {
           const wasMuted = video.muted;
           video.muted = true;
           video.play().then(() => {
@@ -257,30 +218,10 @@
   }
   setTimeout(deepDOMScan, 2000);
 
-  let observerDebounceTimer = null;
-  const observer = new MutationObserver(() => {
-    if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
-    observerDebounceTimer = setTimeout(() => {
-      deepDOMScan();
-      // Auto-disconnect once enough valid streams are captured (BUG-10)
-      let validStreamCount = 0;
-      for (const u of capturedUrls) {
-        if (isStreamUrl(u)) validStreamCount++;
-      }
-      if (validStreamCount >= 5) {
-        observer.disconnect();
-      }
-    }, 400);
-  });
+  const observer = new MutationObserver(() => deepDOMScan());
   if (document.documentElement) {
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    // Safety: always disconnect after 30s regardless of capture count
-    setTimeout(() => {
-      if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
-      observer.disconnect();
-    }, 30000);
   }
-
 
   function hookPlayers() {
     if (window.Hls && window.Hls.prototype && !window.Hls.prototype.__omniHooked) {
@@ -313,15 +254,5 @@
   }
 
   hookPlayers();
-  // BUG-17: Limit interval lifecycle and clear once hooked or after 30s timeout
-  const hookInterval = setInterval(() => {
-    hookPlayers();
-    const hlsHooked = !window.Hls || !window.Hls.prototype || window.Hls.prototype.__omniHooked;
-    const shakaHooked = !window.shaka || !window.shaka.Player || window.shaka.Player.__omniHooked;
-    const vjsHooked = !window.videojs || window.__omniVideoJsHooked;
-    if (hlsHooked && shakaHooked && vjsHooked) {
-      clearInterval(hookInterval);
-    }
-  }, 1500);
-  setTimeout(() => clearInterval(hookInterval), 30000);
+  setInterval(hookPlayers, 1500);
 })();

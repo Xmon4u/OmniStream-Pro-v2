@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniStream Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <img src="icons/icon32.png" alt="" class="logo">
+    <div class="brand">
+      <div class="name">OmniStream <span style="opacity:.65;font-weight:700;font-size:10px;background:rgba(99,102,241,0.2);padding:1px 5px;border-radius:4px;border:1px solid rgba(99,102,241,0.3)">v2.6.0</span></div>
+      <div class="domain" id="currentDomain">This tab</div>
+    </div>
+    <div class="theme-select-container">
+      <select id="themeSelector" class="theme-dropdown" title="Theme Selector">
+        <option value="cyber">Cyber Slate</option>
+        <option value="black">Midnight Black</option>
+      </select>
+    </div>
+    <div id="bridgeStatus" class="bridge" title="Desktop app">
+      <span class="dot"></span>
+    </div>
+  </header>
+
+  <div class="mode-row">
+    <div class="mode-segmented">
+      <button id="modeNormalBtn" type="button" class="mode-tab active" data-mode="normal" title="Normal Mode: Keeps original stream filename">Normal</button>
+      <button id="modeNetflixBtn" type="button" class="mode-tab" data-mode="netflix_rename" title="Netflix Mode: Auto-identifies ID and renames to official title">Netflix</button>
+      <button id="modeTitleOnlyBtn" type="button" class="mode-tab" data-mode="title_only" title="Title Only Mode: Movie Name (Year).mkv or S01E02">Title</button>
+      <button id="modeImdbBtn" type="button" class="mode-tab" data-mode="imdb" title="IMDb Mode: Saves as IMDb ID (tt1234567)">IMDb</button>
+      <button id="modeTmdbBtn" type="button" class="mode-tab" data-mode="tmdb" title="TMDB Mode: Saves as TMDB ID">TMDB</button>
+      <button id="modeTitleIdBtn" type="button" class="mode-tab" data-mode="title_id" title="Title + ID Mode: Saves with Title and ID">T+ID</button>
+      <button id="modeSubMergeBtn" type="button" class="mode-tab" data-mode="sub_merge" title="Sub Merge Mode: Video + Multi-Audio + Subtitles merged into MKV">Subs</button>
+      <button id="modeAutoBtn" type="button" class="mode-tab" data-mode="auto" title="Auto Download Mode: Scan all movies, export Excel (.xlsx) & sequential download">Auto</button>
+    </div>
+  </div>
+
+  <div id="playerSection">
+    <div class="scan-row">
+      <button id="godScanBtn" type="button" class="scan-btn" title="Unlock F12 and scan protected players">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        <span id="godScanLabel">God Mode scan</span>
+      </button>
+      <button id="clearRefreshBtn" type="button" class="refresh-btn" title="Clear old files and reload tab to capture fresh streams">
+        <svg class="refresh-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 2v6h-6"/>
+          <path d="M21 13a9 9 0 1 1-3-7.7L21 8"/>
+        </svg>
+        <span id="clearRefreshLabel">Clear & Refresh</span>
+      </button>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <span>Player Streams</span>
+        <div class="filter-segmented" role="tablist" title="Filter detected streams">
+          <button id="filterAllBtn" type="button" class="filter-tab active" data-filter="all" title="All Mode: Show all detected videos">All</button>
+          <button id="filterMultiBtn" type="button" class="filter-tab" data-filter="multi" title="Only Multi-Language: Show only videos with multiple audio tracks">🌐 Multi-Audio</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button id="batchDownloadBtn" type="button" class="text-btn" style="color:#38bdf8;font-weight:600;" title="Send all detected streams to OmniStream queue">Download All</button>
+          <button id="clearOnlyBtn" type="button" class="text-btn" title="Clear detected files from list">Clear</button>
+        </div>
+      </div>
+      <div id="detectedList" class="list"></div>
+    </section>
+  </div>
+
+  <section id="autoPanel" class="panel auto-panel" style="display:none;">
+    <div class="auto-header">
+      <div class="auto-input-group">
+        <input type="text" id="autoTargetUrl" placeholder="Enter movie listing URL (e.g. https://prmovies.farm)..." />
+        <button type="button" id="autoScanBtn" class="scan-btn auto-scan-action">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <span id="autoScanLabel">Scan Movies</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="auto-status-bar">
+      <div class="auto-badge" id="autoCountBadge">🎯 0 Movies Detected</div>
+      <div class="auto-actions">
+        <button type="button" id="exportExcelBtn" class="action-btn excel-btn" title="Export detected movies to Microsoft Excel (.xlsx)">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/>
+          </svg>
+          <span>Export Excel</span>
+        </button>
+        <button type="button" id="sendBatchToDesktopBtn" class="action-btn send-btn" title="Send all detected movies to OmniStream Pro desktop download queue">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14"/><path d="M12 5l7 7-7 7"/>
+          </svg>
+          <span>Send to Desktop</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="autoMovieList" class="list auto-list">
+      <div class="empty">
+        <svg class="play-icon" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.7">
+          <rect x="3" y="5" width="18" height="14" rx="2"/>
+          <path d="M10 9.5v5l4.5-2.5-4.5-2.5z" fill="#64748b" stroke="none"/>
+        </svg>
+        <strong>No movies scanned yet</strong>
+        <span>Open a movie site or enter a URL above and click <strong>Scan Movies</strong>.</span>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+</div>
+<script src="xlsx.mini.min.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
