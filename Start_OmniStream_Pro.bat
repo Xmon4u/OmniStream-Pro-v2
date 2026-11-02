@@ -2,19 +2,31 @@
 title OmniStream Pro v2.6.0 - Universal Stream Downloader
 cd /d "%~dp0"
 
-if exist "C++\OmniStream_Pro.exe" (
-    cd C++
+if exist "OmniStream_Pro.exe" (
     start "" "OmniStream_Pro.exe"
     exit /b
 )
 
-if exist "C++\vs_project\Release\OmniStream_Pro.exe" (
-    cd C++\vs_project\Release
-    start "" "OmniStream_Pro.exe"
+if exist "release_output\OmniStream_Pro.exe" (
+    start "" "release_output\OmniStream_Pro.exe"
     exit /b
 )
 
-echo [ERROR] OmniStream_Pro.exe not found in C++ directory!
-echo Please run C++\build.bat to compile the native engine.
+if exist "C++ Projects\desktop\build\Release\OmniStreamPro.exe" (
+    start "" "C++ Projects\desktop\build\Release\OmniStreamPro.exe"
+    exit /b
+)
+
+if exist "desktop\main_gui.py" (
+    cd desktop
+    python main_gui.py
+    if %ERRORLEVEL% NEQ 0 (
+        echo.
+        echo [Error] Failed to launch OmniStream Pro.
+        pause
+    )
+    exit /b
+)
+
+echo [Error] OmniStream Pro executable not found.
 pause
-

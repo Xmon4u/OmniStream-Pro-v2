@@ -21,22 +21,8 @@ bin/*.exe
 bin/*.zip
 release_output/
 *Test_Release/
-Release Test/
-*.qm
 *.exe
 *.zip
-*.dll
-*.obj
-*.res
-*.pdb
-*.ilk
-*.exp
-*.lib
-c++ projects/vs_project/
-c++ projects/bin/
-C++/vs_project/
-C++/bin/
-**/vs_project/
 
 # Temporary engine downloads / partial captures
 .omnistream_tmp_*
@@ -64,7 +50,6 @@ desktop/bin/Logs/
 desktop/hls_smoke/
 scratch/
 extension/bridge_token.json
-**/bridge_token.json
-bridge_token.txt
-**/bridge_token.txt
 .vscode/
+
+C++ Projects/extension/bridge_token.json
