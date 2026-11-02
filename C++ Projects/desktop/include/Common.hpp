@@ -140,6 +140,9 @@ struct DownloadItem {
     bool is_multi_audio = false;
     std::vector<std::string> audio_languages;
     int audio_count = 1;
+    std::string playlist_text;
+    std::string companion_video_url;
+    std::vector<std::string> companion_audio_urls;
     std::string error_msg;
     int priority = 0;
     int64_t created_at = 0;

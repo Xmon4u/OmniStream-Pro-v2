@@ -419,6 +419,49 @@ body.theme-black .refresh-btn {
   margin-bottom: 8px;
 }
 
+.audio-pills-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+.audio-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.3;
+}
+
+.audio-badge.active {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.45);
+  font-weight: 700;
+}
+
+.audio-badge.single-track {
+  background: rgba(236, 72, 153, 0.15);
+  color: #f472b6;
+  border-color: rgba(236, 72, 153, 0.35);
+  font-weight: 700;
+}
+
+.audio-badge.video-track {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  font-weight: 700;
+}
+
 .btn-row {
   display: flex;
   gap: 6px;

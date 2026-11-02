@@ -437,6 +437,12 @@ void BridgeServer::HandleClient(SOCKET client) {
             if (req_json.Has("cookie")) {
                 it.cookie = req_json.Get("cookie").AsString();
             }
+            if (req_json.Has("playlistText")) {
+                it.playlist_text = req_json.Get("playlistText").AsString();
+            }
+            if (req_json.Has("companionVideoUrl")) {
+                it.companion_video_url = req_json.Get("companionVideoUrl").AsString();
+            }
 
             bool ok = QueueManager::GetInstance().AddItem(it, true);
             JsonValue resp = JsonValue::Object();
@@ -467,6 +473,8 @@ void BridgeServer::HandleClient(SOCKET client) {
                 if (it.media_type.empty()) it.media_type = j.Get("mime").AsString();
                 if (j.Has("mode")) it.mode = StringToDownloadMode(j.Get("mode").AsString());
                 if (j.Has("cookie")) it.cookie = j.Get("cookie").AsString();
+                if (j.Has("playlistText")) it.playlist_text = j.Get("playlistText").AsString();
+                if (j.Has("companionVideoUrl")) it.companion_video_url = j.Get("companionVideoUrl").AsString();
                 batch.push_back(it);
             }
             int added = QueueManager::GetInstance().AddBatch(batch, true);

@@ -124,15 +124,39 @@ function kindLabel(item) {
 function getAudioLanguages(item, allStreams = []) {
   const isAudioTrack = item.isAudioTrack || /\/a\/\d+\//i.test(item.url || '');
   if (isAudioTrack) {
-    if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0) {
+    if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0 && !/^Track/i.test(item.audioLanguages[0])) {
       return item.audioLanguages;
     }
     const m = (item.url || '').match(/\/a\/(\d+)\//);
-    return m ? [`Track ${m[1]}`] : ['Audio Track'];
+    if (m) {
+      const trkNum = m[1];
+      for (const s of allStreams) {
+        if (s.trackMap && s.trackMap[trkNum]) {
+          return [s.trackMap[trkNum]];
+        }
+        if (Array.isArray(s.audioLanguages) && s.audioLanguages.length > parseInt(trkNum, 10)) {
+          const cand = s.audioLanguages[parseInt(trkNum, 10)];
+          if (cand && !/^Track/i.test(cand)) return [cand];
+        }
+      }
+      return [`Track ${trkNum}`];
+    }
+    return ['Audio Track'];
   }
+
   if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0) {
-    return item.audioLanguages;
+    const real = item.audioLanguages.filter(l => !/^Track \d+/i.test(l) && !/^Audio Track/i.test(l));
+    if (real.length > 0) return item.audioLanguages;
   }
+
+  // Check sibling streams for real language list
+  for (const s of allStreams) {
+    if (Array.isArray(s.audioLanguages) && s.audioLanguages.length >= 2) {
+      const real = s.audioLanguages.filter(l => !/^Track \d+/i.test(l) && !/^Audio Track/i.test(l));
+      if (real.length >= 2) return s.audioLanguages;
+    }
+  }
+
   try {
     const parentKey = (item.url || '').split('?')[0].replace(/\/(player|video|\d+p?|master)\.(m3u8|mpd)/i, '');
     const companionAudios = allStreams.filter((s) => {
@@ -711,7 +735,10 @@ function sendToDesktop(item, btn, doneCallback) {
     tmdbId: tmdbId || undefined,
     isMulti: langsList.length >= 2,
     audioLanguages: langsList,
-    audioCount: langsList.length || 1
+    audioCount: langsList.length || 1,
+    playlistText: item.playlistText || '',
+    companionVideoUrl: item.companionVideoUrl || '',
+    companionAudioUrls: item.companionAudioUrls || []
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (chrome.runtime.lastError) {
@@ -795,7 +822,10 @@ function sendSubtitlesToDesktop(item, btn) {
     tmdbId: tmdbId || undefined,
     isMulti: langsList.length >= 2,
     audioLanguages: langsList,
-    audioCount: langsList.length || 1
+    audioCount: langsList.length || 1,
+    playlistText: item.playlistText || '',
+    companionVideoUrl: item.companionVideoUrl || '',
+    companionAudioUrls: item.companionAudioUrls || []
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (chrome.runtime.lastError) {

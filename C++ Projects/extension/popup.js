@@ -122,9 +122,41 @@ function kindLabel(item) {
 }
 
 function getAudioLanguages(item, allStreams = []) {
-  if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0) {
-    return item.audioLanguages;
+  const isAudioTrack = item.isAudioTrack || /\/a\/\d+\//i.test(item.url || '');
+  if (isAudioTrack) {
+    if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0 && !/^Track/i.test(item.audioLanguages[0])) {
+      return item.audioLanguages;
+    }
+    const m = (item.url || '').match(/\/a\/(\d+)\//);
+    if (m) {
+      const trkNum = m[1];
+      for (const s of allStreams) {
+        if (s.trackMap && s.trackMap[trkNum]) {
+          return [s.trackMap[trkNum]];
+        }
+        if (Array.isArray(s.audioLanguages) && s.audioLanguages.length > parseInt(trkNum, 10)) {
+          const cand = s.audioLanguages[parseInt(trkNum, 10)];
+          if (cand && !/^Track/i.test(cand)) return [cand];
+        }
+      }
+      return [`Track ${trkNum}`];
+    }
+    return ['Audio Track'];
   }
+
+  if (Array.isArray(item.audioLanguages) && item.audioLanguages.length > 0) {
+    const real = item.audioLanguages.filter(l => !/^Track \d+/i.test(l) && !/^Audio Track/i.test(l));
+    if (real.length > 0) return item.audioLanguages;
+  }
+
+  // Check sibling streams for real language list
+  for (const s of allStreams) {
+    if (Array.isArray(s.audioLanguages) && s.audioLanguages.length >= 2) {
+      const real = s.audioLanguages.filter(l => !/^Track \d+/i.test(l) && !/^Audio Track/i.test(l));
+      if (real.length >= 2) return s.audioLanguages;
+    }
+  }
+
   try {
     const parentKey = (item.url || '').split('?')[0].replace(/\/(player|video|\d+p?|master)\.(m3u8|mpd)/i, '');
     const companionAudios = allStreams.filter((s) => {
@@ -133,6 +165,9 @@ function getAudioLanguages(item, allStreams = []) {
     });
     if (companionAudios.length >= 2) {
       const tracks = companionAudios.map((a, idx) => {
+        if (Array.isArray(a.audioLanguages) && a.audioLanguages[0] && !/^Track/i.test(a.audioLanguages[0])) {
+          return a.audioLanguages[0];
+        }
         const m = a.url.match(/\/a\/(\d+)\//);
         return m ? `Track ${m[1]}` : `Audio ${idx + 1}`;
       });
@@ -471,7 +506,7 @@ function checkBridge() {
       if (currentDownloadMode !== 'auto') {
         const serverMode = normalizeMode(res.data.mode);
         if (serverMode && serverMode !== 'auto' && serverMode !== currentDownloadMode) {
-          if (Date.now() - lastUserModeChangeTime > 4000) {
+          if (Date.now() - lastUserModeChangeTime > 1200) {
             setMode(serverMode, false);
           }
         }
@@ -528,16 +563,33 @@ function renderDetected(isRefreshing = false) {
   streamsToRender.forEach((item) => {
     const card = document.createElement('article');
     card.className = 'card';
-    const label = escapeHtml((item.title && item.title.trim()) || fileLabel(item.url));
     const url = escapeHtml(item.url);
     const langsList = getAudioLanguages(item, detectedStreams);
-    const langs = langsList.join(' · ');
-    const langLine = langs
-      ? `<div class="url" title="${escapeHtml(langs)}">${escapeHtml(langs)}</div>`
-      : '';
     const nid = item.netflixId || extractNetflixId(item.url) || extractNetflixId(currentTabUrl);
     const imdbId = item.imdbId || extractImdbId(item.url) || extractImdbId(currentTabUrl);
     const tmdbId = item.tmdbId || extractTmdbId(item.url) || extractTmdbId(currentTabUrl);
+
+    const isAudio = item.isAudioTrack || /\/a\/\d+\//i.test(item.url || '');
+    const isVideo = item.isVideoTrack || /\/\d{3,4}p\//i.test(item.url || '');
+    const isMaster = item.isMaster || (langsList && langsList.length >= 2) || /\/(hls|master)\b/i.test(item.url || '');
+
+    let cardTitle = item.displayTitle || '';
+    if (!cardTitle) {
+      if (isAudio) {
+        const m = item.url.match(/\/a\/(\d+)\//);
+        const trk = m ? m[1] : '';
+        const lang = (langsList && langsList.length === 1 && !/^Track/i.test(langsList[0])) ? langsList[0] : '';
+        cardTitle = lang ? `${lang} Audio Track ${trk}` : (trk ? `Audio Track ${trk}` : 'Audio Track');
+      } else if (isVideo) {
+        const m = item.url.match(/\/(\d{3,4}p)\//i);
+        cardTitle = m ? `${m[1].toUpperCase()} Video Stream` : 'HD Video Stream';
+      } else if (isMaster) {
+        const base = (item.title && item.title.trim()) || fileLabel(item.url);
+        cardTitle = `${base} (Master Stream)`;
+      } else {
+        cardTitle = (item.title && item.title.trim()) || fileLabel(item.url);
+      }
+    }
 
     let modePill = '';
     if (currentDownloadMode === 'netflix_rename') {
@@ -562,14 +614,40 @@ function renderDetected(isRefreshing = false) {
       modePill = `<span class="kind" style="background:rgba(99,102,241,0.15);color:#818cf8;border-color:rgba(99,102,241,0.3);font-weight:600;">Normal</span>`;
     }
 
+    let streamBadge = '';
+    if (isAudio) {
+      const trkM = item.url.match(/\/a\/(\d+)\//);
+      const trkNum = trkM ? trkM[1] : '';
+      streamBadge = `<span class="kind" style="background:rgba(236,72,153,0.18);color:#f472b6;border-color:rgba(236,72,153,0.35);font-weight:700;">🎵 Audio ${trkNum ? '#' + trkNum : ''}</span>`;
+    } else if (isVideo) {
+      const resM = item.url.match(/\/(\d{3,4}p)\//i);
+      streamBadge = `<span class="kind" style="background:rgba(59,130,246,0.18);color:#60a5fa;border-color:rgba(59,130,246,0.35);font-weight:700;">🎬 ${resM ? resM[1].toUpperCase() : 'Video'}</span>`;
+    } else if (langsList && langsList.length >= 2) {
+      streamBadge = `<span class="kind" style="background:rgba(16,185,129,0.18);color:#34d399;border-color:rgba(16,185,129,0.35);font-weight:700;">🌟 ${langsList.length} Audio</span>`;
+    } else {
+      streamBadge = `<span class="kind">${kindLabel(item)} · ${audioLabel(item, langsList)}</span>`;
+    }
+
+    let audioPillsHtml = '';
+    if (langsList && langsList.length > 0) {
+      audioPillsHtml = '<div class="audio-pills-row">';
+      langsList.forEach(lang => {
+        const isActive = (item.activeAudio && item.activeAudio.toLowerCase() === lang.toLowerCase());
+        const cls = isActive ? 'audio-badge active' : (isAudio ? 'audio-badge single-track' : 'audio-badge');
+        const icon = isActive ? '▶ ' : (isAudio ? '🎵 ' : '');
+        audioPillsHtml += `<span class="${cls}">${icon}${escapeHtml(lang)}</span>`;
+      });
+      audioPillsHtml += '</div>';
+    }
+
     card.innerHTML = `
       <div class="card-top">
         ${playIcon}
-        <div class="title" title="${url}">${label}</div>
+        <div class="title" title="${url}">${escapeHtml(cardTitle)}</div>
         ${modePill}
-        <span class="kind">${kindLabel(item)} · ${audioLabel(item, langsList)}</span>
+        ${streamBadge}
       </div>
-      ${langLine}
+      ${audioPillsHtml}
       <div class="url" title="${url}">${url}</div>
       <div class="btn-row">
         <button class="download" type="button">${downloadIcon}<span>Download</span></button>
@@ -657,7 +735,10 @@ function sendToDesktop(item, btn, doneCallback) {
     tmdbId: tmdbId || undefined,
     isMulti: langsList.length >= 2,
     audioLanguages: langsList,
-    audioCount: langsList.length || 1
+    audioCount: langsList.length || 1,
+    playlistText: item.playlistText || '',
+    companionVideoUrl: item.companionVideoUrl || '',
+    companionAudioUrls: item.companionAudioUrls || []
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (chrome.runtime.lastError) {
@@ -741,7 +822,10 @@ function sendSubtitlesToDesktop(item, btn) {
     tmdbId: tmdbId || undefined,
     isMulti: langsList.length >= 2,
     audioLanguages: langsList,
-    audioCount: langsList.length || 1
+    audioCount: langsList.length || 1,
+    playlistText: item.playlistText || '',
+    companionVideoUrl: item.companionVideoUrl || '',
+    companionAudioUrls: item.companionAudioUrls || []
   };
   chrome.runtime.sendMessage({ action: 'SEND_TO_OMNISTREAM', data: payload }, (res) => {
     if (chrome.runtime.lastError) {

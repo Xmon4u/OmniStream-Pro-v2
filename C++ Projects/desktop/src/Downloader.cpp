@@ -82,6 +82,11 @@ bool Downloader::ParseOutputLine(const std::string& line, DownloadProgress& prog
         return true;
     }
 
+    bool is_progress_frame = (line.find("---") != std::string::npos ||
+                              line.find("Vid ") != std::string::npos ||
+                              line.find("Aud ") != std::string::npos ||
+                              line.find("Sub ") != std::string::npos);
+
     // 1. Percentage check (search all matches, use the latest/last)
     static const std::regex pct_regex(R"((\d+(?:\.\d+)?)%)");
     auto pct_begin = std::sregex_iterator(line.begin(), line.end(), pct_regex);
@@ -98,6 +103,15 @@ bool Downloader::ParseOutputLine(const std::string& line, DownloadProgress& prog
                 updated = true;
             }
         } catch (...) {}
+    }
+
+    // Segment count e.g. 31/64
+    static const std::regex seg_regex(R"(\b(\d+/\d+)\b)");
+    auto seg_begin = std::sregex_iterator(line.begin(), line.end(), seg_regex);
+    auto seg_end = std::sregex_iterator();
+    std::string last_seg;
+    for (auto it = seg_begin; it != seg_end; ++it) {
+        last_seg = (*it)[1].str();
     }
 
     // 2. Size check: dual size (e.g. 221.25MB/456.77MB) or single size
@@ -122,53 +136,50 @@ bool Downloader::ParseOutputLine(const std::string& line, DownloadProgress& prog
         if (!last_ssz.empty()) {
             progress.size = last_ssz;
             updated = true;
-        }
-    }
-
-    // 3. Speed check: matches 2.70MBps, 956.19KBps, 0.00Bps, or 2.70 MB/s
-    static const std::regex speed_regex(R"((\d+(?:\.\d+)?\s*(?:MBps|KBps|GBps|Bps|MB/s|KB/s|GB/s|B/s)))", std::regex::icase);
-    auto spd_begin = std::sregex_iterator(line.begin(), line.end(), speed_regex);
-    auto spd_end = std::sregex_iterator();
-    std::string last_spd;
-    for (auto it = spd_begin; it != spd_end; ++it) {
-        last_spd = (*it)[1].str();
-    }
-    if (!last_spd.empty()) {
-        std::string spd = last_spd;
-        if (spd.size() >= 2 && (spd.rfind("ps") == spd.size() - 2 || spd.rfind("Ps") == spd.size() - 2)) {
-            spd = spd.substr(0, spd.size() - 2) + " /s";
-        }
-        progress.speed = spd;
-        updated = true;
-    }
-
-    // 4. ETA check: matches e.g. 00:00:09 or 02:45
-    static const std::regex eta_regex(R"((?:MBps|KBps|GBps|Bps|MB/s|KB/s|GB/s|B/s|\))\s*(\d{2}:\d{2}:\d{2}))", std::regex::icase);
-    auto eta_begin = std::sregex_iterator(line.begin(), line.end(), eta_regex);
-    auto eta_end = std::sregex_iterator();
-    std::string last_eta;
-    for (auto it = eta_begin; it != eta_end; ++it) {
-        last_eta = (*it)[1].str();
-    }
-    if (!last_eta.empty()) {
-        progress.eta = last_eta;
-        updated = true;
-    } else {
-        static const std::regex fallback_eta(R"(\b(\d+h\d+m\d+s|\d+m\d+s|\d+s)\b)", std::regex::icase);
-        std::smatch m;
-        if (std::regex_search(line, m, fallback_eta)) {
-            progress.eta = m[1].str();
+        } else if (!last_seg.empty() && (progress.size.empty() || progress.size == "Calculating..." || progress.size == "-- / --")) {
+            progress.size = "Segments: " + last_seg;
             updated = true;
         }
     }
 
-    // Segment count e.g. 31/64
-    static const std::regex seg_regex(R"(\b(\d+/\d+)\b)");
-    auto seg_begin = std::sregex_iterator(line.begin(), line.end(), seg_regex);
-    auto seg_end = std::sregex_iterator();
-    std::string last_seg;
-    for (auto it = seg_begin; it != seg_end; ++it) {
-        last_seg = (*it)[1].str();
+    // 3. Speed check: Must match actual download speed (e.g. 218.02MBps, 5.64 MB/s, 0.00Bps)
+    // followed by ETA, parenthesis, or line boundary, NOT stream bitrate headers like "6221 Kbps"
+    if (is_progress_frame) {
+        static const std::regex speed_regex(R"((\d+(?:\.\d+)?\s*(?:MBps|KBps|GBps|Bps|MB/s|KB/s|GB/s|B/s))\s*(?:\(\d+\))?\s*(?:\d{2}:\d{2}:\d{2}|--:--:--|$))", std::regex::icase);
+        auto spd_begin = std::sregex_iterator(line.begin(), line.end(), speed_regex);
+        auto spd_end = std::sregex_iterator();
+        std::string last_spd;
+        for (auto it = spd_begin; it != spd_end; ++it) {
+            last_spd = (*it)[1].str();
+        }
+        if (!last_spd.empty()) {
+            std::string spd = last_spd;
+            if (spd.size() >= 2 && (spd.rfind("ps") == spd.size() - 2 || spd.rfind("Ps") == spd.size() - 2)) {
+                spd = spd.substr(0, spd.size() - 2) + " /s";
+            }
+            progress.speed = spd;
+            updated = true;
+        }
+
+        // 4. ETA check: matches e.g. 00:00:09 or 02:45 at end of progress frame
+        static const std::regex eta_regex(R"((?:Bps|MBps|KBps|GBps|/s|\))\s*(\d{2}:\d{2}:\d{2})\s*$)", std::regex::icase);
+        auto eta_begin = std::sregex_iterator(line.begin(), line.end(), eta_regex);
+        auto eta_end = std::sregex_iterator();
+        std::string last_eta;
+        for (auto it = eta_begin; it != eta_end; ++it) {
+            last_eta = (*it)[1].str();
+        }
+        if (!last_eta.empty()) {
+            progress.eta = last_eta;
+            updated = true;
+        } else {
+            static const std::regex fallback_eta(R"(\b(\d+h\d+m\d+s|\d+m\d+s|\d+s)\b)", std::regex::icase);
+            std::smatch m;
+            if (std::regex_search(line, m, fallback_eta)) {
+                progress.eta = m[1].str();
+                updated = true;
+            }
+        }
     }
 
     if (updated) {
@@ -277,6 +288,20 @@ Downloader::ExecutionResult Downloader::RunProcess(
                 }
             } else {
                 line_accum += c;
+                // Frame boundary detection for N_m3u8DL-RE continuous stdout without newlines
+                if (line_accum.size() > 40 &&
+                    (line_accum.rfind("Vid ") == line_accum.size() - 4 ||
+                     line_accum.rfind("Aud ") == line_accum.size() - 4 ||
+                     line_accum.rfind("Sub ") == line_accum.size() - 4)) {
+                    std::string frame = line_accum.substr(0, line_accum.size() - 4);
+                    std::string clean = StripAnsiCodes(frame);
+                    if (!clean.empty() && clean.find("---") != std::string::npos) {
+                        if (ParseOutputLine(clean, progress)) {
+                            if (progress_cb) progress_cb(item_id, progress);
+                        }
+                    }
+                    line_accum = line_accum.substr(line_accum.size() - 4);
+                }
             }
         }
 
@@ -366,7 +391,7 @@ Downloader::ExecutionResult Downloader::RunProcess(
             result.fix_hint = "Your stream token has expired. Please re-open the video in Chrome and capture a fresh link.";
         } else if (combined.find("404") != std::string::npos || combined.find("not found") != std::string::npos) {
             result.error_reason = "Stream file not found on server (HTTP 404).";
-            result.fix_hint = "The video file was removed from the remote host.";
+            result.fix_hint = "The streaming token has expired or the file was removed. Please reload the video in Chrome and click Download again.";
         } else if (combined.find("failed to execute action after") != std::string::npos) {
             result.error_reason = "Connection failed after multiple retries.";
             result.fix_hint = "The remote host failed to respond in time or closed the connection.";
@@ -869,9 +894,30 @@ Downloader::ExecutionResult Downloader::ExecuteHlsDashDownload(
                                  url_lo.find("/audio/") != std::string::npos ||
                                  item.resolution == "audio_only");
 
+    std::string effective_input = details.url;
+    std::string temp_playlist_path;
+    if (!item.playlist_text.empty()) {
+        try {
+            std::filesystem::path tdir = std::filesystem::temp_directory_path() / "OmniStream";
+            std::filesystem::create_directories(tdir);
+            std::filesystem::path pfile = tdir / ("stream_" + item.id + ".m3u8");
+            std::ofstream ofs(pfile);
+            if (ofs.is_open()) {
+                ofs << item.playlist_text;
+                ofs.close();
+                temp_playlist_path = pfile.string();
+                effective_input = temp_playlist_path;
+            }
+        } catch (...) {}
+    }
+
     std::wostringstream cmd;
     cmd << L"\"" << Utils::Utf8ToWide(bin_path) << L"\" ";
-    cmd << L"\"" << Utils::Utf8ToWide(details.url) << L"\" ";
+    cmd << L"\"" << Utils::Utf8ToWide(effective_input) << L"\" ";
+    if (!temp_playlist_path.empty()) {
+        cmd << L"--base-url \"" << Utils::Utf8ToWide(details.url) << L"\" ";
+    }
+    cmd << L"--force-ansi-console ";
     cmd << L"--auto-select ";
     cmd << L"--save-dir \"" << Utils::Utf8ToWide(safe_dir) << L"\" ";
     cmd << L"--save-name \"" << Utils::Utf8ToWide(safe_name) << L"\" ";
@@ -953,6 +999,20 @@ Downloader::ExecutionResult Downloader::ExecuteHlsDashDownload(
     }
 
     auto res = RunProcess(cmd.str(), item.id, progress_cb, log_cb);
+
+    // Automatic fallback: If master playlist returned HTTP 404, retry with companion video stream
+    if (!res.success && res.error_reason.find("404") != std::string::npos &&
+        !item.companion_video_url.empty() && item.companion_video_url != details.url) {
+        if (log_cb) {
+            log_cb("[Downloader] Master playlist returned HTTP 404. Automatically retrying with companion video stream: " + item.companion_video_url);
+        }
+        DownloadItem fallback_item = item;
+        fallback_item.input = item.companion_video_url;
+        fallback_item.playlist_text.clear();
+        fallback_item.companion_video_url.clear();
+        StreamDetails fallback_details = ParseStreamDetails(fallback_item);
+        return ExecuteHlsDashDownload(fallback_item, fallback_details, progress_cb, log_cb);
+    }
 
     // Disk fallback: if final_file_path wasn't captured or doesn't exist, search save_dir
     if (res.success && (res.final_file_path.empty() || !std::filesystem::exists(res.final_file_path))) {

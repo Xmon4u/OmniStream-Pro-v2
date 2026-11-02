@@ -579,26 +579,43 @@ class OmniStreamInstaller(ctk.CTk):
         if self.launch_after.get():
             if os.path.exists(target_exe):
                 try:
-                    # Use ShellExecute (os.startfile) so child process doesn't inherit any file handles
-                    # from the PyInstaller _MEI temporary extraction directory.
-                    os.startfile(target_exe)
-                except Exception:
+                    # Explicitly change process working directory away from PyInstaller's _MEIPASS
+                    # so the launched child process does not lock the temporary extraction directory.
+                    os.chdir(self.install_dir)
                     subprocess.Popen(
                         [target_exe],
                         cwd=self.install_dir,
                         close_fds=True,
                         creationflags=0x00000008 | 0x00000200 # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
                     )
+                except Exception:
+                    try:
+                        os.startfile(target_exe)
+                    except Exception:
+                        pass
             else:
                 main_py = os.path.join(self.install_dir, "main_gui.py")
                 if os.path.exists(main_py):
                     try:
-                        os.startfile(main_py)
-                    except Exception:
+                        os.chdir(self.install_dir)
                         subprocess.Popen([sys.executable, main_py], cwd=self.install_dir, close_fds=True)
+                    except Exception:
+                        pass
+        try:
+            self.quit()
+        except Exception:
+            pass
         self.destroy()
 
 
 if __name__ == "__main__":
+    import tempfile
     app = OmniStreamInstaller()
-    app.mainloop()
+    try:
+        app.mainloop()
+    finally:
+        try:
+            # Change directory to system temp to completely release locks on _MEIPASS
+            os.chdir(tempfile.gettempdir())
+        except Exception:
+            pass

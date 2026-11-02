@@ -94,6 +94,20 @@ setTimeout(scanDomForAudioLanguages, 1500);
 setTimeout(scanDomForAudioLanguages, 3500);
 document.addEventListener('click', () => { setTimeout(scanDomForAudioLanguages, 300); }, true);
 
+// Real-time MutationObserver to instantly detect audio menus when opened
+let domScanDebounce = null;
+const domObserver = new MutationObserver(() => {
+  if (domScanDebounce) clearTimeout(domScanDebounce);
+  domScanDebounce = setTimeout(scanDomForAudioLanguages, 150);
+});
+if (document.body) {
+  domObserver.observe(document.body, { childList: true, subtree: true });
+} else {
+  document.addEventListener('DOMContentLoaded', () => {
+    if (document.body) domObserver.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'FETCH_PLAYLIST_TEXT') {
     fetch(message.url)

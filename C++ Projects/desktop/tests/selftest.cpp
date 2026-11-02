@@ -502,6 +502,15 @@ void TestBinaryAvailabilityAndDiskFallback() {
     assert(prog.speed == "2.70MB /s");
     assert(prog.eta == "00:00:09");
 
+    // Test Early frame (segment only, no bytes yet)
+    DownloadProgress early_prog;
+    std::string early_log = "Vid 1920x1080 | 6221 Kbps ------------------------------ 0/64 0.00% -0.00Bps --:--:--";
+    bool early_updated = dl.ParseOutputLine(early_log, early_prog);
+    assert(early_updated == true);
+    assert(early_prog.percent == 0.0);
+    assert(early_prog.size == "Segments: 0/64");
+    assert(early_prog.speed == "0.00B /s");
+
     // Test Muxing status detection
     DownloadProgress mux_prog;
     bool mux_updated = dl.ParseOutputLine("Mux to: C:\\Videos\\output.mkv", mux_prog);

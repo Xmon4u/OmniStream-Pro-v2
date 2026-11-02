@@ -387,6 +387,27 @@ function correlateAudioStreams(mediaList) {
         }
       }
     });
+
+    // Cross-link companion streams for automatic fallback & multi-audio bundling
+    let groupVideoUrl = '';
+    const groupAudioUrls = [];
+    items.forEach((it) => {
+      const u = String(it.url || '');
+      if (it.isVideoTrack || /\/(?:1080p|720p|480p)\//i.test(u)) {
+        if (!groupVideoUrl) groupVideoUrl = it.url;
+      }
+      if (it.isAudioTrack || /\/a\/\d+\//i.test(u)) {
+        groupAudioUrls.push(it.url);
+      }
+    });
+    items.forEach((it) => {
+      if (groupVideoUrl && it.url !== groupVideoUrl) {
+        it.companionVideoUrl = groupVideoUrl;
+      }
+      if (groupAudioUrls.length > 0) {
+        it.companionAudioUrls = groupAudioUrls;
+      }
+    });
   });
 }
 
@@ -443,6 +464,7 @@ async function inspectAudio(item, tabId, mediaList) {
   }
 
   if (text) {
+    item.playlistText = text;
     const parsed = kind === 'hls' ? parseHlsTracks(text) : { languages: dashLanguages(text), trackMap: {} };
     if (parsed.languages && parsed.languages.length > 0) {
       item.audioLanguages = parsed.languages;
@@ -743,8 +765,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         mediaList.forEach(item => {
           const u = String(item.url || '');
           if (activeLang) item.activeAudio = activeLang;
-          if (!item.audioLanguages || item.audioLanguages.length < domLangs.length) {
-            if (!/\/a\/\d+\//i.test(u)) {
+
+          const trkMatch = u.match(/\/a\/(\d+)\//);
+          if (trkMatch) {
+            item.isAudioTrack = true;
+            const trkNum = parseInt(trkMatch[1], 10);
+            if (!isNaN(trkNum) && trkNum >= 0 && trkNum < domLangs.length) {
+              const langName = domLangs[trkNum];
+              item.trackNumber = String(trkNum);
+              item.audioLanguages = [langName];
+              item.displayTitle = `${langName} Audio Track ${trkNum}`;
+              if (!item.trackMap) item.trackMap = {};
+              item.trackMap[String(trkNum)] = langName;
+            }
+          } else {
+            if (!item.audioLanguages || item.audioLanguages.length < domLangs.length) {
               item.audioLanguages = [...domLangs];
             }
           }
