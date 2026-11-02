@@ -488,7 +488,10 @@ void QueueManager::ExecuteDownloadWorker(DownloadItem item) {
         for (auto& it : items_) {
             if (it.id == item_id) {
                 it.progress_pct = p.percent;
-                it.progress_text = p.percent > 0.0 ? std::to_string(static_cast<int>(p.percent)) + "% (" + p.speed + ")" : p.message;
+                if (!p.speed.empty()) it.speed = p.speed;
+                if (!p.size.empty() && p.size != "Calculating...") it.size_str = p.size;
+                if (!p.eta.empty() && p.eta != "Calculating...") it.eta = p.eta;
+                it.progress_text = p.message.empty() ? (std::to_string(static_cast<int>(p.percent)) + "% (" + it.speed + ")") : p.message;
                 NotifyItemUpdated(it);
                 break;
             }

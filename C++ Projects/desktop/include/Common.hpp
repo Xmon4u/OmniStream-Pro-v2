@@ -126,6 +126,9 @@ struct DownloadItem {
     DownloadStatus status = DownloadStatus::Waiting;
     double progress_pct = 0.0;
     std::string progress_text = "Ready in queue";
+    std::string speed = "0.0 MB/s";
+    std::string size_str = "-- / --";
+    std::string eta;
     DownloadMode mode = DownloadMode::Normal;
     std::string netflix_id;
     bool is_auto = false;

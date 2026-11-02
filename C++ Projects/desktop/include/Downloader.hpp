@@ -61,13 +61,13 @@ public:
 
     void Abort();
 
+    std::string StripAnsiCodes(const std::string& text) const;
+    bool ParseOutputLine(const std::string& line, DownloadProgress& progress) const;
+
 private:
     std::atomic<bool> aborted_{false};
     HANDLE job_object_ = nullptr;
     HANDLE child_process_ = nullptr;
-
-    std::string StripAnsiCodes(const std::string& text) const;
-    void ParseOutputLine(const std::string& line, DownloadProgress& progress) const;
 
     ExecutionResult RunProcess(
         const std::wstring& cmd_line,

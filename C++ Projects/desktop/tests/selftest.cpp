@@ -491,6 +491,23 @@ void TestBinaryAvailabilityAndDiskFallback() {
     assert(foundPath == mockVideo.string());
 
     std::filesystem::remove_all(mockDir);
+
+    // Test N_m3u8DL-RE Real-time Progress Parsing
+    DownloadProgress prog;
+    std::string test_log = "Vid 1920x1080 | 6221 Kbps ------------------------------ 31/64 48.44% 221.25MB/456.77MB2.70MBps00:00:09";
+    bool updated = dl.ParseOutputLine(test_log, prog);
+    assert(updated == true);
+    assert(std::abs(prog.percent - 48.44) < 0.01);
+    assert(prog.size == "221.25MB/456.77MB");
+    assert(prog.speed == "2.70MB /s");
+    assert(prog.eta == "00:00:09");
+
+    // Test Muxing status detection
+    DownloadProgress mux_prog;
+    bool mux_updated = dl.ParseOutputLine("Mux to: C:\\Videos\\output.mkv", mux_prog);
+    assert(mux_updated == true);
+    assert(mux_prog.percent == 99.0);
+    assert(mux_prog.speed == "Finalizing");
     std::cout << "  ✓ Binary Detection & Output Disk Fallback PASSED\n";
 }
 

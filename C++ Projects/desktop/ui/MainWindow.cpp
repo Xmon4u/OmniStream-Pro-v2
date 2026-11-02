@@ -1535,24 +1535,36 @@ void MainWindow::onBackendQueueChanged() {
 void MainWindow::onBackendItemUpdated(const DownloadItem& item) {
     updateQueueStats();
 
-    if (item.status == DownloadStatus::Downloading) {
+        if (item.status == DownloadStatus::Downloading) {
         m_lblProgTitle->setText(QString::fromStdString(item.title));
         m_lblProgStatus->setText(QString::fromStdString(item.progress_text));
         m_lblProgPct->setText(QString::number(static_cast<int>(item.progress_pct)) + "%");
         m_progBar->setValue(static_cast<int>(item.progress_pct));
-        m_lblStatusBadge->setText("● Downloading");
+
+        QString sizeStr = QString::fromStdString(item.size_str.empty() ? "-- / --" : item.size_str);
+        if (!item.eta.empty()) {
+            sizeStr += " • ETA: " + QString::fromStdString(item.eta);
+        }
+        m_lblProgSize->setText("Downloaded: " + sizeStr);
+        m_lblProgSpeed->setText(QString::fromStdString(item.speed.empty() ? "0.0 MB/s" : item.speed));
+
+        m_lblStatusBadge->setText(QString::fromUtf8("● Downloading"));
         m_lblStatusBadge->setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: bold; border: 1px solid #059669; border-radius: 12px; padding: 3px 12px;");
     } else if (item.status == DownloadStatus::Completed) {
         m_lblProgTitle->setText(QString::fromStdString(item.title));
-        m_lblProgStatus->setText("Completed · File saved successfully.");
+        m_lblProgStatus->setText(QString::fromUtf8("Completed • File saved successfully."));
         m_lblProgPct->setText("100%");
         m_progBar->setValue(100);
-        m_lblStatusBadge->setText("● Ready");
+        m_lblProgSize->setText("Downloaded: " + QString::fromStdString(item.size_str.empty() ? "Complete" : item.size_str));
+        m_lblProgSpeed->setText("Complete");
+        m_lblStatusBadge->setText(QString::fromUtf8("● Ready"));
         m_lblStatusBadge->setStyleSheet("background-color: #064e3b; color: #34d399; font-weight: bold; border: 1px solid #059669; border-radius: 12px; padding: 3px 12px;");
     } else if (item.status == DownloadStatus::Failed) {
         m_lblProgTitle->setText(QString::fromStdString(item.title));
         m_lblProgStatus->setText(QString::fromStdString("Failed: " + item.error_msg));
-        m_lblStatusBadge->setText("● Error");
+        m_lblProgSize->setText("Downloaded: Failed");
+        m_lblProgSpeed->setText("0.0 MB/s");
+        m_lblStatusBadge->setText(QString::fromUtf8("● Error"));
         m_lblStatusBadge->setStyleSheet("background-color: #7f1d1d; color: #fca5a5; font-weight: bold; border: 1px solid #dc2626; border-radius: 12px; padding: 3px 12px;");
     }
 

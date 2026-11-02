@@ -69,35 +69,129 @@ std::string Downloader::StripAnsiCodes(const std::string& text) const {
     return std::regex_replace(text, ansi_regex, "");
 }
 
-void Downloader::ParseOutputLine(const std::string& line, DownloadProgress& progress) const {
-    // 1. Percentage check
-    static const std::regex pct_regex(R"(\b(\d+(?:\.\d+)?)%)");
-    std::smatch match;
-    if (std::regex_search(line, match, pct_regex)) {
-        try { progress.percent = std::stod(match[1].str()); } catch (...) {}
+bool Downloader::ParseOutputLine(const std::string& line, DownloadProgress& progress) const {
+    if (line.empty()) return false;
+    bool updated = false;
+
+    // Check for Muxing / Merging completion phase
+    if (line.find("Mux to:") != std::string::npos || line.find("Writing output to:") != std::string::npos ||
+        line.find("ffmpeg merging") != std::string::npos || line.find("MuxAfterDone") != std::string::npos) {
+        progress.percent = 99.0;
+        progress.speed = "Finalizing";
+        progress.message = "Muxing & finalizing container (FFmpeg)...";
+        return true;
     }
 
-    // 2. Speed check
-    static const std::regex speed_regex(R"(\b(\d+(?:\.\d+)?\s*(?:MB|KB|GB|B)/s))", std::regex::icase);
-    if (std::regex_search(line, match, speed_regex)) {
-        progress.speed = match[1].str();
+    // 1. Percentage check (search all matches, use the latest/last)
+    static const std::regex pct_regex(R"((\d+(?:\.\d+)?)%)");
+    auto pct_begin = std::sregex_iterator(line.begin(), line.end(), pct_regex);
+    auto pct_end = std::sregex_iterator();
+    std::string last_pct;
+    for (auto it = pct_begin; it != pct_end; ++it) {
+        last_pct = (*it)[1].str();
+    }
+    if (!last_pct.empty()) {
+        try {
+            double p = std::stod(last_pct);
+            if (p >= 0.0 && p <= 100.0) {
+                progress.percent = p;
+                updated = true;
+            }
+        } catch (...) {}
     }
 
-    // 3. Size check
-    static const std::regex size_regex(R"(\b(\d+(?:\.\d+)?\s*(?:MB|KB|GB))\b)", std::regex::icase);
-    if (std::regex_search(line, match, size_regex)) {
-        progress.size = match[1].str();
+    // 2. Size check: dual size (e.g. 221.25MB/456.77MB) or single size
+    static const std::regex dual_size_regex(R"((\d+(?:\.\d+)?\s*(?:MB|GB|KB|B)\s*/\s*\d+(?:\.\d+)?\s*(?:MB|GB|KB|B)))", std::regex::icase);
+    auto sz_begin = std::sregex_iterator(line.begin(), line.end(), dual_size_regex);
+    auto sz_end = std::sregex_iterator();
+    std::string last_sz;
+    for (auto it = sz_begin; it != sz_end; ++it) {
+        last_sz = (*it)[1].str();
+    }
+    if (!last_sz.empty()) {
+        progress.size = last_sz;
+        updated = true;
+    } else {
+        static const std::regex single_size_regex(R"(\b(\d+(?:\.\d+)?\s*(?:MB|GB|KB))\b)", std::regex::icase);
+        auto ssz_begin = std::sregex_iterator(line.begin(), line.end(), single_size_regex);
+        auto ssz_end = std::sregex_iterator();
+        std::string last_ssz;
+        for (auto it = ssz_begin; it != ssz_end; ++it) {
+            last_ssz = (*it)[1].str();
+        }
+        if (!last_ssz.empty()) {
+            progress.size = last_ssz;
+            updated = true;
+        }
     }
 
-    // 4. ETA check
-    static const std::regex eta_regex(R"(\b(\d+h\d+m\d+s|\d+m\d+s|\d+s)\b)", std::regex::icase);
-    if (std::regex_search(line, match, eta_regex)) {
-        progress.eta = match[1].str();
+    // 3. Speed check: matches 2.70MBps, 956.19KBps, 0.00Bps, or 2.70 MB/s
+    static const std::regex speed_regex(R"((\d+(?:\.\d+)?\s*(?:MBps|KBps|GBps|Bps|MB/s|KB/s|GB/s|B/s)))", std::regex::icase);
+    auto spd_begin = std::sregex_iterator(line.begin(), line.end(), speed_regex);
+    auto spd_end = std::sregex_iterator();
+    std::string last_spd;
+    for (auto it = spd_begin; it != spd_end; ++it) {
+        last_spd = (*it)[1].str();
+    }
+    if (!last_spd.empty()) {
+        std::string spd = last_spd;
+        if (spd.size() >= 2 && (spd.rfind("ps") == spd.size() - 2 || spd.rfind("Ps") == spd.size() - 2)) {
+            spd = spd.substr(0, spd.size() - 2) + " /s";
+        }
+        progress.speed = spd;
+        updated = true;
     }
 
-    if (!line.empty()) {
+    // 4. ETA check: matches e.g. 00:00:09 or 02:45
+    static const std::regex eta_regex(R"((?:MBps|KBps|GBps|Bps|MB/s|KB/s|GB/s|B/s|\))\s*(\d{2}:\d{2}:\d{2}))", std::regex::icase);
+    auto eta_begin = std::sregex_iterator(line.begin(), line.end(), eta_regex);
+    auto eta_end = std::sregex_iterator();
+    std::string last_eta;
+    for (auto it = eta_begin; it != eta_end; ++it) {
+        last_eta = (*it)[1].str();
+    }
+    if (!last_eta.empty()) {
+        progress.eta = last_eta;
+        updated = true;
+    } else {
+        static const std::regex fallback_eta(R"(\b(\d+h\d+m\d+s|\d+m\d+s|\d+s)\b)", std::regex::icase);
+        std::smatch m;
+        if (std::regex_search(line, m, fallback_eta)) {
+            progress.eta = m[1].str();
+            updated = true;
+        }
+    }
+
+    // Segment count e.g. 31/64
+    static const std::regex seg_regex(R"(\b(\d+/\d+)\b)");
+    auto seg_begin = std::sregex_iterator(line.begin(), line.end(), seg_regex);
+    auto seg_end = std::sregex_iterator();
+    std::string last_seg;
+    for (auto it = seg_begin; it != seg_end; ++it) {
+        last_seg = (*it)[1].str();
+    }
+
+    if (updated) {
+        std::string formatted;
+        if (!progress.speed.empty()) formatted += progress.speed;
+        if (!progress.size.empty() && progress.size != "Calculating...") {
+            if (!formatted.empty()) formatted += " • ";
+            formatted += progress.size;
+        }
+        if (!last_seg.empty()) {
+            if (!formatted.empty()) formatted += " • ";
+            formatted += "Segs: " + last_seg;
+        }
+        if (!progress.eta.empty() && progress.eta != "Calculating...") {
+            if (!formatted.empty()) formatted += " • ETA: ";
+            formatted += progress.eta;
+        }
+        progress.message = formatted.empty() ? line : formatted;
+    } else {
         progress.message = line;
     }
+
+    return updated;
 }
 
 Downloader::ExecutionResult Downloader::RunProcess(
@@ -160,6 +254,7 @@ Downloader::ExecutionResult Downloader::RunProcess(
     std::string line_accum;
     std::vector<std::string> recent_lines;
     DownloadProgress progress;
+    auto last_chunk_parse_time = std::chrono::steady_clock::now();
 
     while (!aborted_.load() && ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytes_read, nullptr) && bytes_read > 0) {
         buffer[bytes_read] = '\0';
@@ -171,7 +266,7 @@ Downloader::ExecutionResult Downloader::RunProcess(
                     if (!clean.empty()) {
                         ParseOutputLine(clean, progress);
                         recent_lines.push_back(clean);
-                        if (recent_lines.size() > 20) recent_lines.erase(recent_lines.begin());
+                        if (recent_lines.size() > 25) recent_lines.erase(recent_lines.begin());
 
                         if (progress_cb) progress_cb(item_id, progress);
                         if (log_cb && (clean.find("ERROR") != std::string::npos || clean.find("WARN") != std::string::npos || clean.find("Mux") != std::string::npos)) {
@@ -184,6 +279,34 @@ Downloader::ExecutionResult Downloader::RunProcess(
                 line_accum += c;
             }
         }
+
+        // Real-time chunk inspection (handles N_m3u8DL-RE progress output without newlines)
+        if (!line_accum.empty()) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_chunk_parse_time).count();
+            if (elapsed_ms >= 100) {
+                std::string clean = StripAnsiCodes(line_accum);
+                if (ParseOutputLine(clean, progress)) {
+                    if (progress_cb) progress_cb(item_id, progress);
+                    last_chunk_parse_time = now;
+                }
+            }
+            // Keep buffer bounded so memory usage is constant
+            if (line_accum.size() > 2048) {
+                line_accum = line_accum.substr(line_accum.size() - 512);
+            }
+        }
+    }
+
+    // Process any lingering output in line_accum after child process exits
+    if (!line_accum.empty()) {
+        std::string clean = StripAnsiCodes(line_accum);
+        if (!clean.empty()) {
+            ParseOutputLine(clean, progress);
+            recent_lines.push_back(clean);
+            if (progress_cb) progress_cb(item_id, progress);
+        }
+        line_accum.clear();
     }
 
     CloseHandle(hReadPipe);
@@ -754,7 +877,7 @@ Downloader::ExecutionResult Downloader::ExecuteHlsDashDownload(
     cmd << L"--save-name \"" << Utils::Utf8ToWide(safe_name) << L"\" ";
     cmd << L"--ffmpeg-binary-path \"" << Utils::Utf8ToWide(ffmpeg_path) << L"\" ";
     cmd << L"-M format=mkv:muxer=ffmpeg ";
-    if (details.url.find('?') == std::string::npos) {
+    if (details.url.find('?') != std::string::npos) {
         cmd << L"--append-url-params ";
     }
     cmd << L"--thread-count 16 ";
@@ -873,7 +996,7 @@ Downloader::ExecutionResult Downloader::ExecuteSubtitleDownload(
     cmd << L"--sub-only ";
     cmd << L"--sub-format " << Utils::Utf8ToWide(item.sub_format) << L" ";
     cmd << L"--auto-subtitle-fix ";
-    if (details.url.find('?') == std::string::npos) {
+    if (details.url.find('?') != std::string::npos) {
         cmd << L"--append-url-params ";
     }
     cmd << L"--thread-count 16 ";
