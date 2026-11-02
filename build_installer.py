@@ -183,6 +183,9 @@ def build():
     else:
         shutil.copy2(dist_exe, out_path)
 
+    out_path_p1 = os.path.join(release_out, "01_OmniStream_Pro_Setup.exe")
+    shutil.copy2(out_path, out_path_p1)
+
     out_path_alt = os.path.join(release_out, "OmniStreamPro-Setup.exe")
     shutil.copy2(out_path, out_path_alt)
 

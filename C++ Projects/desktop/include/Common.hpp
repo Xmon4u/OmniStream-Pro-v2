@@ -178,6 +178,17 @@ namespace Utils {
         return res;
     }
 
+    inline std::string ReplaceAll(const std::string& str, const std::string& from, const std::string& to) {
+        if (from.empty()) return str;
+        std::string res = str;
+        size_t start_pos = 0;
+        while ((start_pos = res.find(from, start_pos)) != std::string::npos) {
+            res.replace(start_pos, from.length(), to);
+            start_pos += to.length();
+        }
+        return res;
+    }
+
     inline std::wstring Utf8ToWide(const std::string& str) {
         if (str.empty()) return L"";
         int len = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), static_cast<int>(str.length()), nullptr, 0);

@@ -79,38 +79,58 @@ bool QueueManager::AddItem(DownloadItem item, bool auto_start) {
     // 2. Duplicate Detection
     if (SettingsManager::GetInstance().GetSettings().duplicate_detection) {
         std::string cand_title = MetadataResolver::CleanTitleForMatching(item.title);
-        std::string cand_url = Utils::ToLower(item.page_url.empty() ? item.input : item.page_url);
+        std::string cand_input = Utils::ToLower(item.input);
         bool is_generic_title = (cand_title == "videostream" || cand_title == "untitled" ||
                                  cand_title == "stream" || cand_title == "omnistreamdownload");
 
         for (auto& existing : items_) {
-            bool id_match = (!item.unique_id.empty() && existing.unique_id == item.unique_id);
-            bool url_match = (!cand_url.empty() && Utils::ToLower(existing.page_url) == cand_url);
+            bool input_match = (!cand_input.empty() && Utils::ToLower(existing.input) == cand_input);
+            bool id_match = (!item.unique_id.empty() && existing.unique_id == item.unique_id && input_match);
             bool title_match = (!is_generic_title && !cand_title.empty() && cand_title.length() >= 5 &&
-                                MetadataResolver::CleanTitleForMatching(existing.title) == cand_title);
+                                MetadataResolver::CleanTitleForMatching(existing.title) == cand_title &&
+                                existing.mode == item.mode &&
+                                (input_match || existing.input.empty() || item.input.empty()));
 
-            if (id_match || url_match || title_match) {
+            if (input_match || id_match || title_match) {
                 Log("[AddItem] Matched existing '" + existing.title + "' id_match=" + std::to_string(id_match) +
-                    " url_match=" + std::to_string(url_match) + " title_match=" + std::to_string(title_match) +
+                    " input_match=" + std::to_string(input_match) + " title_match=" + std::to_string(title_match) +
                     " status=" + DownloadStatusToString(existing.status));
-                if (existing.status == DownloadStatus::Waiting ||
-                    existing.status == DownloadStatus::Downloading ||
-                    existing.status == DownloadStatus::Completed) {
-                    Log("[Duplicate Filter] '" + existing.title + "' is already in queue — skipped.");
-                    return false;
-                } else {
-                    // Reactivate failed/paused item with fresh link
-                    existing.input = item.input;
-                    existing.status = auto_start ? DownloadStatus::Waiting : DownloadStatus::Paused;
-                    existing.progress_pct = 0.0;
-                    existing.progress_text = "Ready in queue";
-                    existing.needs_resolution = item.needs_resolution;
-                    Database::GetInstance().SaveOrUpdateItem(existing);
-                    NotifyItemUpdated(existing);
-                    NotifyQueueChanged();
-                    cv_dispatcher_.notify_all();
+
+                if (existing.status == DownloadStatus::Downloading) {
+                    Log("[AddItem] '" + existing.title + "' is currently downloading. Keeping active task.");
                     return true;
                 }
+
+                // If already waiting, refresh the input URL / tokens and headers
+                if (existing.status == DownloadStatus::Waiting) {
+                    existing.input = item.input;
+                    if (!item.referer.empty()) existing.referer = item.referer;
+                    if (!item.origin.empty()) existing.origin = item.origin;
+                    if (!item.user_agent.empty()) existing.user_agent = item.user_agent;
+                    if (!item.cookie.empty()) existing.cookie = item.cookie;
+                    Database::GetInstance().SaveOrUpdateItem(existing);
+                    NotifyItemUpdated(existing);
+                    return true;
+                }
+
+                // Reactivate failed, paused, cancelled or completed item with fresh link
+                existing.input = item.input;
+                if (!item.referer.empty()) existing.referer = item.referer;
+                if (!item.origin.empty()) existing.origin = item.origin;
+                if (!item.user_agent.empty()) existing.user_agent = item.user_agent;
+                if (!item.cookie.empty()) existing.cookie = item.cookie;
+                existing.status = auto_start ? DownloadStatus::Waiting : DownloadStatus::Paused;
+                existing.progress_pct = 0.0;
+                existing.progress_text = "Ready in queue";
+                existing.needs_resolution = item.needs_resolution;
+                Database::GetInstance().SaveOrUpdateItem(existing);
+                NotifyItemUpdated(existing);
+                NotifyQueueChanged();
+                if (auto_start) {
+                    is_dispatching_.store(true);
+                    cv_dispatcher_.notify_all();
+                }
+                return true;
             }
         }
     }

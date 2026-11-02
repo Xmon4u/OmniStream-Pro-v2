@@ -734,15 +734,29 @@ Downloader::ExecutionResult Downloader::ExecuteHlsDashDownload(
     std::string bin_path = FindBinary("N_m3u8DL-RE");
     std::string ffmpeg_path = FindBinary("ffmpeg");
 
+    std::string safe_dir = item.save_dir.empty() ? SettingsManager::GetInstance().GetSettings().default_save_dir : item.save_dir;
+    while (!safe_dir.empty() && (safe_dir.back() == '\\' || safe_dir.back() == '/')) {
+        safe_dir.pop_back();
+    }
+    std::string safe_name = MetadataResolver::SanitizeInputTitle(item.title);
+    safe_name = Utils::ReplaceAll(safe_name, "\"", "'");
+
+    std::string url_lo = Utils::ToLower(details.url);
+    bool is_audio_only_stream = (url_lo.find("/a/") != std::string::npos ||
+                                 url_lo.find("/audio/") != std::string::npos ||
+                                 item.resolution == "audio_only");
+
     std::wostringstream cmd;
     cmd << L"\"" << Utils::Utf8ToWide(bin_path) << L"\" ";
     cmd << L"\"" << Utils::Utf8ToWide(details.url) << L"\" ";
     cmd << L"--auto-select ";
-    cmd << L"--save-dir \"" << Utils::Utf8ToWide(item.save_dir) << L"\" ";
-    cmd << L"--save-name \"" << Utils::Utf8ToWide(MetadataResolver::SanitizeInputTitle(item.title)) << L"\" ";
+    cmd << L"--save-dir \"" << Utils::Utf8ToWide(safe_dir) << L"\" ";
+    cmd << L"--save-name \"" << Utils::Utf8ToWide(safe_name) << L"\" ";
     cmd << L"--ffmpeg-binary-path \"" << Utils::Utf8ToWide(ffmpeg_path) << L"\" ";
     cmd << L"-M format=mkv:muxer=ffmpeg ";
-    cmd << L"--append-url-params ";
+    if (details.url.find('?') == std::string::npos) {
+        cmd << L"--append-url-params ";
+    }
     cmd << L"--thread-count 16 ";
     cmd << L"--download-retry-count 6 ";
     cmd << L"--http-request-timeout 15 ";
@@ -752,25 +766,23 @@ Downloader::ExecutionResult Downloader::ExecuteHlsDashDownload(
     cmd << L"-mt ";
 
     // Video stream selection
-    if (item.resolution == "1080p") {
-        cmd << L"-sv res=\"1080|1920\":for=best ";
-    } else if (item.resolution == "720p") {
-        cmd << L"-sv res=\"720|1280\":for=best ";
-    } else if (item.resolution == "480p") {
-        cmd << L"-sv res=\"480|854\":for=best ";
-    } else if (item.resolution == "audio_only") {
+    if (is_audio_only_stream) {
         cmd << L"-sv none ";
+    } else if (item.resolution == "720p") {
+        cmd << L"-sv res=\"720*\":for=best ";
+    } else if (item.resolution == "480p") {
+        cmd << L"-sv res=\"480*\":for=best ";
     } else {
-        cmd << L"-sv best ";
+        cmd << L"-sv for=best ";
     }
 
     // Audio stream selection
     if (item.audio_choice == "en_hi") {
-        cmd << L"-sa lang=eng,hin ";
+        cmd << L"-sa lang=eng,hin:for=all ";
     } else if (item.audio_choice == "eng") {
-        cmd << L"-sa lang=eng ";
+        cmd << L"-sa lang=eng:for=all ";
     } else if (item.audio_choice == "hin") {
-        cmd << L"-sa lang=hin ";
+        cmd << L"-sa lang=hin:for=all ";
     } else {
         cmd << L"-sa all ";
     }
@@ -786,6 +798,11 @@ Downloader::ExecutionResult Downloader::ExecuteHlsDashDownload(
     if (!details.cookie.empty()) {
         cmd << L"-H \"Cookie: " << Utils::Utf8ToWide(details.cookie) << L"\" ";
     }
+    cmd << L"-H \"Accept: */*\" ";
+    cmd << L"-H \"Accept-Language: en-US,en;q=0.9\" ";
+    cmd << L"-H \"Sec-Fetch-Dest: empty\" ";
+    cmd << L"-H \"Sec-Fetch-Mode: cors\" ";
+    cmd << L"-H \"Sec-Fetch-Site: cross-site\" ";
 
     std::string speed = item.speed_limit;
     if (speed.empty()) {
@@ -840,16 +857,25 @@ Downloader::ExecutionResult Downloader::ExecuteSubtitleDownload(
     std::string bin_path = FindBinary("N_m3u8DL-RE");
     std::string ffmpeg_path = FindBinary("ffmpeg");
 
+    std::string safe_dir = item.save_dir.empty() ? SettingsManager::GetInstance().GetSettings().default_save_dir : item.save_dir;
+    while (!safe_dir.empty() && (safe_dir.back() == '\\' || safe_dir.back() == '/')) {
+        safe_dir.pop_back();
+    }
+    std::string safe_name = MetadataResolver::SanitizeInputTitle(item.title);
+    safe_name = Utils::ReplaceAll(safe_name, "\"", "'");
+
     std::wostringstream cmd;
     cmd << L"\"" << Utils::Utf8ToWide(bin_path) << L"\" ";
     cmd << L"\"" << Utils::Utf8ToWide(details.url) << L"\" ";
-    cmd << L"--save-dir \"" << Utils::Utf8ToWide(item.save_dir) << L"\" ";
-    cmd << L"--save-name \"" << Utils::Utf8ToWide(MetadataResolver::SanitizeInputTitle(item.title)) << L"\" ";
+    cmd << L"--save-dir \"" << Utils::Utf8ToWide(safe_dir) << L"\" ";
+    cmd << L"--save-name \"" << Utils::Utf8ToWide(safe_name) << L"\" ";
     cmd << L"--ffmpeg-binary-path \"" << Utils::Utf8ToWide(ffmpeg_path) << L"\" ";
     cmd << L"--sub-only ";
     cmd << L"--sub-format " << Utils::Utf8ToWide(item.sub_format) << L" ";
     cmd << L"--auto-subtitle-fix ";
-    cmd << L"--append-url-params ";
+    if (details.url.find('?') == std::string::npos) {
+        cmd << L"--append-url-params ";
+    }
     cmd << L"--thread-count 16 ";
     cmd << L"--download-retry-count 6 ";
     cmd << L"--http-request-timeout 15 ";
@@ -866,6 +892,11 @@ Downloader::ExecutionResult Downloader::ExecuteSubtitleDownload(
     if (!details.cookie.empty()) {
         cmd << L"-H \"Cookie: " << Utils::Utf8ToWide(details.cookie) << L"\" ";
     }
+    cmd << L"-H \"Accept: */*\" ";
+    cmd << L"-H \"Accept-Language: en-US,en;q=0.9\" ";
+    cmd << L"-H \"Sec-Fetch-Dest: empty\" ";
+    cmd << L"-H \"Sec-Fetch-Mode: cors\" ";
+    cmd << L"-H \"Sec-Fetch-Site: cross-site\" ";
 
     if (!item.sub_lang.empty() && item.sub_lang != "all") {
         cmd << L"-ss lang=" << Utils::Utf8ToWide(item.sub_lang) << L" ";

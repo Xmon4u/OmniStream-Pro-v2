@@ -223,11 +223,95 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
+  function notifyAudioTracksDetected(url, tracks, activeTrackName) {
+    if (!Array.isArray(tracks) || tracks.length === 0) return;
+    window.postMessage({
+      source: 'OMNISTREAM_GODMODE',
+      action: 'PLAYER_AUDIO_TRACKS_DETECTED',
+      url: toAbsoluteUrl(url || ''),
+      tracks: tracks,
+      activeTrack: activeTrackName || '',
+      title: document.title || ''
+    }, '*');
+  }
+
+  function scanPlayerAudioTracks() {
+    try {
+      if (window.hls && Array.isArray(window.hls.audioTracks) && window.hls.audioTracks.length > 0) {
+        const activeIdx = typeof window.hls.currentAudioTrack === 'number' ? window.hls.currentAudioTrack : -1;
+        const tracks = window.hls.audioTracks.map((t, idx) => ({
+          id: t.id !== undefined ? t.id : idx,
+          name: t.name || t.lang || `Track ${idx + 1}`,
+          lang: t.lang || '',
+          url: toAbsoluteUrl(t.url || '')
+        }));
+        const activeName = (activeIdx >= 0 && tracks[activeIdx]) ? tracks[activeIdx].name : '';
+        notifyAudioTracksDetected(window.hls.url || '', tracks, activeName);
+      }
+
+      if (typeof window.jwplayer === 'function') {
+        const jw = window.jwplayer();
+        if (jw && typeof jw.getAudioTracks === 'function') {
+          const tracks = jw.getAudioTracks() || [];
+          if (tracks.length > 0) {
+            const cur = typeof jw.getCurrentAudioTrack === 'function' ? jw.getCurrentAudioTrack() : -1;
+            const mapped = tracks.map((t, idx) => ({
+              id: t.id !== undefined ? t.id : idx,
+              name: t.name || t.language || `Track ${idx + 1}`,
+              lang: t.language || ''
+            }));
+            const activeName = (cur >= 0 && mapped[cur]) ? mapped[cur].name : '';
+            notifyAudioTracksDetected('', mapped, activeName);
+          }
+        }
+      }
+
+      document.querySelectorAll('video').forEach((v) => {
+        if (v.audioTracks && v.audioTracks.length > 0) {
+          const mapped = [];
+          let activeName = '';
+          for (let i = 0; i < v.audioTracks.length; ++i) {
+            const t = v.audioTracks[i];
+            const name = t.label || t.language || `Track ${i + 1}`;
+            mapped.push({ id: t.id || i, name: name, lang: t.language || '', enabled: !!t.enabled });
+            if (t.enabled && !activeName) activeName = name;
+          }
+          notifyAudioTracksDetected(v.src || v.currentSrc || '', mapped, activeName);
+        }
+      });
+    } catch (e) {}
+  }
+
   function hookPlayers() {
+    scanPlayerAudioTracks();
+
     if (window.Hls && window.Hls.prototype && !window.Hls.prototype.__omniHooked) {
       const orig = window.Hls.prototype.loadSource;
       window.Hls.prototype.loadSource = function(url) {
         notifyDetected(url);
+        try {
+          const hlsInst = this;
+          const onTracks = () => {
+            try {
+              if (Array.isArray(hlsInst.audioTracks) && hlsInst.audioTracks.length > 0) {
+                const activeIdx = typeof hlsInst.currentAudioTrack === 'number' ? hlsInst.currentAudioTrack : -1;
+                const tracks = hlsInst.audioTracks.map((t, idx) => ({
+                  id: t.id !== undefined ? t.id : idx,
+                  name: t.name || t.lang || `Track ${idx + 1}`,
+                  lang: t.lang || '',
+                  url: toAbsoluteUrl(t.url || '')
+                }));
+                const activeName = (activeIdx >= 0 && tracks[activeIdx]) ? tracks[activeIdx].name : '';
+                notifyAudioTracksDetected(url, tracks, activeName);
+              }
+            } catch (e) {}
+          };
+          hlsInst.on('hlsManifestParsed', onTracks);
+          hlsInst.on('hlsAudioTracksUpdated', onTracks);
+          hlsInst.on('hlsAudioTrackSwitched', onTracks);
+          setTimeout(onTracks, 800);
+          setTimeout(onTracks, 2500);
+        } catch (e) {}
         return orig.apply(this, arguments);
       };
       window.Hls.prototype.__omniHooked = true;

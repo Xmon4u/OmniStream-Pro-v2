@@ -50,6 +50,26 @@ MainWindow::MainWindow(QWidget *parent)
         }, Qt::QueuedConnection);
     });
 
+    QueueManager::GetInstance().SetModeChangedCallback([this](DownloadMode mode) {
+        QMetaObject::invokeMethod(this, [this, mode]() {
+            int modeIdx = static_cast<int>(mode);
+            if (m_selectedMode != modeIdx) {
+                m_selectedMode = modeIdx;
+                std::vector<QPushButton*> btns = {
+                    m_btnModeNormal, m_btnModeNetflix, m_btnModeTitleOnly,
+                    m_btnModeImdb, m_btnModeTmdb, m_btnModeTitleId,
+                    m_btnModeSubMerge, m_btnModeAuto
+                };
+                for (size_t i = 0; i < btns.size(); ++i) {
+                    if (btns[i]) {
+                        btns[i]->setObjectName(static_cast<int>(i) == modeIdx ? "btnModeActive" : "btnModeInactive");
+                    }
+                }
+                applyStyleSheet(m_currentTheme);
+            }
+        }, Qt::QueuedConnection);
+    });
+
     rebuildQueueCards();
     updateQueueStats();
 }
@@ -57,6 +77,7 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow() {
     QueueManager::GetInstance().SetQueueChangedCallback(nullptr);
     QueueManager::GetInstance().SetItemUpdatedCallback(nullptr);
+    QueueManager::GetInstance().SetModeChangedCallback(nullptr);
     QueueManager::GetInstance().SetLogCallback(nullptr);
 }
 
@@ -1479,13 +1500,21 @@ void MainWindow::onDownloadModeChanged(int modeIdx) {
     };
 
     for (size_t i = 0; i < btns.size(); ++i) {
-        if (static_cast<int>(i) == modeIdx) {
-            btns[i]->setObjectName("btnModeActive");
-        } else {
-            btns[i]->setObjectName("btnModeInactive");
+        if (btns[i]) {
+            if (static_cast<int>(i) == modeIdx) {
+                btns[i]->setObjectName("btnModeActive");
+            } else {
+                btns[i]->setObjectName("btnModeInactive");
+            }
         }
     }
     applyStyleSheet(m_currentTheme);
+
+    // Sync to backend QueueManager
+    DownloadMode mode = static_cast<DownloadMode>(modeIdx);
+    if (QueueManager::GetInstance().GetCurrentMode() != mode) {
+        QueueManager::GetInstance().SetCurrentMode(mode);
+    }
 }
 
 void MainWindow::onBackendQueueChanged() {

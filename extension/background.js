@@ -247,7 +247,9 @@ const LANG_MAP = {
   pa: 'Punjabi', pan: 'Punjabi',
   id: 'Indonesian', ind: 'Indonesian',
   th: 'Thai', tha: 'Thai',
-  vi: 'Vietnamese', vie: 'Vietnamese'
+  vi: 'Vietnamese', vie: 'Vietnamese',
+  pl: 'Polish', pol: 'Polish',
+  kn: 'Kannada', kan: 'Kannada'
 };
 
 function normalizeLangName(codeOrName) {
@@ -265,9 +267,10 @@ function extractMediaId(url) {
   return m ? m[1] : '';
 }
 
-function hlsLanguages(text) {
-  if (!text || typeof text !== 'string') return [];
+function parseHlsTracks(text) {
+  if (!text || typeof text !== 'string') return { languages: [], trackMap: {} };
   const langs = [];
+  const trackMap = {};
   const re = /#EXT-X-MEDIA:([^\r\n]*)/gi;
   let match;
   while ((match = re.exec(text))) {
@@ -282,15 +285,33 @@ function hlsLanguages(text) {
       label = normalizeLangName(nameMatch[1]);
     } else if (langMatch && langMatch[1]) {
       label = normalizeLangName(langMatch[1]);
-    } else if (uriMatch && uriMatch[1]) {
-      const trk = uriMatch[1].match(/\/a\/(\d+)\//) || uriMatch[1].match(/(\d+)\.m3u8/);
-      label = trk ? `Audio Track ${trk[1]}` : `Audio Track ${langs.length + 1}`;
-    } else {
+    }
+
+    if (uriMatch && uriMatch[1]) {
+      const uri = uriMatch[1];
+      const trk = uri.match(/\/a\/(\d+)\//) || uri.match(/(\d+)\.m3u8/);
+      if (trk && label) {
+        trackMap[trk[1]] = label;
+      }
+      if (label) {
+        trackMap[uri] = label;
+      }
+      if (!label) {
+        label = trk ? `Audio Track ${trk[1]}` : `Audio Track ${langs.length + 1}`;
+      }
+    } else if (!label) {
       label = `Audio Track ${langs.length + 1}`;
     }
-    if (label) langs.push(label);
+
+    if (label && !langs.includes(label)) {
+      langs.push(label);
+    }
   }
-  return [...new Set(langs)];
+  return { languages: langs, trackMap };
+}
+
+function hlsLanguages(text) {
+  return parseHlsTracks(text).languages;
 }
 
 function dashLanguages(text) {
@@ -321,31 +342,51 @@ function correlateAudioStreams(mediaList) {
 
   groups.forEach((items) => {
     let knownLangs = [];
-    const audioSubstreams = [];
+    const trackToLang = new Map();
 
     items.forEach((it) => {
-      if (Array.isArray(it.audioLanguages) && it.audioLanguages.length > knownLangs.length) {
-        knownLangs = [...it.audioLanguages];
+      if (Array.isArray(it.audioLanguages) && it.audioLanguages.length > 0) {
+        const real = it.audioLanguages.filter(l => !/^Track \d+/i.test(l) && !/^Audio Track/i.test(l));
+        if (real.length > knownLangs.length) {
+          knownLangs = [...real];
+        }
       }
-      const u = String(it.url || '');
-      const trackMatch = u.match(/\/a\/(\d+)\//);
-      if (trackMatch) {
-        audioSubstreams.push(`Track ${trackMatch[1]}`);
-      } else if (/\/(audio|audios)\//i.test(u)) {
-        audioSubstreams.push(`Audio ${audioSubstreams.length + 1}`);
+      if (it.trackMap) {
+        for (const [k, v] of Object.entries(it.trackMap)) {
+          trackToLang.set(String(k), v);
+        }
       }
     });
 
-    const uniqueSubstreams = [...new Set(audioSubstreams)];
-    const finalLangs = knownLangs.length >= 2 ? knownLangs : (uniqueSubstreams.length >= 2 ? uniqueSubstreams : knownLangs);
+    items.forEach((it) => {
+      const u = String(it.url || '');
+      const trackMatch = u.match(/\/a\/(\d+)\//);
+      const isVideoTrack = /\/(?:1080p|720p|480p)\//i.test(u);
+      const isMaster = /\/(?:hls|master)\b/i.test(u) || u.includes('master.m3u8');
 
-    if (finalLangs.length >= 2) {
-      items.forEach((it) => {
-        if (!it.audioLanguages || it.audioLanguages.length < finalLangs.length) {
-          it.audioLanguages = [...finalLangs];
+      if (trackMatch) {
+        it.isAudioTrack = true;
+        const trkNum = trackMatch[1];
+        it.trackNumber = trkNum;
+        const lang = trackToLang.get(trkNum) || (it.audioLanguages && it.audioLanguages[0] && !/^Track/i.test(it.audioLanguages[0]) ? it.audioLanguages[0] : '');
+        if (lang) {
+          it.audioLanguages = [lang];
+          it.displayTitle = `${lang} Audio Track ${trkNum}`;
+        } else {
+          it.audioLanguages = [`Track ${trkNum}`];
+          it.displayTitle = `Audio Track ${trkNum}`;
         }
-      });
-    }
+      } else if (isVideoTrack) {
+        it.isVideoTrack = true;
+        const resM = u.match(/\/(\d{3,4}p)\//i);
+        it.displayTitle = resM ? `${resM[1].toUpperCase()} Video Stream` : 'HD Video Stream';
+      } else if (isMaster || knownLangs.length >= 2) {
+        it.isMaster = true;
+        if (knownLangs.length > 0 && (!it.audioLanguages || it.audioLanguages.length < knownLangs.length)) {
+          it.audioLanguages = [...knownLangs];
+        }
+      }
+    });
   });
 }
 
@@ -374,29 +415,56 @@ async function inspectAudio(item, tabId, mediaList) {
     fetchUrl = 'https:' + fetchUrl;
   }
 
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-    const response = await fetch(fetchUrl, { credentials: 'omit', signal: controller.signal });
-    clearTimeout(timer);
-    if (response.ok) {
-      const text = await response.text();
-      const detected = kind === 'hls' ? hlsLanguages(text) : dashLanguages(text);
-      if (detected && detected.length > 0) {
-        item.audioLanguages = detected;
-        const mid = extractMediaId(item.url);
-        if (mid) {
-          mediaList.forEach((m) => {
-            if (m !== item && m.url && m.url.includes(mid)) {
-              m.audioLanguages = [...detected];
-            }
-          });
-        }
-      }
-    }
-  } catch (e) {
-    if (!item.audioLanguages) item.audioLanguages = [];
+  let text = '';
+  // 1. Fetch via active tab to use authenticated page context (avoids CDN 403)
+  if (tabId && tabId > 0) {
+    try {
+      const tabRes = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { action: 'FETCH_PLAYLIST_TEXT', url: fetchUrl }, (r) => {
+          if (chrome.runtime.lastError || !r || !r.success) resolve(null);
+          else resolve(r.text);
+        });
+      });
+      if (tabRes) text = tabRes;
+    } catch (e) {}
   }
+
+  // 2. Fallback fetch in service worker
+  if (!text) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(fetchUrl, { credentials: 'omit', signal: controller.signal });
+      clearTimeout(timer);
+      if (response.ok) {
+        text = await response.text();
+      }
+    } catch (e) {}
+  }
+
+  if (text) {
+    const parsed = kind === 'hls' ? parseHlsTracks(text) : { languages: dashLanguages(text), trackMap: {} };
+    if (parsed.languages && parsed.languages.length > 0) {
+      item.audioLanguages = parsed.languages;
+      item.trackMap = parsed.trackMap;
+      const mid = extractMediaId(item.url);
+
+      mediaList.forEach((m) => {
+        const mu = String(m.url || '');
+        const trkMatch = mu.match(/\/a\/(\d+)\//);
+        if (trkMatch && parsed.trackMap && parsed.trackMap[trkMatch[1]]) {
+          m.isAudioTrack = true;
+          m.trackNumber = trkMatch[1];
+          m.audioLanguages = [parsed.trackMap[trkMatch[1]]];
+          m.displayTitle = `${parsed.trackMap[trkMatch[1]]} Audio Track ${trkMatch[1]}`;
+        } else if (mid && mu.includes(mid) && (m.isMaster || /\/(?:hls|master)\b/i.test(mu))) {
+          m.audioLanguages = [...parsed.languages];
+          m.isMaster = true;
+        }
+      });
+    }
+  }
+
   persistTab(tabId, mediaList);
 }
 
@@ -612,6 +680,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
         if (!mediaItem.referer && tabUrl) mediaItem.referer = tabUrl;
         rememberStream(tabId, mediaList, mediaItem);
+      }
+    }
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.action === 'PLAYER_AUDIO_TRACKS_DETECTED') {
+    const tabId = sender.tab ? sender.tab.id : message.tabId;
+    if (tabId && tabMediaMap.has(tabId)) {
+      const mediaList = tabMediaMap.get(tabId);
+      const tracks = message.tracks || [];
+      const activeTrack = message.activeTrack || '';
+      const trackMap = {};
+      const langs = [];
+
+      tracks.forEach(t => {
+        const norm = normalizeLangName(t.name || t.lang);
+        if (norm) {
+          langs.push(norm);
+          trackMap[String(t.id)] = norm;
+          if (t.url) trackMap[t.url] = norm;
+        }
+      });
+
+      mediaList.forEach(item => {
+        const u = String(item.url || '');
+        const trkM = u.match(/\/a\/(\d+)\//);
+        if (trkM && trackMap[trkM[1]]) {
+          item.isAudioTrack = true;
+          item.trackNumber = trkM[1];
+          item.audioLanguages = [trackMap[trkM[1]]];
+          item.displayTitle = `${trackMap[trkM[1]]} Audio Track ${trkM[1]}`;
+        }
+        if (item.url && trackMap[item.url]) {
+          item.isAudioTrack = true;
+          item.audioLanguages = [trackMap[item.url]];
+          item.displayTitle = `${trackMap[item.url]} Audio`;
+        }
+        if (activeTrack) {
+          item.activeAudio = activeTrack;
+        }
+        if (langs.length >= 2 && (item.isMaster || u.includes('/hls/') || u.includes('master'))) {
+          item.audioLanguages = [...new Set(langs)];
+          item.isMaster = true;
+        }
+      });
+      persistTab(tabId, mediaList);
+    }
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.action === 'DOM_AUDIO_LANGUAGES_DETECTED') {
+    const tabId = sender.tab ? sender.tab.id : message.tabId;
+    if (tabId && tabMediaMap.has(tabId)) {
+      const mediaList = tabMediaMap.get(tabId);
+      const domLangs = message.languages || [];
+      const activeLang = message.activeLanguage || '';
+
+      if (domLangs.length > 0) {
+        mediaList.forEach(item => {
+          const u = String(item.url || '');
+          if (activeLang) item.activeAudio = activeLang;
+          if (!item.audioLanguages || item.audioLanguages.length < domLangs.length) {
+            if (!/\/a\/\d+\//i.test(u)) {
+              item.audioLanguages = [...domLangs];
+            }
+          }
+        });
+        persistTab(tabId, mediaList);
       }
     }
     sendResponse({ success: true });

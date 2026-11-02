@@ -44,14 +44,19 @@ public:
     std::optional<DownloadItem> GetItem(const std::string& id) const;
     size_t GetCount() const;
     DownloadMode GetCurrentMode() const { return current_mode_; }
-    void SetCurrentMode(DownloadMode mode) { current_mode_ = mode; }
+    void SetCurrentMode(DownloadMode mode) {
+        current_mode_ = mode;
+        if (on_mode_changed_) on_mode_changed_(mode);
+    }
 
     // Event Callbacks
     using ItemCallback = std::function<void(const DownloadItem& item)>;
     using QueueEventCallback = std::function<void()>;
+    using ModeCallback = std::function<void(DownloadMode mode)>;
 
     void SetItemUpdatedCallback(ItemCallback cb) { on_item_updated_ = cb; }
     void SetQueueChangedCallback(QueueEventCallback cb) { on_queue_changed_ = cb; }
+    void SetModeChangedCallback(ModeCallback cb) { on_mode_changed_ = cb; }
     void SetLogCallback(LogCallback cb) { log_cb_ = cb; }
 
 private:
@@ -75,6 +80,7 @@ private:
 
     ItemCallback on_item_updated_ = nullptr;
     QueueEventCallback on_queue_changed_ = nullptr;
+    ModeCallback on_mode_changed_ = nullptr;
     LogCallback log_cb_ = nullptr;
 
     int DeduplicateQueueInternal();

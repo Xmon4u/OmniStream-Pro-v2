@@ -62,6 +62,27 @@ std::string MetadataResolver::ComputeMovieUniqueId(
     const std::string& title,
     const std::string& year
 ) {
+    std::string stream_tag = "";
+    if (!url_or_input.empty()) {
+        std::string s_lo = Utils::ToLower(url_or_input);
+        if (s_lo.find(".m3u8") != std::string::npos || s_lo.find(".mpd") != std::string::npos ||
+            s_lo.find(".mp4") != std::string::npos || s_lo.find(".mkv") != std::string::npos ||
+            s_lo.find(".webm") != std::string::npos) {
+            std::smatch sm;
+            static const std::regex track_regex(R"(/a/(\d+)/|/(\d{3,4}p)/|/(?:video|audio|master|player)\.m3u8)", std::regex::icase);
+            if (std::regex_search(s_lo, sm, track_regex)) {
+                stream_tag = ":" + sm[0].str();
+            } else {
+                size_t q = s_lo.find('?');
+                std::string path_only = (q != std::string::npos) ? s_lo.substr(0, q) : s_lo;
+                size_t last_slash = path_only.rfind('/');
+                if (last_slash != std::string::npos) {
+                    stream_tag = ":" + path_only.substr(last_slash + 1);
+                }
+            }
+        }
+    }
+
     std::string cand_url = !page_url.empty() ? page_url : url_or_input;
     if (cand_url.find("curl") != std::string::npos) {
         cand_url = ExtractRefererFromCurl(cand_url);
@@ -89,7 +110,7 @@ std::string MetadataResolver::ComputeMovieUniqueId(
             if (std::regex_search(path, stream_regex)) {
                 return "stream:" + host + path;
             } else if (!path.empty() && path != "/") {
-                return "page:" + host + path;
+                return "page:" + host + path + stream_tag;
             }
         }
     }
@@ -101,9 +122,9 @@ std::string MetadataResolver::ComputeMovieUniqueId(
     }
 
     if (!clean_t.empty()) {
-        return "title:" + clean_t;
+        return "title:" + clean_t + stream_tag;
     }
-    return "raw:" + std::to_string(Utils::CurrentTimestampMs());
+    return "raw:" + std::to_string(Utils::CurrentTimestampMs()) + stream_tag;
 }
 
 std::string MetadataResolver::ExtractNetflixId(const std::string& text) {

@@ -26,11 +26,92 @@ window.addEventListener('message', (event) => {
         mediaType: event.data.mediaType,
         title: event.data.title || document.title
       }).catch(() => {});
+    } else if (event.data.action === 'PLAYER_AUDIO_TRACKS_DETECTED') {
+      chrome.runtime.sendMessage({
+        action: 'PLAYER_AUDIO_TRACKS_DETECTED',
+        url: event.data.url,
+        tracks: event.data.tracks,
+        activeTrack: event.data.activeTrack,
+        title: event.data.title || document.title
+      }).catch(() => {});
     }
   }
 });
 
+function scanDomForAudioLanguages() {
+  const KNOWN_LANGUAGES = [
+    'Bengali', 'German', 'English', 'Spanish', 'French', 'Hindi',
+    'Italian', 'Japanese', 'Kannada', 'Korean', 'Malayalam', 'Polish',
+    'Telugu', 'Tamil', 'Marathi', 'Punjabi', 'Urdu', 'Arabic',
+    'Chinese', 'Russian', 'Portuguese', 'Turkish', 'Thai', 'Vietnamese', 'Indonesian'
+  ];
+
+  const foundLangs = [];
+  const textMap = new Set();
+  let activeLang = '';
+
+  const candidates = document.querySelectorAll(
+    'li, div, span, button, a, [class*="track"], [class*="audio"], [class*="menu"], [class*="item"]'
+  );
+
+  candidates.forEach(el => {
+    const txt = (el.textContent || '').trim();
+    if (!txt || txt.length < 3 || txt.length > 30) return;
+
+    for (const lang of KNOWN_LANGUAGES) {
+      const re = new RegExp(`(^|\\b)${lang}(\\b|$)`, 'i');
+      if (re.test(txt)) {
+        if (!textMap.has(lang)) {
+          textMap.add(lang);
+          foundLangs.push(lang);
+        }
+        const isSelected = el.classList.contains('active') ||
+                           el.classList.contains('selected') ||
+                           el.classList.contains('highlight') ||
+                           el.getAttribute('aria-selected') === 'true' ||
+                           el.querySelector('svg, .icon, [class*="play"], [class*="check"]') !== null ||
+                           /▶|✓|✔|•/.test(txt);
+        if (isSelected && !activeLang) {
+          activeLang = lang;
+        }
+        break;
+      }
+    }
+  });
+
+  if (foundLangs.length > 0) {
+    chrome.runtime.sendMessage({
+      action: 'DOM_AUDIO_LANGUAGES_DETECTED',
+      languages: foundLangs,
+      activeLanguage: activeLang,
+      title: document.title
+    }).catch(() => {});
+  }
+}
+
+// Periodically check DOM for audio track menus (e.g. NetMirror menu when opened or rendered)
+setTimeout(scanDomForAudioLanguages, 1500);
+setTimeout(scanDomForAudioLanguages, 3500);
+document.addEventListener('click', () => { setTimeout(scanDomForAudioLanguages, 300); }, true);
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'FETCH_PLAYLIST_TEXT') {
+    fetch(message.url)
+      .then(res => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+      })
+      .then(text => sendResponse({ success: true, text }))
+      .catch(err => sendResponse({ success: false, error: String(err) }));
+    return true;
+  }
+
+  if (message.action === 'SCAN_DOM_AUDIO') {
+    scanDomForAudioLanguages();
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (message.action === 'CLEAR_GODMODE_CAPTURED') {
     window.postMessage({
       target: 'OMNISTREAM_GODMODE_INJECT',
