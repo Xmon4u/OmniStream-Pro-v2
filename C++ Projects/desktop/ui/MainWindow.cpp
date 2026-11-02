@@ -55,14 +55,21 @@ MainWindow::MainWindow(QWidget *parent)
             int modeIdx = static_cast<int>(mode);
             if (m_selectedMode != modeIdx) {
                 m_selectedMode = modeIdx;
-                std::vector<QPushButton*> btns = {
-                    m_btnModeNormal, m_btnModeNetflix, m_btnModeTitleOnly,
-                    m_btnModeImdb, m_btnModeTmdb, m_btnModeTitleId,
-                    m_btnModeSubMerge, m_btnModeAuto
+                std::vector<std::pair<QPushButton*, QString>> btns = {
+                    { m_btnModeNormal, "Normal" },
+                    { m_btnModeNetflix, "Netflix" },
+                    { m_btnModeTitleOnly, "Title Only" },
+                    { m_btnModeImdb, "IMDb" },
+                    { m_btnModeTmdb, "TMDB" },
+                    { m_btnModeTitleId, "T+ID" },
+                    { m_btnModeSubMerge, "Sub Merge" },
+                    { m_btnModeAuto, "Auto" }
                 };
                 for (size_t i = 0; i < btns.size(); ++i) {
-                    if (btns[i]) {
-                        btns[i]->setObjectName(static_cast<int>(i) == modeIdx ? "btnModeActive" : "btnModeInactive");
+                    if (btns[i].first) {
+                        bool isActive = (static_cast<int>(i) == modeIdx);
+                        btns[i].first->setObjectName(isActive ? "btnModeActive" : "btnModeInactive");
+                        btns[i].first->setText(isActive ? ("✓ " + btns[i].second) : btns[i].second);
                     }
                 }
                 applyStyleSheet(m_currentTheme);
@@ -1493,19 +1500,22 @@ void MainWindow::onThemeChanged(int index) {
 
 void MainWindow::onDownloadModeChanged(int modeIdx) {
     m_selectedMode = modeIdx;
-    std::vector<QPushButton*> btns = {
-        m_btnModeNormal, m_btnModeNetflix, m_btnModeTitleOnly,
-        m_btnModeImdb, m_btnModeTmdb, m_btnModeTitleId,
-        m_btnModeSubMerge, m_btnModeAuto
+    std::vector<std::pair<QPushButton*, QString>> btns = {
+        { m_btnModeNormal, "Normal" },
+        { m_btnModeNetflix, "Netflix" },
+        { m_btnModeTitleOnly, "Title Only" },
+        { m_btnModeImdb, "IMDb" },
+        { m_btnModeTmdb, "TMDB" },
+        { m_btnModeTitleId, "T+ID" },
+        { m_btnModeSubMerge, "Sub Merge" },
+        { m_btnModeAuto, "Auto" }
     };
 
     for (size_t i = 0; i < btns.size(); ++i) {
-        if (btns[i]) {
-            if (static_cast<int>(i) == modeIdx) {
-                btns[i]->setObjectName("btnModeActive");
-            } else {
-                btns[i]->setObjectName("btnModeInactive");
-            }
+        if (btns[i].first) {
+            bool isActive = (static_cast<int>(i) == modeIdx);
+            btns[i].first->setObjectName(isActive ? "btnModeActive" : "btnModeInactive");
+            btns[i].first->setText(isActive ? ("✓ " + btns[i].second) : btns[i].second);
         }
     }
     applyStyleSheet(m_currentTheme);
